@@ -41,9 +41,24 @@ function lastReceipt(): { seq: number; hash: string } {
   return { seq: last.seq, hash: last.hash };
 }
 
+// Receipt semantics follow AAR v0.2 vocabulary (node kinds, principal roles,
+// outcome-evidence levels). Wire conformance (deterministic CBOR + detached
+// COSE_Sign1 ES256) is NOT claimed — this JSONL+ed25519 chain is a draft
+// transport; the conformant producer is scoped in docs/aar-alignment.md.
+const NODE_KIND: Record<string, string> = { ptz_move: "action_attempt", get_snapshot: "observation", list_cameras: "observation", get_receipts: "observation" };
 function receipt(tool: string, params: unknown, decision: "allow" | "deny", detail: string, resultHash?: string) {
   const prev = lastReceipt();
-  const body = { seq: prev.seq + 1, ts: new Date().toISOString(), agent: AGENT, tool, params, decision, detail, resultHash: resultHash ?? null, prev: prev.hash };
+  const body = {
+    seq: prev.seq + 1, ts: new Date().toISOString(),
+    profile: "aar-0.2-draft-alignment",
+    principal: { role: "agent", type: "service", id: AGENT },
+    enforcement_point: "onvif-mcp/0.0.1",
+    node_kind: decision === "deny" ? "authorization" : NODE_KIND[tool] ?? "action_attempt",
+    action: { tool, params },
+    decision, detail,
+    outcome_evidence: decision === "deny" ? null : tool === "ptz_move" ? (detail.startsWith("moved") ? "device_acknowledged" : "unknown") : resultHash ? "independently_sensed" : null,
+    result_sha256: resultHash ?? null, prev: prev.hash,
+  };
   const hash = createHash("sha256").update(JSON.stringify(body)).digest("hex");
   const sig = edSign(null, Buffer.from(hash), PRIV).toString("base64");
   appendFileSync(LOG, JSON.stringify({ ...body, hash, sig }) + "\n");

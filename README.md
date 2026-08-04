@@ -11,10 +11,14 @@ gate and emits a hash-chained, ed25519-signed receipt, **including denials**.
 - `list_cameras` · `get_snapshot` · `ptz_move` · `get_receipts` over MCP (stdio)
 - Per-agent policy (`policy.json`): tool allowlist, camera allowlist, PTZ step
   bounds. Unknown agent → every call denied (fail closed).
-- Receipts (`receipts/chain.jsonl`): seq, ts, agent, tool, params, decision,
-  detail, result hash (snapshots are content-hashed), prev-hash chain, ed25519
-  signature. `bun index.ts --verify` recomputes the chain + checks every
-  signature; a single altered byte flags the exact receipt.
+- Receipts (`receipts/chain.jsonl`): AAR v0.2-aligned semantics — principal,
+  enforcement point, node kind (`observation` / `action_attempt` /
+  `authorization` for denials), outcome-evidence level, content hash of produced
+  frames — on a hash-chained, ed25519-signed JSONL draft transport.
+  `bun index.ts --verify` recomputes the chain + checks every signature; a
+  single altered byte flags the exact receipt. Wire conformance to the AAR spec
+  (deterministic CBOR + detached COSE_Sign1 ES256) is NOT claimed yet — the gap
+  and build packet live in `docs/aar-alignment.md`.
 - Camera passwords fetched from the local `cred` store at startup; never on disk.
 
 ## Run
@@ -36,8 +40,19 @@ Register for Claude Code: `claude mcp add onvif -- env AGENT_ID=claude-main bun 
   off-list camera + tool, unknown agent fully denied. All denials receipted.
 - Tamper test: one edited field → `--verify` flags the exact seq, exit 1.
 
-Known gaps (spike, not product): VAPIX only (no ONVIF SOAP yet — name is the
-ambition), no clip export, relative PTZ doesn't round-trip at high zoom (use
-absolute position restore), receipts key is per-install not per-agent persona,
-policy file is unsigned (should be a signed policy object — see the
-commissioning-registry concept).
+## ONVIF leg (2026-08-04, same day)
+
+Dual transport, one tool contract: `protocol` per camera in `cameras.json`.
+Verified live on AXIS Q6325-LE via ONVIF SOAP at `/onvif/services`:
+GetDeviceInformation, GetProfiles, GetSnapshotUri (+ authenticated fetch), and
+RelativeMove — requested +10° pan, measured +10.0° (generic translation space
+maps pan°/360). AXIS OS 12.9.57 accepts the admin user over HTTP digest for
+ONVIF; on older 12.x (e.g. P3285 @ 12.7.61) a separate ONVIF account must be
+provisioned via web UI.
+
+Known gaps (spike, not product): no clip export, relative PTZ doesn't
+round-trip at high zoom (use absolute position restore), ONVIF tilt/zoom
+degree mapping is approximate (generic space), receipts key is per-install not
+per-agent persona, policy file is unsigned (should be a signed policy object —
+the commissioning-registry concept), AAR wire conformance pending
+(`docs/aar-alignment.md`).
