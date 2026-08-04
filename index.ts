@@ -9,7 +9,7 @@ import { join } from "node:path";
 
 const ROOT = import.meta.dir;
 const AGENT = process.env.AGENT_ID ?? "unknown";
-const cameras: Record<string, { base: string; user: string; credKey: string; ptz: boolean }> =
+const cameras: Record<string, { base: string; user: string; credKey: string; ptz: boolean; protocol: "vapix" | "onvif"; profile?: string }> =
   JSON.parse(readFileSync(join(ROOT, "cameras.json"), "utf8"));
 const policy: Record<string, { tools: string[]; cameras: string[]; ptz?: { maxStep: number } }> =
   JSON.parse(readFileSync(join(ROOT, "policy.json"), "utf8")).agents;
@@ -57,13 +57,58 @@ function allowed(tool: string, camera?: string): string | null {
   return null;
 }
 
-// VAPIX over digest auth — curl does the digest dance; native fetch can't.
+// Digest auth via curl — it does the digest dance; native fetch can't.
 async function vapix(camera: string, path: string, outFile?: string): Promise<{ ok: boolean; body: string }> {
   const cam = cameras[camera];
   const args = ["curl", "-sk", "--digest", "-u", `${cam.user}:${passwords[camera]}`, "--max-time", "10", `${cam.base}${path}`];
   if (outFile) args.push("-o", outFile);
   const p = Bun.spawnSync(args);
   return { ok: p.exitCode === 0, body: p.stdout.toString() };
+}
+
+// ONVIF SOAP call. AXIS serves every ONVIF service at /onvif/services (per GetServices).
+async function soap(camera: string, body: string): Promise<{ ok: boolean; body: string }> {
+  const cam = cameras[camera];
+  const p = Bun.spawnSync(["curl", "-sk", "--digest", "-u", `${cam.user}:${passwords[camera]}`,
+    "-H", "Content-Type: application/soap+xml", "--data",
+    `<?xml version="1.0"?><s:Envelope xmlns:s="http://www.w3.org/2003/05/soap-envelope"><s:Body>${body}</s:Body></s:Envelope>`,
+    "--max-time", "10", `${cam.base}/onvif/services`]);
+  const out = p.stdout.toString();
+  return { ok: p.exitCode === 0 && !out.includes("s:Fault") && !out.includes("SOAP-ENV:Fault"), body: out };
+}
+
+// Transport dispatch: same tool contract (degrees, jpeg) over either protocol.
+async function deviceInfo(camera: string): Promise<string> {
+  if (cameras[camera].protocol === "onvif") {
+    const r = await soap(camera, '<tds:GetDeviceInformation xmlns:tds="http://www.onvif.org/ver10/device/wsdl"/>');
+    const g = (tag: string) => r.body.match(new RegExp(`<tds:${tag}>([^<]+)`))?.[1] ?? "?";
+    return `Model=${g("Manufacturer")} ${g("Model")} | Firmware=${g("FirmwareVersion")} | protocol=onvif`;
+  }
+  const r = await vapix(camera, "/axis-cgi/param.cgi?action=list&group=Brand.ProdShortName,Properties.PTZ.PTZ");
+  return `${r.body.trim().replace(/\n/g, " | ")} | protocol=vapix`;
+}
+
+async function snapshot(camera: string, outFile: string): Promise<boolean> {
+  if (cameras[camera].protocol === "onvif") {
+    const cam = cameras[camera];
+    const r = await soap(camera, `<trt:GetSnapshotUri xmlns:trt="http://www.onvif.org/ver10/media/wsdl"><trt:ProfileToken>${cam.profile ?? "profile_1_jpeg"}</trt:ProfileToken></trt:GetSnapshotUri>`);
+    const uri = r.body.match(/<tt:Uri>([^<]+)/)?.[1]?.replace(/&amp;/g, "&");
+    if (!uri) return false;
+    const path = uri.replace(/^https?:\/\/[^/]+/, "");
+    return (await vapix(camera, path, outFile)).ok;
+  }
+  return (await vapix(camera, "/axis-cgi/jpg/image.cgi", outFile)).ok;
+}
+
+async function ptzMove(camera: string, pan: number, tilt: number, zoom: number): Promise<boolean> {
+  if (cameras[camera].protocol === "onvif") {
+    // Generic translation space is -1..1 over the mechanical range; pan spans 360°.
+    // Tilt/zoom use the same linear mapping — approximate, noted in README.
+    const cam = cameras[camera];
+    const r = await soap(camera, `<tptz:RelativeMove xmlns:tptz="http://www.onvif.org/ver20/ptz/wsdl" xmlns:tt="http://www.onvif.org/ver10/schema"><tptz:ProfileToken>${cam.profile ?? "profile_1_jpeg"}</tptz:ProfileToken><tptz:Translation><tt:PanTilt x="${pan / 360}" y="${tilt / 360}"/><tt:Zoom x="${zoom / 100}"/></tptz:Translation></tptz:RelativeMove>`);
+    return r.ok && r.body.includes("RelativeMoveResponse");
+  }
+  return (await vapix(camera, `/axis-cgi/com/ptz.cgi?rpan=${pan}&rtilt=${tilt}&rzoom=${zoom * 100}`)).ok;
 }
 
 const server = new McpServer({ name: "onvif-mcp", version: "0.0.1" });
@@ -73,10 +118,7 @@ server.tool("list_cameras", "List cameras this agent may access, with live devic
   if (deny) { receipt("list_cameras", {}, "deny", deny); return { content: [{ type: "text", text: `DENIED: ${deny}` }] }; }
   const visible = policy[AGENT].cameras;
   const out: string[] = [];
-  for (const id of visible) {
-    const r = await vapix(id, "/axis-cgi/param.cgi?action=list&group=Brand.ProdShortName,Properties.PTZ.PTZ");
-    out.push(`${id}: ${r.body.trim().replace(/\n/g, " | ")}`);
-  }
+  for (const id of visible) out.push(`${id}: ${await deviceInfo(id)}`);
   receipt("list_cameras", {}, "allow", `returned ${visible.length} cameras`);
   return { content: [{ type: "text", text: out.join("\n") }] };
 });
@@ -86,8 +128,8 @@ server.tool("get_snapshot", "Capture a JPEG snapshot from a camera; returns save
   const deny = allowed("get_snapshot", camera);
   if (deny) { receipt("get_snapshot", { camera }, "deny", deny); return { content: [{ type: "text", text: `DENIED: ${deny}` }] }; }
   const file = join(ROOT, "receipts", `snap-${camera}-${Date.now()}.jpg`);
-  const r = await vapix(camera, "/axis-cgi/jpg/image.cgi", file);
-  if (!r.ok || !existsSync(file)) { receipt("get_snapshot", { camera }, "allow", "capture FAILED"); return { content: [{ type: "text", text: "capture failed" }] }; }
+  const ok = await snapshot(camera, file);
+  if (!ok || !existsSync(file)) { receipt("get_snapshot", { camera }, "allow", "capture FAILED"); return { content: [{ type: "text", text: "capture failed" }] }; }
   const h = createHash("sha256").update(readFileSync(file)).digest("hex");
   receipt("get_snapshot", { camera }, "allow", `saved ${file}`, h);
   return { content: [{ type: "text", text: `${file} sha256:${h.slice(0, 16)}…` }] };
@@ -104,9 +146,9 @@ server.tool("ptz_move", "Relative PTZ move (degrees pan/tilt, zoom steps), bound
     Math.abs(pan) > max || Math.abs(tilt) > max ? `step exceeds policy maxStep ${max}°` : null);
   const reason = deny ?? bound;
   if (reason) { receipt("ptz_move", { camera, pan, tilt, zoom }, "deny", reason); return { content: [{ type: "text", text: `DENIED: ${reason}` }] }; }
-  const r = await vapix(camera, `/axis-cgi/com/ptz.cgi?rpan=${pan}&rtilt=${tilt}&rzoom=${zoom * 100}`);
-  receipt("ptz_move", { camera, pan, tilt, zoom }, "allow", r.ok ? "moved" : "vapix error");
-  return { content: [{ type: "text", text: r.ok ? `moved ${camera} pan=${pan}° tilt=${tilt}° zoom=${zoom}` : "move failed" }] };
+  const ok = await ptzMove(camera, pan, tilt, zoom);
+  receipt("ptz_move", { camera, pan, tilt, zoom }, "allow", ok ? `moved via ${cameras[camera].protocol}` : "transport error");
+  return { content: [{ type: "text", text: ok ? `moved ${camera} pan=${pan}° tilt=${tilt}° zoom=${zoom} (${cameras[camera].protocol})` : "move failed" }] };
 });
 
 server.tool("get_receipts", "Return the last N signed receipts from the chain",

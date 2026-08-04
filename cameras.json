@@ -1,5 +1,5 @@
 {
-  "q6358": { "base": "http://192.168.1.33", "user": "root", "credKey": "cam-q6358-vapix", "ptz": true },
-  "q6325": { "base": "http://192.168.1.32", "user": "root", "credKey": "cam-q6325-vapix", "ptz": true },
-  "p3285": { "base": "https://192.168.1.19", "user": "root", "credKey": "cam-p3285-vapix", "ptz": false }
+  "q6358": { "base": "http://192.168.1.33", "user": "root", "credKey": "cam-q6358-vapix", "ptz": true, "protocol": "vapix" },
+  "q6325": { "base": "http://192.168.1.32", "user": "root", "credKey": "cam-q6325-vapix", "ptz": true, "protocol": "onvif", "profile": "profile_1_jpeg" },
+  "p3285": { "base": "https://192.168.1.19", "user": "root", "credKey": "cam-p3285-vapix", "ptz": false, "protocol": "vapix" }
 }
