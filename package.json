@@ -1,5 +1,13 @@
 {
   "name": "onvif-mcp",
+  "version": "0.1.0",
+  "description": "Governed MCP server for IP cameras (VAPIX + ONVIF SOAP): fail-closed per-agent policy, hash-chained signed receipts on every call — including denials.",
+  "license": "MIT",
+  "author": "Matthew Visher",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/oneshot2001/onvif-mcp.git"
+  },
   "module": "index.ts",
   "type": "module",
   "private": true,

@@ -52,7 +52,7 @@ function receipt(tool: string, params: unknown, decision: "allow" | "deny", deta
     seq: prev.seq + 1, ts: new Date().toISOString(),
     profile: "aar-0.2-draft-alignment",
     principal: { role: "agent", type: "service", id: AGENT },
-    enforcement_point: "onvif-mcp/0.0.1",
+    enforcement_point: "onvif-mcp/0.1.0",
     node_kind: decision === "deny" ? "authorization" : NODE_KIND[tool] ?? "action_attempt",
     action: { tool, params },
     decision, detail,
@@ -126,7 +126,7 @@ async function ptzMove(camera: string, pan: number, tilt: number, zoom: number):
   return (await vapix(camera, `/axis-cgi/com/ptz.cgi?rpan=${pan}&rtilt=${tilt}&rzoom=${zoom * 100}`)).ok;
 }
 
-const server = new McpServer({ name: "onvif-mcp", version: "0.0.1" });
+const server = new McpServer({ name: "onvif-mcp", version: "0.1.0" });
 
 server.tool("list_cameras", "List cameras this agent may access, with live device info", {}, async () => {
   const deny = allowed("list_cameras");

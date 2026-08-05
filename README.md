@@ -1,67 +1,146 @@
 # onvif-mcp
 
-Governed MCP server over AXIS VAPIX. Spike / kill test, 2026-08-04.
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+[![Runtime: Bun](https://img.shields.io/badge/runtime-Bun-f9f1e1.svg?logo=bun)](https://bun.sh)
+[![Protocol: MCP](https://img.shields.io/badge/protocol-Model%20Context%20Protocol-8A2BE2.svg)](https://modelcontextprotocol.io)
+[![Transports: VAPIX | ONVIF](https://img.shields.io/badge/transports-VAPIX%20%7C%20ONVIF%20SOAP-00263E.svg)](#transports)
+[![Receipts: AAR v0.2 vocabulary](https://img.shields.io/badge/receipts-AAR%20v0.2%20vocabulary-2ea44f.svg)](https://github.com/oneshot2001/aar)
+[![Status: experimental](https://img.shields.io/badge/status-experimental-orange.svg)](#status)
 
-The thesis: agent access to video infrastructure that a security director could
-approve. Not a naked API wrapper — every tool call passes a fail-closed policy
-gate and emits a hash-chained, ed25519-signed receipt, **including denials**.
+**A governed doorway between AI agents and video infrastructure.**
 
-## What it does
+Agents are getting wired into everything. Nobody has shipped agent access to
+cameras and video systems that a security director could approve. This is that
+attempt: an MCP server for IP cameras where every tool call passes a
+**fail-closed policy gate** and emits a **hash-chained, signed receipt — including
+denials**. The audit trail records what agents *tried*, not just what they did.
 
-- `list_cameras` · `get_snapshot` · `ptz_move` · `get_receipts` over MCP (stdio)
-- Per-agent policy (`policy.json`): tool allowlist, camera allowlist, PTZ step
-  bounds. Unknown agent → every call denied (fail closed).
-- Receipts (`receipts/chain.jsonl`): AAR v0.2-aligned semantics — principal,
-  enforcement point, node kind (`observation` / `action_attempt` /
-  `authorization` for denials), outcome-evidence level, content hash of produced
-  frames — on a hash-chained, ed25519-signed JSONL draft transport.
-  `bun index.ts --verify` recomputes the chain + checks every signature; a
-  single altered byte flags the exact receipt. Wire conformance to the AAR spec
-  (deterministic CBOR + detached COSE_Sign1 ES256) is NOT claimed yet — the gap
-  and build packet live in `docs/aar-alignment.md`.
-- Camera passwords fetched from the local `cred` store at startup; never on disk.
+## Features
 
-## Run
+- **Four MCP tools** over stdio: `list_cameras`, `get_snapshot`, `ptz_move`, `get_receipts`
+- **Fail-closed per-agent policy** — tool allowlist, camera allowlist, PTZ step
+  bounds per agent identity; unknown agents get nothing
+- **Signed receipts on every call** — hash-chained JSONL, ed25519-signed,
+  produced frames content-hashed into the receipt; one altered byte is detected
+  at the exact sequence number
+- **Dual transport** — AXIS VAPIX and ONVIF SOAP behind one tool contract,
+  selected per camera
+- **No secrets on disk** — camera credentials resolve from a local credential
+  store at startup and are never written or logged
 
+## Quick start
+
+```bash
+bun install
 ```
-bun install      # deps
-AGENT_ID=claude-main bun index.ts            # serve (stdio MCP)
-bun test-client.ts claude-main '[["list_cameras",{}]]'   # exercise via real MCP client
-bun index.ts --verify                        # audit the receipt chain
+
+Describe your cameras in `cameras.json`:
+
+```json
+{
+  "lobby": { "base": "http://192.168.1.33", "user": "root", "credKey": "cam-lobby",
+             "ptz": true, "protocol": "vapix" },
+  "gate":  { "base": "http://192.168.1.32", "user": "root", "credKey": "cam-gate",
+             "ptz": true, "protocol": "onvif", "profile": "profile_1_jpeg" }
+}
 ```
 
-Register for Claude Code: `claude mcp add onvif -- env AGENT_ID=claude-main bun /path/to/index.ts`
+Grant agents authority in `policy.json` (anything not granted is denied):
+
+```json
+{
+  "agents": {
+    "claude-main": {
+      "tools": ["list_cameras", "get_snapshot", "ptz_move", "get_receipts"],
+      "cameras": ["lobby", "gate"],
+      "ptz": { "maxStep": 30 }
+    }
+  }
+}
+```
+
+Register with an MCP client (Claude Code shown):
+
+```bash
+claude mcp add cameras -- env AGENT_ID=claude-main bun /path/to/onvif-mcp/index.ts
+```
+
+Audit the receipt chain any time:
+
+```bash
+bun index.ts --verify
+# chain OK — every hash linked + signature valid
+```
+
+## Tools
+
+| Tool | Does | Policy checks |
+|---|---|---|
+| `list_cameras` | Live device info for cameras this agent may see | agent known, tool granted |
+| `get_snapshot` | Capture a JPEG, return path + SHA-256 | + camera granted |
+| `ptz_move` | Relative pan/tilt/zoom in degrees | + camera granted, camera is PTZ, step within `maxStep` |
+| `get_receipts` | Tail the signed receipt chain | agent known, tool granted |
+
+Every call — allowed or denied — appends a receipt. A denial looks like this:
+
+```json
+{ "seq": 19, "profile": "aar-0.2-draft-alignment",
+  "principal": { "role": "agent", "type": "service", "id": "claude-main" },
+  "enforcement_point": "onvif-mcp/0.1.0", "node_kind": "authorization",
+  "action": { "tool": "ptz_move", "params": { "camera": "gate", "pan": 90 } },
+  "decision": "deny", "detail": "step exceeds policy maxStep 30°",
+  "prev": "8fb7…", "hash": "8322…", "sig": "jRld…" }
+```
+
+## Receipts and the AAR spec
+
+Receipt semantics follow the [Agent Action Receipts (AAR)](https://github.com/oneshot2001/aar)
+v0.2 vocabulary: principals, enforcement points, node kinds (`observation`,
+`action_attempt`, `authorization`), and calibrated outcome-evidence levels
+(`device_acknowledged`, `independently_sensed`, `unknown`).
+
+**Honesty note:** wire conformance to AAR v0.2 (deterministic CBOR, detached
+COSE_Sign1 ES256) is **not claimed yet**. The current chain is a draft
+transport. The gap analysis and conformance plan live in
+[`docs/aar-alignment.md`](docs/aar-alignment.md).
+
+## Transports
+
+Set `protocol` per camera: `"vapix"` (AXIS HTTP CGI) or `"onvif"` (SOAP
+services). Verified live against AXIS hardware: on AXIS OS 12.9.57 the admin
+user works for ONVIF over HTTP digest; older 12.x firmware requires a separate
+ONVIF account provisioned in the web UI. ONVIF `RelativeMove` uses the generic
+translation space — pan converts as degrees/360 (measured exact on hardware);
+tilt/zoom mapping is linear-approximate.
+
+## Status
+
+Experimental (v0.1.0). Verified live against three AXIS cameras (two PTZ, one
+fixed dome) through real MCP client round-trips: physical PTZ motion with
+before/after frame proof, all denial paths exercised and receipted, and
+tamper-detection confirmed by mutating a receipt and watching `--verify` flag
+the exact sequence. Not production software — see the roadmap.
+
+## Roadmap
+
+- AAR v0.2 wire-conformant receipt producer (CBOR + COSE, verified against the
+  spec's byte-pinned KATs)
+- Per-agent signing keys and signed policy objects (agent commissioning)
+- Clip/recording export
+- Non-AXIS ONVIF hardware validation
 
 ## Trademark note
 
 ONVIF® is a trademark of ONVIF, Inc. This project is not affiliated with,
 endorsed by, or certified by ONVIF, Inc. The name is purely descriptive — this
-server speaks the ONVIF protocol (SOAP services as published in the open
-specifications). **No ONVIF conformance is claimed or implied.** No ONVIF
-logos are used, and no WSDL files are redistributed (the SOAP envelopes are
-hand-authored against the public specs).
+server speaks the ONVIF protocol as published in the open specifications.
+**No ONVIF conformance is claimed or implied.** No ONVIF logos are used and no
+WSDL files are redistributed; the SOAP envelopes are hand-authored.
 
-## Kill-test results (2026-08-04)
+## License
 
-- Live PTZ move + snapshot round-trip against AXIS Q6358-LE through the real MCP
-  protocol — before/after frames prove physical motion.
-- Policy: oversize step denied, non-PTZ camera denied, scoped agent denied
-  off-list camera + tool, unknown agent fully denied. All denials receipted.
-- Tamper test: one edited field → `--verify` flags the exact seq, exit 1.
+[MIT](LICENSE) © 2026 Matthew Visher.
 
-## ONVIF leg (2026-08-04, same day)
-
-Dual transport, one tool contract: `protocol` per camera in `cameras.json`.
-Verified live on AXIS Q6325-LE via ONVIF SOAP at `/onvif/services`:
-GetDeviceInformation, GetProfiles, GetSnapshotUri (+ authenticated fetch), and
-RelativeMove — requested +10° pan, measured +10.0° (generic translation space
-maps pan°/360). AXIS OS 12.9.57 accepts the admin user over HTTP digest for
-ONVIF; on older 12.x (e.g. P3285 @ 12.7.61) a separate ONVIF account must be
-provisioned via web UI.
-
-Known gaps (spike, not product): no clip export, relative PTZ doesn't
-round-trip at high zoom (use absolute position restore), ONVIF tilt/zoom
-degree mapping is approximate (generic space), receipts key is per-install not
-per-agent persona, policy file is unsigned (should be a signed policy object —
-the commissioning-registry concept), AAR wire conformance pending
-(`docs/aar-alignment.md`).
+The [AAR specification](https://github.com/oneshot2001/aar) this project
+aligns with is separately licensed: spec text CC BY 4.0, reference code
+Apache-2.0.
