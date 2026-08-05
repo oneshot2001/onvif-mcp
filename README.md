@@ -32,6 +32,15 @@ bun index.ts --verify                        # audit the receipt chain
 
 Register for Claude Code: `claude mcp add onvif -- env AGENT_ID=claude-main bun /path/to/index.ts`
 
+## Trademark note
+
+ONVIF® is a trademark of ONVIF, Inc. This project is not affiliated with,
+endorsed by, or certified by ONVIF, Inc. The name is purely descriptive — this
+server speaks the ONVIF protocol (SOAP services as published in the open
+specifications). **No ONVIF conformance is claimed or implied.** No ONVIF
+logos are used, and no WSDL files are redistributed (the SOAP envelopes are
+hand-authored against the public specs).
+
 ## Kill-test results (2026-08-04)
 
 - Live PTZ move + snapshot round-trip against AXIS Q6358-LE through the real MCP
