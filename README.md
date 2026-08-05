@@ -1,19 +1,36 @@
+<div align="center">
+
 # onvif-mcp
 
-[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
-[![Runtime: Bun](https://img.shields.io/badge/runtime-Bun-f9f1e1.svg?logo=bun)](https://bun.sh)
-[![Protocol: MCP](https://img.shields.io/badge/protocol-Model%20Context%20Protocol-8A2BE2.svg)](https://modelcontextprotocol.io)
-[![Transports: VAPIX | ONVIF](https://img.shields.io/badge/transports-VAPIX%20%7C%20ONVIF%20SOAP-00263E.svg)](#transports)
-[![Receipts: AAR v0.2 vocabulary](https://img.shields.io/badge/receipts-AAR%20v0.2%20vocabulary-2ea44f.svg)](https://github.com/oneshot2001/aar)
-[![Status: experimental](https://img.shields.io/badge/status-experimental-orange.svg)](#status)
+<img src="docs/banner.png" alt="onvif-mcp — a governed doorway between AI agents and video infrastructure" width="100%">
 
-**A governed doorway between AI agents and video infrastructure.**
+### The governed doorway between AI agents and video infrastructure.
+
+Every tool call passes a **fail-closed policy gate** and emits a **hash-chained,
+signed receipt — including denials**.<br>
+The audit trail records what agents *tried*, not just what they did.
+
+<p>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue.svg" alt="License: MIT"></a>
+  <a href="https://bun.sh"><img src="https://img.shields.io/badge/runtime-Bun-f9f1e1.svg?logo=bun" alt="Runtime: Bun"></a>
+  <a href="https://modelcontextprotocol.io"><img src="https://img.shields.io/badge/protocol-MCP-8A2BE2.svg" alt="Protocol: MCP"></a>
+  <a href="#transports"><img src="https://img.shields.io/badge/transports-VAPIX%20%7C%20ONVIF%20SOAP-1d3648.svg" alt="Transports: VAPIX | ONVIF SOAP"></a>
+  <a href="https://github.com/oneshot2001/aar"><img src="https://img.shields.io/badge/receipts-AAR%20v0.2%20vocabulary-3ec9a7.svg" alt="Receipts: AAR v0.2 vocabulary"></a>
+  <a href="#status"><img src="https://img.shields.io/badge/status-experimental-d98e3b.svg" alt="Status: experimental"></a>
+</p>
+
+<a href="https://github.com/oneshot2001/aar">AAR specification</a> ·
+<a href="docs/aar-alignment.md">Conformance plan</a> ·
+<a href="#quick-start">Quick start</a> ·
+<a href="https://github.com/oneshot2001/onvif-mcp/issues">Report an issue</a>
+
+</div>
+
+---
 
 Agents are getting wired into everything. Nobody has shipped agent access to
 cameras and video systems that a security director could approve. This is that
-attempt: an MCP server for IP cameras where every tool call passes a
-**fail-closed policy gate** and emits a **hash-chained, signed receipt — including
-denials**. The audit trail records what agents *tried*, not just what they did.
+attempt.
 
 ## Features
 
