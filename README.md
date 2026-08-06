@@ -34,6 +34,7 @@ attempt.
 
 ## Features
 
+- **Config drift executor** — baseline, diff, and safe remediation tools are VAPIX-only for now
 - **Four MCP tools** over stdio: `list_cameras`, `get_snapshot`, `ptz_move`, `get_receipts`
 - **Fail-closed per-agent policy** — tool allowlist, camera allowlist, PTZ step
   bounds per agent identity; unknown agents get nothing
