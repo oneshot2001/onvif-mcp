@@ -146,6 +146,9 @@ the exact sequence. Not production software — see the roadmap.
 - Per-agent signing keys and signed policy objects (agent commissioning)
 - Clip/recording export
 - Non-AXIS ONVIF hardware validation
+- Align to MCP spec 2026-07-28 once official SDK support lands — the stateless
+  request/response core removes session plumbing and opens a serverless/edge
+  deploy path for the gateway
 
 ## Trademark note
 
