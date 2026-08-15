@@ -146,8 +146,9 @@ the exact sequence. Not production software — see the roadmap.
   emits deterministic-CBOR + COSE_Sign1 ES256 bundles for the pinned-ontology
   actions (`camera.stream.view`, `camera.ptz.preset`), offline-verified conformant
   by the spec's independent pyref verifier: `bun index.ts --verify-aar`.
-  A conformant verdict proves wire integrity + binding, not receipt-body truth — scope, demo-narrative placeholders, and same-operator disclosures: `docs/aar-alignment.md`. Remaining: wire-emit
-  policy denials (needs upstream wire-builder generalization)
+  A conformant verdict proves wire integrity + binding, not receipt-body truth — scope, remaining narrative residue, and same-operator disclosures: `docs/aar-alignment.md`. Policy denials wire-emit too
+  (decision deny, real refusal reason); receipt bodies carry real narrative (timestamps,
+  agent identity, policy.json digest)
 - Per-agent signing keys and signed policy objects (agent commissioning)
 - Clip/recording export
 - Non-AXIS ONVIF hardware validation

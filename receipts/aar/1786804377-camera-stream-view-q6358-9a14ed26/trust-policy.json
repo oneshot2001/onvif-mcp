@@ -1,0 +1,34 @@
+{
+  "trust_store": {
+    "digest": "1222884b633ecf032f80221773bcb689a6769efffcc881b78102bd4a1a15907b",
+    "snapshot_id": "86e2900b0001772435b83ecbe2bbbbea2ab15e9edba882b8432068aeeddab7ac",
+    "created_at": 1786800777,
+    "roots": [
+      {
+        "root_id": "e8f37dc7447c9b8d948d315a3d80bb843fdc4d989ad08e92d8a9c5503bdbc99e",
+        "root_kid": "3432971c0f4e3f4904d90be89362b504ca5920ab6c2bec2d4eeb1d4416675bb6",
+        "tenant_id": "52a70c36cf0d400b434024de52cd5cd6",
+        "allowed_sites": [
+          "43ecb90841976d686213dde722b5bd62"
+        ],
+        "allowed_key_usages": [
+          "ep_signing",
+          "agent_signing",
+          "anchor_signing",
+          "outcome_signing",
+          "authority_signing",
+          "credential_issuing"
+        ]
+      }
+    ]
+  },
+  "expected_anchor_heads": [
+    {
+      "target_id": "b2ad7ba33e7ed8b18f3488cabcf10bb9",
+      "observed_at": 1786804377,
+      "tree_size": 10,
+      "root": "34e23e7cf79850e32b418b7229a23bc2aa3d2d00d778b5186fe56689f1b8a542"
+    }
+  ],
+  "verifier_policy_digest": "6d935c8f936a758d79dd52f4f19f8dc745d6cbf0c807555ccca5d75cc269ff69"
+}

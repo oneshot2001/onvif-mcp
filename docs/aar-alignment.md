@@ -51,26 +51,32 @@ emitted bundle flips pyref to nonconformant (verified).
 
 Honest scope boundary:
 
-- **⚠️ Demo-narrative placeholders in receipt bodies.** `buildDemoBundle` authors the
-  observation/inference/authorization receipt bodies from its fixed Gate-5 scenario:
-  synthetic offsets on internal timestamps (`observed_at`, `dispatched_at`, epoch
-  `opened_at`, monotonic/boot ids), a fictional "scripted-agent" model record, and a
-  synthetic demo trust-policy decision that does **not** restate this server's
-  `policy.json` evaluation. **What is real in each bundle:** evaluation time, action
-  name, target, parameters, command manifest, dispatch status + response-body digest,
-  outcome level/state + observation digest, and device metadata. A pyref `conformant`
-  verdict proves wire-format integrity and binding — not the truth of the narrative
-  fields. Making those fields real requires generalizing the upstream wire-builder
-  (open item, with denial emission below).
+- **Real narrative (2026-08-15, upstream `RealNarrative`).** Receipt-body timestamps
+  (`observed_at`, `dispatched_at`, outcome `observed_at`, epoch window, `committed_at`)
+  come from this process's clock; the inference model record names the actual MCP agent
+  (`provider: mcp-client`); the authorization decision and `policy_set_root` (digest of
+  `policy.json`) reflect the evaluation this server actually performed; and **policy
+  denials are wire-emitted** as decision `deny` + `not_dispatched` attempts carrying the
+  real refusal reason (denial bundles never contact the device — metadata `not-queried`).
+  `evidence.time` carries a genuine monotonic reading (`process.hrtime`) and a boot id
+  derived from the real macOS boot time (`sysctl kern.boottime`).
+  **Remaining placeholder residue** (upstream demo-layer constants): the legal block
+  (purpose `incident-response`, jurisdiction `US-CO`), delegation `purpose_ids`,
+  freshness `issued_at` (pinned to `evaluatedAt - 60`, not a real issuance time),
+  correlation `peer_binding_digest`, decision `evaluated_inputs`, and the
+  request/consumption framing. A pyref `conformant` verdict still proves wire-format
+  integrity and binding — not the truth of body fields (G4).
 - **Single-writer assumption.** `producer-state.json` / `prior-state.json` /
   `anchor.jsonl` are read-modify-write with no locking — run one server process per
-  receipts directory (same race class as the JSONL chain, wider surface).
+  receipts directory (same race class as the JSONL chain, wider surface). The
+  two-agent demo (`claude-main` then `untrusted-demo`) must run its legs
+  sequentially, never in parallel.
 
 - **Only pinned-ontology actions are wire-emitted:** `get_snapshot` →
   `camera.stream.view`, new `ptz_preset` tool → `camera.ptz.preset`. `ptz_move`
   (relative — not in the v0.2 ontology) and `config_*` stay on the draft JSONL chain.
-- **Denials are not wire-emitted yet** — the reference wire-builder only models
-  delegation-expiry refusals; policy denials need a small upstream generalization.
+- **Denials ARE wire-emitted** (2026-08-15) for the two pinned-ontology actions;
+  denials of off-ontology tools stay on the draft JSONL chain only.
 - **Same-operator disclosures apply (F22):** one process holds every key role
   (per-agent key dirs under `~/.aar-onvif-mcp/<agent>/`, self-issued delegation),
   the anchor log is local, identity is self-asserted. A verdict proves artifact

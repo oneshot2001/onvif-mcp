@@ -1,0 +1,7 @@
+{
+  "evaluated_at": 1786804377,
+  "tool_action": "camera.stream.view",
+  "camera": "q6358",
+  "agent": "untrusted-demo",
+  "agent_keys": "public-keys-untrusted-demo.json"
+}

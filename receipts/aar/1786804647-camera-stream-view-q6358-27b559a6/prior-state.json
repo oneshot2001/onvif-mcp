@@ -557,42 +557,6 @@
       "epoch_seq": 5,
       "receipt_id": "6e1a323e2175c15679c72ab98dd061f2d3d9e0eb3232b9547cd5d6180a18cf52",
       "envelope_digest": "ef59fb2d025195db73e701726844ada99bb9a86c035da5e5c5202721b662ef90"
-    },
-    {
-      "issuer_kid": "81a10c7a1e393e05774eb2eebb3db829fc7821df360752c408a72237c245740e",
-      "issuer_seq": 1200,
-      "epoch_owner_kid": "0b7099bd1360bc9b5f1d3fab84d767ec0072cd2289d95e1d99737257cd66d717",
-      "epoch_id": 12,
-      "epoch_seq": 0,
-      "receipt_id": "ee9495d1699b08c82d6111cb770bc30a0ed2c210fdf9bd1614430d2494ab8c47",
-      "envelope_digest": "3d92bd110fc04963dbf3f3270ed7f0a7a266ed91528601bea25eef36be28c911"
-    },
-    {
-      "issuer_kid": "81a10c7a1e393e05774eb2eebb3db829fc7821df360752c408a72237c245740e",
-      "issuer_seq": 1201,
-      "epoch_owner_kid": "0b7099bd1360bc9b5f1d3fab84d767ec0072cd2289d95e1d99737257cd66d717",
-      "epoch_id": 12,
-      "epoch_seq": 1,
-      "receipt_id": "e06676bd140f046275451064bf90a83e3f2cf242409a6639bb414a55deebf07b",
-      "envelope_digest": "b0d5b668d37506758a40e6eb0667cc34dbb901e9c1c482c1f90ac8d0e32e3303"
-    },
-    {
-      "issuer_kid": "0b7099bd1360bc9b5f1d3fab84d767ec0072cd2289d95e1d99737257cd66d717",
-      "issuer_seq": 1202,
-      "epoch_owner_kid": "0b7099bd1360bc9b5f1d3fab84d767ec0072cd2289d95e1d99737257cd66d717",
-      "epoch_id": 12,
-      "epoch_seq": 2,
-      "receipt_id": "e88836b2d2272e75bf0523b28d22cea0826380ab30f9dadd5025da7dd1ce431d",
-      "envelope_digest": "c397fc4e60fbe98407d34b811a691ec17a77e48c875e169e97fc938abe7af1ff"
-    },
-    {
-      "issuer_kid": "0b7099bd1360bc9b5f1d3fab84d767ec0072cd2289d95e1d99737257cd66d717",
-      "issuer_seq": 1203,
-      "epoch_owner_kid": "0b7099bd1360bc9b5f1d3fab84d767ec0072cd2289d95e1d99737257cd66d717",
-      "epoch_id": 12,
-      "epoch_seq": 3,
-      "receipt_id": "90cb5a16dfe85673df5f42000a51fd2266b9c4212db5007fe141b11e0d8c24f5",
-      "envelope_digest": "a660c64d75f564b90b0660d42e170618d90dde59216c3ebf024b47454ee6c013"
     }
   ],
   "entries": []

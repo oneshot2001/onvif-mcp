@@ -12,8 +12,11 @@ const ROOT = import.meta.dir;
 const AGENT = process.env.AGENT_ID ?? "unknown";
 const cameras: Record<string, { base: string; user: string; credKey: string; ptz: boolean; protocol: "vapix" | "onvif"; profile?: string }> =
   JSON.parse(readFileSync(join(ROOT, "cameras.json"), "utf8"));
+// Raw bytes kept: the AAR producer signs the digest of the EXACT policy the
+// server evaluates (parsed once here) — never a fresh disk read (TOCTOU).
+const policyBytes = readFileSync(join(ROOT, "policy.json"));
 const policy: Record<string, { tools: string[]; cameras: string[]; ptz?: { maxStep: number }; config?: { groups: string[]; remediate?: boolean } }> =
-  JSON.parse(readFileSync(join(ROOT, "policy.json"), "utf8")).agents;
+  JSON.parse(policyBytes.toString("utf8")).agents;
 
 // --- credentials: fetched from the cred store at startup, never persisted ---
 const passwords: Record<string, string> = {};
@@ -179,15 +182,22 @@ async function deviceMeta(camera: string): Promise<{ manufacturer: string; model
   return { manufacturer: "AXIS", model: p["Brand.ProdNbr"] ?? camera, firmware: p["Properties.Firmware.Version"] ?? "unknown" };
 }
 
-// AAR wire emission for the two pinned-ontology actions. Failures surface in
-// the tool response — never silently dropped — but don't fail the camera op.
-const aarProducer = new AarWireProducer(ROOT, AGENT);
+// AAR wire emission for the two pinned-ontology actions — successes AND policy
+// denials (decision "deny", attempt not_dispatched, real refusal reason).
+// Failures surface in the tool response — never silently dropped — but don't
+// fail the camera op. Denials never contact the device (metadata not-queried).
+const aarProducer = new AarWireProducer(ROOT, AGENT, policyBytes);
 async function emitAar(camera: string, actionName: "camera.stream.view" | "camera.ptz.preset",
-  parameters: Record<string, string | number | boolean>, dispatch: WireDispatch): Promise<string> {
+  parameters: Record<string, string | number | boolean>, startedAt: number,
+  outcome: { dispatch: WireDispatch } | { refusal: string }): Promise<string> {
   try {
+    const cam = cameras[camera];
     const { dir } = await aarProducer.emit({
-      agentId: AGENT, camera, cameraPtz: camOf(camera).ptz, protocol: camOf(camera).protocol,
-      deviceMetadata: await deviceMeta(camera), actionName, parameters, dispatch,
+      agentId: AGENT, camera, cameraPtz: cam?.ptz ?? false, protocol: cam?.protocol ?? "vapix",
+      deviceMetadata: "refusal" in outcome
+        ? { manufacturer: "not-queried", model: cam ? camera : `unknown:${camera}`, firmware: "not-queried" }
+        : await deviceMeta(camera),
+      actionName, parameters, startedAt, ...outcome,
     });
     return `\naar-bundle: ${dir}`;
   } catch (error) {
@@ -212,8 +222,13 @@ server.tool("list_cameras", "List cameras this agent may access, with live devic
 
 server.tool("get_snapshot", "Capture a JPEG snapshot from a camera; returns saved file path",
   { camera: z.string().describe("camera id from list_cameras") }, async ({ camera }) => {
+  const startedAt = Math.floor(Date.now() / 1000);
   const deny = allowed("get_snapshot", camera);
-  if (deny) { receipt("get_snapshot", { camera }, "deny", deny); return { content: [{ type: "text", text: `DENIED: ${deny}` }] }; }
+  if (deny) {
+    receipt("get_snapshot", { camera }, "deny", deny);
+    const aar = await emitAar(camera, "camera.stream.view", {}, startedAt, { refusal: deny });
+    return { content: [{ type: "text", text: `DENIED: ${deny}${aar}` }] };
+  }
   const file = join(ROOT, "receipts", `snap-${camera}-${Date.now()}.jpg`);
   const ok = await snapshot(camera, file);
   if (!ok || !existsSync(file)) { receipt("get_snapshot", { camera }, "allow", "capture FAILED"); return { content: [{ type: "text", text: "capture failed" }] }; }
@@ -224,24 +239,29 @@ server.tool("get_snapshot", "Capture a JPEG snapshot from a camera; returns save
   // same bytes as the response body — one capture, no independent second read.
   // "consistent" is claimed only when the payload validates as a JPEG.
   const jpegValid = jpeg.length > 2 && jpeg[0] === 0xff && jpeg[1] === 0xd8;
-  const aar = await emitAar(camera, "camera.stream.view", { file: file.split("/").pop()! }, {
+  const aar = await emitAar(camera, "camera.stream.view", { file: file.split("/").pop()! }, startedAt, { dispatch: {
     status: 200, responseBody: jpeg,
     outcomeLevel: jpegValid ? "device_acknowledged" : "unknown",
     outcomeState: jpegValid ? "consistent" : "unknown",
     observation: jpeg,
-  });
+  } });
   return { content: [{ type: "text", text: `${file} sha256:${h.slice(0, 16)}…${aar}` }] };
 });
 
 server.tool("ptz_preset", "Send a PTZ camera to a named preset (VAPIX cameras only)",
   { camera: z.string(), preset: z.string().default("Home") }, async ({ camera, preset }) => {
+  const startedAt = Math.floor(Date.now() / 1000);
   const deny = allowed("ptz_preset", camera);
   const cam = cameras[camera];
   const bound = !deny && (!cam?.ptz ? `camera '${camera}' is not PTZ` :
     !policy[AGENT]?.ptz ? "agent has no ptz grant" :
     cam.protocol !== "vapix" ? "preset recall implemented for vapix protocol only" : null);
   const reason = deny ?? bound;
-  if (reason) { receipt("ptz_preset", { camera, preset }, "deny", reason); return { content: [{ type: "text", text: `DENIED: ${reason}` }] }; }
+  if (reason) {
+    receipt("ptz_preset", { camera, preset }, "deny", reason);
+    const aar = await emitAar(camera, "camera.ptz.preset", { preset }, startedAt, { refusal: reason });
+    return { content: [{ type: "text", text: `DENIED: ${reason}${aar}` }] };
+  }
   const r = await vapix(camera, `/axis-cgi/com/ptz.cgi?gotoserverpresetname=${encodeURIComponent(preset)}`);
   const ok = r.ok && !/^Error/m.test(r.body);
   // Post-move readback: poll position until two consecutive reads match (dome
@@ -260,12 +280,12 @@ server.tool("ptz_preset", "Send a PTZ camera to a named preset (VAPIX cameras on
     }
   }
   receipt("ptz_preset", { camera, preset }, "allow", ok ? "preset recalled (vapix)" : "transport error", undefined, ok ? "device_acknowledged" : "unknown");
-  const aar = await emitAar(camera, "camera.ptz.preset", { preset }, {
+  const aar = await emitAar(camera, "camera.ptz.preset", { preset }, startedAt, { dispatch: {
     status: ok ? 200 : 0, responseBody: jsonBytes({ body: r.body }),
     outcomeLevel: ok && pos.ok ? "device_acknowledged" : "unknown",
     outcomeState: "unknown",
     observation: jsonBytes({ settled_position: pos.body.trim() }),
-  });
+  } });
   return { content: [{ type: "text", text: (ok ? `${camera} → preset '${preset}'\nsettled position: ${pos.body.trim().replace(/\n/g, " ")}` : "preset recall failed") + aar }] };
 });
 

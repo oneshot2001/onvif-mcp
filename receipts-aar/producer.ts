@@ -13,16 +13,14 @@
 //   generalization first.
 // - Same-operator disclosure applies: one process holds every key role, the
 //   anchor log is local, and identity is self-asserted (F22).
-// - ⚠️ DEMO-NARRATIVE PLACEHOLDERS: buildDemoBundle authors the receipt BODIES
-//   for the observation/inference/authorization kinds from its fixed Gate-5
-//   scenario — synthetic offsets on internal timestamps (observed_at,
-//   dispatched_at, epoch opened_at, monotonic/boot ids), a fictional
-//   "scripted-agent" model record, and a synthetic demo trust-policy decision
-//   that does NOT restate this server's policy.json evaluation. What IS real:
-//   evaluation time, action name, target, parameters, command manifest,
-//   dispatch status + response-body digest, outcome level/state + observation
-//   digest, and device metadata. Making the narrative fields real requires
-//   generalizing the upstream wire-builder — tracked in docs/aar-alignment.md.
+// - REAL NARRATIVE (upstream RealNarrative, 2026-08-15): timestamps come from
+//   this process's clock, the model record names the actual MCP agent, the
+//   decision + policy_set_root reflect the policy.json evaluation this server
+//   actually performed, and policy denials are wire-emitted as decision "deny"
+//   with the real refusal reason. Remaining placeholder residue (upstream
+//   demo-layer constants): the legal block (purpose incident-response,
+//   jurisdiction US-CO), delegation purpose_ids, and the request/consumption
+//   framing — see docs/aar-alignment.md.
 // - SINGLE-WRITER ASSUMPTION: producer-state.json, prior-state.json, and
 //   anchor.jsonl are read-modify-write with no locking. Run ONE server process
 //   per receipts directory; concurrent writers can fork epochs and drop
@@ -59,7 +57,11 @@ export interface WireEmitInput {
   readonly deviceMetadata: { manufacturer: string; model: string; firmware: string };
   readonly actionName: WireAction;
   readonly parameters: Readonly<Record<string, string | number | boolean>>;
-  readonly dispatch: WireDispatch;
+  readonly startedAt: number; // unix seconds when the tool call began
+  // Exactly one of: a dispatch result, or a policy refusal reason (denial —
+  // wire-emitted as authorization decision "deny", attempt not_dispatched).
+  readonly dispatch?: WireDispatch;
+  readonly refusal?: string;
 }
 
 const id16 = (label: string) => hash(new TextEncoder().encode(`onvif-mcp-id:${label}`)).slice(0, 16);
@@ -70,11 +72,21 @@ interface PriorState {
   entries: Array<{ replay_domain: string; invocation_id: string; content_digest: string }>;
 }
 
+// Real monotonic clock reading (ns) and a boot id derived from the actual
+// macOS boot time — evidence.time fields carry genuine values, not synthetics.
+const bootId = hash(new TextEncoder().encode(
+  `boot:${Bun.spawnSync(["sysctl", "-n", "kern.boottime"]).stdout.toString().trim()}`)).slice(0, 16);
+
 export class AarWireProducer {
   private readonly aarDir: string;
   private readonly keyDir: string;
+  // Digest of the EXACT policy bytes the server parsed at startup — the policy
+  // actually evaluated. Never re-read from disk (TOCTOU: an edited policy.json
+  // would sign a digest of a policy that was not the one enforced).
+  private readonly policyRoot: Uint8Array;
 
-  constructor(private readonly root: string, private readonly agentId: string) {
+  constructor(private readonly root: string, private readonly agentId: string, policyBytes: Uint8Array) {
+    this.policyRoot = hash(policyBytes);
     this.aarDir = join(root, "receipts", "aar");
     // Private keys stay outside the repository (AAR demo-kit convention).
     this.keyDir = join(process.env.HOME!, ".aar-onvif-mcp", agentId);
@@ -102,6 +114,7 @@ export class AarWireProducer {
   }
 
   async emit(input: WireEmitInput): Promise<{ dir: string; bundlePath: string; evaluatedAt: number }> {
+    if (!input.dispatch === !input.refusal) throw new Error("emit() requires exactly one of dispatch or refusal");
     const evaluatedAt = Math.floor(Date.now() / 1000);
     const state = this.readJson<ProducerState>(this.stateFile(), { next_epoch: 1 });
     const epochId = state.next_epoch;
@@ -136,14 +149,33 @@ export class AarWireProducer {
       sourceDeviceMetadata: input.deviceMetadata,
       adapterId: input.protocol as AdapterId,
       command,
-      // Self-issued delegation: this process is authority and EP (same-operator demo trust).
-      delegationWindows: [{ notBefore: evaluatedAt - 60, notAfter: evaluatedAt + 3600 }],
-      dispatch: {
+      // Self-issued delegation: this process is authority and EP (same-operator
+      // demo trust). notBefore covers startedAt so a slow call (>60s of camera
+      // stalls) can't sign a dispatch that predates its own delegation window.
+      delegationWindows: [{ notBefore: Math.min(input.startedAt, evaluatedAt - 60) - 1, notAfter: evaluatedAt + 3600 }],
+      dispatch: input.dispatch ? {
         status: input.dispatch.status,
         responseBodyDigest: hash(input.dispatch.responseBody),
         outcomeLevel: input.dispatch.outcomeLevel,
         outcomeState: input.dispatch.outcomeState,
         observationDigest: hash(input.dispatch.observation),
+      } : undefined,
+      refusalReason: input.refusal,
+      // Real narrative: this process's clock, actual agent identity, and the
+      // digest of the policy.json evaluation this server actually performed.
+      narrative: {
+        committedAt: evaluatedAt,
+        observedAt: input.startedAt,
+        dispatchedAt: input.startedAt,
+        outcomeObservedAt: evaluatedAt,
+        epochOpenedAt: Math.min(input.startedAt, evaluatedAt) - 1,
+        epochClosedAt: evaluatedAt,
+        monotonicNs: Number(process.hrtime.bigint()),
+        bootId,
+        transportId: "mcp:onvif-mcp/0.1.0",
+        model: { provider: "mcp-client", model: input.agentId, version: "onvif-mcp/0.1.0" },
+        decision: input.refusal ? "deny" : "permit",
+        policySetRoot: this.policyRoot,
       },
       keys: await this.keys(),
       anchorLog: new LocalRfc6962Log(join(this.aarDir, "anchor.jsonl")),
