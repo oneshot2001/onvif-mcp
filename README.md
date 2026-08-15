@@ -35,7 +35,7 @@ attempt.
 ## Features
 
 - **Config drift executor** — baseline, diff, and safe remediation tools are VAPIX-only for now
-- **Four MCP tools** over stdio: `list_cameras`, `get_snapshot`, `ptz_move`, `get_receipts`
+- **MCP tools** over stdio: `list_cameras`, `get_snapshot`, `ptz_move`, `ptz_preset`, `get_receipts`, plus the config-drift trio
 - **Fail-closed per-agent policy** — tool allowlist, camera allowlist, PTZ step
   bounds per agent identity; unknown agents get nothing
 - **Signed receipts on every call** — hash-chained JSONL, ed25519-signed,
@@ -97,6 +97,7 @@ bun index.ts --verify
 | `list_cameras` | Live device info for cameras this agent may see | agent known, tool granted |
 | `get_snapshot` | Capture a JPEG, return path + SHA-256 | + camera granted |
 | `ptz_move` | Relative pan/tilt/zoom in degrees | + camera granted, camera is PTZ, step within `maxStep` |
+| `ptz_preset` | Recall a named PTZ preset (VAPIX); emits an AAR wire bundle | + camera granted, camera is PTZ, ptz grant |
 | `get_receipts` | Tail the signed receipt chain | agent known, tool granted |
 
 Every call — allowed or denied — appends a receipt. A denial looks like this:
@@ -141,8 +142,12 @@ the exact sequence. Not production software — see the roadmap.
 
 ## Roadmap
 
-- AAR v0.2 wire-conformant receipt producer (CBOR + COSE, verified against the
-  spec's byte-pinned KATs)
+- ~~AAR v0.2 wire-conformant receipt producer~~ **SHIPPED 2026-08-15** — `receipts-aar/`
+  emits deterministic-CBOR + COSE_Sign1 ES256 bundles for the pinned-ontology
+  actions (`camera.stream.view`, `camera.ptz.preset`), offline-verified conformant
+  by the spec's independent pyref verifier: `bun index.ts --verify-aar`.
+  A conformant verdict proves wire integrity + binding, not receipt-body truth — scope, demo-narrative placeholders, and same-operator disclosures: `docs/aar-alignment.md`. Remaining: wire-emit
+  policy denials (needs upstream wire-builder generalization)
 - Per-agent signing keys and signed policy objects (agent commissioning)
 - Clip/recording export
 - Non-AXIS ONVIF hardware validation

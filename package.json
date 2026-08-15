@@ -19,6 +19,7 @@
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.30.0",
+    "aar-kat-harness": "github:oneshot2001/aar",
     "zod": "^4.4.3"
   }
 }

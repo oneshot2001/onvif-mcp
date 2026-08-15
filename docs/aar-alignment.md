@@ -38,6 +38,46 @@ Estimated shape: a `receipts-aar` module producing `receipt-envelope` bytes +
 KAT-driven tests. Two-model process per AAR repo README: Claude plans/gates,
 Codex builds.
 
+## 2026-08-15 — wire-conformant producer SHIPPED (`receipts-aar/`)
+
+onvif-mcp now emits real AAR v0.2 wire bundles, offline-verified conformant by the
+spec's independent pyref verifier (`bun index.ts --verify-aar`, exit 0, all 20 steps,
+`evaluated_profile: AAR-3`, `coverage: complete`). Live-proven against AXIS Q6358-LE.
+
+How: the AAR reference demo-EP wire machinery (`buildDemoBundle`, keys, RFC 6962
+anchor log) is consumed as a pinned dependency (`aar-kat-harness@github:oneshot2001/aar`),
+so the bundle bytes come from the code the AAR gates verified. Byte tampering on an
+emitted bundle flips pyref to nonconformant (verified).
+
+Honest scope boundary:
+
+- **⚠️ Demo-narrative placeholders in receipt bodies.** `buildDemoBundle` authors the
+  observation/inference/authorization receipt bodies from its fixed Gate-5 scenario:
+  synthetic offsets on internal timestamps (`observed_at`, `dispatched_at`, epoch
+  `opened_at`, monotonic/boot ids), a fictional "scripted-agent" model record, and a
+  synthetic demo trust-policy decision that does **not** restate this server's
+  `policy.json` evaluation. **What is real in each bundle:** evaluation time, action
+  name, target, parameters, command manifest, dispatch status + response-body digest,
+  outcome level/state + observation digest, and device metadata. A pyref `conformant`
+  verdict proves wire-format integrity and binding — not the truth of the narrative
+  fields. Making those fields real requires generalizing the upstream wire-builder
+  (open item, with denial emission below).
+- **Single-writer assumption.** `producer-state.json` / `prior-state.json` /
+  `anchor.jsonl` are read-modify-write with no locking — run one server process per
+  receipts directory (same race class as the JSONL chain, wider surface).
+
+- **Only pinned-ontology actions are wire-emitted:** `get_snapshot` →
+  `camera.stream.view`, new `ptz_preset` tool → `camera.ptz.preset`. `ptz_move`
+  (relative — not in the v0.2 ontology) and `config_*` stay on the draft JSONL chain.
+- **Denials are not wire-emitted yet** — the reference wire-builder only models
+  delegation-expiry refusals; policy denials need a small upstream generalization.
+- **Same-operator disclosures apply (F22):** one process holds every key role
+  (per-agent key dirs under `~/.aar-onvif-mcp/<agent>/`, self-issued delegation),
+  the anchor log is local, identity is self-asserted. A verdict proves artifact
+  integrity/binding, not process honesty (G4).
+- Per-bundle evidence dirs under `receipts/aar/`: `bundle.cbor`, pinned
+  `trust-policy.json`, pre-emission `prior-state.json` snapshot, `meta.json`.
+
 ## Sequencing constraint (flagged 2026-08-04)
 
 The AAR repo is PRIVATE until launch. onvif-mcp going public with AAR references

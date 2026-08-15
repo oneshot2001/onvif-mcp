@@ -1,7 +1,7 @@
 {
   "agents": {
     "claude-main": {
-      "tools": ["list_cameras", "get_snapshot", "ptz_move", "get_receipts", "config_baseline", "config_drift", "config_remediate"],
+      "tools": ["list_cameras", "get_snapshot", "ptz_move", "ptz_preset", "get_receipts", "config_baseline", "config_drift", "config_remediate"],
       "cameras": ["q6358", "q6325", "p3285"],
       "ptz": { "maxStep": 30 },
       "config": { "groups": ["ImageSource", "Time", "Image"], "remediate": true }

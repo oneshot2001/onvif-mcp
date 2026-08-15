@@ -1,0 +1,7 @@
+{
+  "evaluated_at": 1786802187,
+  "tool_action": "camera.ptz.preset",
+  "camera": "q6358",
+  "agent": "claude-main",
+  "agent_keys": "public-keys-claude-main.json"
+}

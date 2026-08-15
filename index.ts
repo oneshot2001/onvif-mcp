@@ -6,6 +6,7 @@ import { z } from "zod";
 import { generateKeyPairSync, sign as edSign, verify as edVerify, createHash } from "node:crypto";
 import { existsSync, readFileSync, writeFileSync, appendFileSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
+import { AarWireProducer, jsonBytes, verifyBundleDir, type WireDispatch } from "./receipts-aar/producer";
 
 const ROOT = import.meta.dir;
 const AGENT = process.env.AGENT_ID ?? "unknown";
@@ -37,7 +38,7 @@ const PUB = readFileSync(join(KEYDIR, "receipt.pub"), "utf8");
 function lastReceipt(): { seq: number; hash: string } {
   if (!existsSync(LOG)) return { seq: 0, hash: "genesis" };
   const lines = readFileSync(LOG, "utf8").trim().split("\n");
-  const last = JSON.parse(lines[lines.length - 1]);
+  const last = JSON.parse(lines[lines.length - 1]!);
   return { seq: last.seq, hash: last.hash };
 }
 
@@ -45,7 +46,7 @@ function lastReceipt(): { seq: number; hash: string } {
 // outcome-evidence levels). Wire conformance (deterministic CBOR + detached
 // COSE_Sign1 ES256) is NOT claimed — this JSONL+ed25519 chain is a draft
 // transport; the conformant producer is scoped in docs/aar-alignment.md.
-const NODE_KIND: Record<string, string> = { ptz_move: "action_attempt", get_snapshot: "observation", list_cameras: "observation", get_receipts: "observation", config_baseline: "observation", config_drift: "observation", config_remediate: "action_attempt" };
+const NODE_KIND: Record<string, string> = { ptz_move: "action_attempt", ptz_preset: "action_attempt", get_snapshot: "observation", list_cameras: "observation", get_receipts: "observation", config_baseline: "observation", config_drift: "observation", config_remediate: "action_attempt" };
 function receipt(tool: string, params: unknown, decision: "allow" | "deny", detail: string, resultHash?: string, evidence?: string) {
   const prev = lastReceipt();
   const body = {
@@ -72,9 +73,15 @@ function allowed(tool: string, camera?: string): string | null {
   return null;
 }
 
+function camOf(id: string) {
+  const cam = cameras[id];
+  if (!cam) throw new Error(`unknown camera '${id}'`);
+  return cam;
+}
+
 // Digest auth via curl — it does the digest dance; native fetch can't.
 async function vapix(camera: string, path: string, outFile?: string): Promise<{ ok: boolean; body: string }> {
-  const cam = cameras[camera];
+  const cam = camOf(camera);
   const args = ["curl", "-sk", "--digest", "-u", `${cam.user}:${passwords[camera]}`, "--max-time", "10", `${cam.base}${path}`];
   if (outFile) args.push("-o", outFile);
   const p = Bun.spawnSync(args);
@@ -117,7 +124,7 @@ async function configParams(camera: string, groups: string[]): Promise<{ ok: boo
 
 // ONVIF SOAP call. AXIS serves every ONVIF service at /onvif/services (per GetServices).
 async function soap(camera: string, body: string): Promise<{ ok: boolean; body: string }> {
-  const cam = cameras[camera];
+  const cam = camOf(camera);
   const p = Bun.spawnSync(["curl", "-sk", "--digest", "-u", `${cam.user}:${passwords[camera]}`,
     "-H", "Content-Type: application/soap+xml", "--data",
     `<?xml version="1.0"?><s:Envelope xmlns:s="http://www.w3.org/2003/05/soap-envelope"><s:Body>${body}</s:Body></s:Envelope>`,
@@ -128,7 +135,7 @@ async function soap(camera: string, body: string): Promise<{ ok: boolean; body: 
 
 // Transport dispatch: same tool contract (degrees, jpeg) over either protocol.
 async function deviceInfo(camera: string): Promise<string> {
-  if (cameras[camera].protocol === "onvif") {
+  if (camOf(camera).protocol === "onvif") {
     const r = await soap(camera, '<tds:GetDeviceInformation xmlns:tds="http://www.onvif.org/ver10/device/wsdl"/>');
     const g = (tag: string) => r.body.match(new RegExp(`<tds:${tag}>([^<]+)`))?.[1] ?? "?";
     return `Model=${g("Manufacturer")} ${g("Model")} | Firmware=${g("FirmwareVersion")} | protocol=onvif`;
@@ -138,8 +145,8 @@ async function deviceInfo(camera: string): Promise<string> {
 }
 
 async function snapshot(camera: string, outFile: string): Promise<boolean> {
-  if (cameras[camera].protocol === "onvif") {
-    const cam = cameras[camera];
+  if (camOf(camera).protocol === "onvif") {
+    const cam = camOf(camera);
     const r = await soap(camera, `<trt:GetSnapshotUri xmlns:trt="http://www.onvif.org/ver10/media/wsdl"><trt:ProfileToken>${cam.profile ?? "profile_1_jpeg"}</trt:ProfileToken></trt:GetSnapshotUri>`);
     const uri = r.body.match(/<tt:Uri>([^<]+)/)?.[1]?.replace(/&amp;/g, "&");
     if (!uri) return false;
@@ -150,14 +157,45 @@ async function snapshot(camera: string, outFile: string): Promise<boolean> {
 }
 
 async function ptzMove(camera: string, pan: number, tilt: number, zoom: number): Promise<boolean> {
-  if (cameras[camera].protocol === "onvif") {
+  if (camOf(camera).protocol === "onvif") {
     // Generic translation space is -1..1 over the mechanical range; pan spans 360°.
     // Tilt/zoom use the same linear mapping — approximate, noted in README.
-    const cam = cameras[camera];
+    const cam = camOf(camera);
     const r = await soap(camera, `<tptz:RelativeMove xmlns:tptz="http://www.onvif.org/ver20/ptz/wsdl" xmlns:tt="http://www.onvif.org/ver10/schema"><tptz:ProfileToken>${cam.profile ?? "profile_1_jpeg"}</tptz:ProfileToken><tptz:Translation><tt:PanTilt x="${pan / 360}" y="${tilt / 360}"/><tt:Zoom x="${zoom / 100}"/></tptz:Translation></tptz:RelativeMove>`);
     return r.ok && r.body.includes("RelativeMoveResponse");
   }
   return (await vapix(camera, `/axis-cgi/com/ptz.cgi?rpan=${pan}&rtilt=${tilt}&rzoom=${zoom * 100}`)).ok;
+}
+
+// AXIS firmware version + product number for AAR source-device metadata.
+async function deviceMeta(camera: string): Promise<{ manufacturer: string; model: string; firmware: string }> {
+  if (camOf(camera).protocol === "onvif") {
+    const r = await soap(camera, '<tds:GetDeviceInformation xmlns:tds="http://www.onvif.org/ver10/device/wsdl"/>');
+    const g = (tag: string) => r.body.match(new RegExp(`<tds:${tag}>([^<]+)`))?.[1] ?? "unknown";
+    return { manufacturer: g("Manufacturer"), model: g("Model"), firmware: g("FirmwareVersion") };
+  }
+  const r = await vapix(camera, "/axis-cgi/param.cgi?action=list&group=Brand.ProdNbr,Properties.Firmware.Version");
+  const p = parseParams(r.body);
+  return { manufacturer: "AXIS", model: p["Brand.ProdNbr"] ?? camera, firmware: p["Properties.Firmware.Version"] ?? "unknown" };
+}
+
+// AAR wire emission for the two pinned-ontology actions. Failures surface in
+// the tool response — never silently dropped — but don't fail the camera op.
+const aarProducer = new AarWireProducer(ROOT, AGENT);
+async function emitAar(camera: string, actionName: "camera.stream.view" | "camera.ptz.preset",
+  parameters: Record<string, string | number | boolean>, dispatch: WireDispatch): Promise<string> {
+  try {
+    const { dir } = await aarProducer.emit({
+      agentId: AGENT, camera, cameraPtz: camOf(camera).ptz, protocol: camOf(camera).protocol,
+      deviceMetadata: await deviceMeta(camera), actionName, parameters, dispatch,
+    });
+    return `\naar-bundle: ${dir}`;
+  } catch (error) {
+    // Durable record: wire-emission failures land on the JSONL chain too,
+    // not just the ephemeral tool response.
+    receipt("aar_emit", { camera, action: actionName }, "allow", `wire emission FAILED: ${String(error)}`);
+    return `\naar-emit FAILED: ${String(error)}`;
+  }
 }
 
 const server = new McpServer({ name: "onvif-mcp", version: "0.1.0" });
@@ -165,7 +203,7 @@ const server = new McpServer({ name: "onvif-mcp", version: "0.1.0" });
 server.tool("list_cameras", "List cameras this agent may access, with live device info", {}, async () => {
   const deny = allowed("list_cameras");
   if (deny) { receipt("list_cameras", {}, "deny", deny); return { content: [{ type: "text", text: `DENIED: ${deny}` }] }; }
-  const visible = policy[AGENT].cameras;
+  const visible = policy[AGENT]!.cameras;
   const out: string[] = [];
   for (const id of visible) out.push(`${id}: ${await deviceInfo(id)}`);
   receipt("list_cameras", {}, "allow", `returned ${visible.length} cameras`);
@@ -179,9 +217,56 @@ server.tool("get_snapshot", "Capture a JPEG snapshot from a camera; returns save
   const file = join(ROOT, "receipts", `snap-${camera}-${Date.now()}.jpg`);
   const ok = await snapshot(camera, file);
   if (!ok || !existsSync(file)) { receipt("get_snapshot", { camera }, "allow", "capture FAILED"); return { content: [{ type: "text", text: "capture failed" }] }; }
-  const h = createHash("sha256").update(readFileSync(file)).digest("hex");
+  const jpeg = readFileSync(file);
+  const h = createHash("sha256").update(jpeg).digest("hex");
   receipt("get_snapshot", { camera }, "allow", `saved ${file}`, h);
-  return { content: [{ type: "text", text: `${file} sha256:${h.slice(0, 16)}…` }] };
+  // For a snapshot the produced frame IS the outcome: the observation is the
+  // same bytes as the response body — one capture, no independent second read.
+  // "consistent" is claimed only when the payload validates as a JPEG.
+  const jpegValid = jpeg.length > 2 && jpeg[0] === 0xff && jpeg[1] === 0xd8;
+  const aar = await emitAar(camera, "camera.stream.view", { file: file.split("/").pop()! }, {
+    status: 200, responseBody: jpeg,
+    outcomeLevel: jpegValid ? "device_acknowledged" : "unknown",
+    outcomeState: jpegValid ? "consistent" : "unknown",
+    observation: jpeg,
+  });
+  return { content: [{ type: "text", text: `${file} sha256:${h.slice(0, 16)}…${aar}` }] };
+});
+
+server.tool("ptz_preset", "Send a PTZ camera to a named preset (VAPIX cameras only)",
+  { camera: z.string(), preset: z.string().default("Home") }, async ({ camera, preset }) => {
+  const deny = allowed("ptz_preset", camera);
+  const cam = cameras[camera];
+  const bound = !deny && (!cam?.ptz ? `camera '${camera}' is not PTZ` :
+    !policy[AGENT]?.ptz ? "agent has no ptz grant" :
+    cam.protocol !== "vapix" ? "preset recall implemented for vapix protocol only" : null);
+  const reason = deny ?? bound;
+  if (reason) { receipt("ptz_preset", { camera, preset }, "deny", reason); return { content: [{ type: "text", text: `DENIED: ${reason}` }] }; }
+  const r = await vapix(camera, `/axis-cgi/com/ptz.cgi?gotoserverpresetname=${encodeURIComponent(preset)}`);
+  const ok = r.ok && !/^Error/m.test(r.body);
+  // Post-move readback: poll position until two consecutive reads match (dome
+  // settled) or ~8s timeout. The preset's target position is unknown to this
+  // process, so the readback can never prove CONSISTENCY with the command —
+  // outcome state stays honestly "unknown"; the settled position is recorded
+  // as the observation. "device_acknowledged" = the device 200-acked recall.
+  let pos = { ok: false, body: "" };
+  if (ok) {
+    let prev = "";
+    for (let i = 0; i < 8; i++) {
+      pos = await vapix(camera, "/axis-cgi/com/ptz.cgi?query=position");
+      if (pos.ok && prev && pos.body.trim() === prev) break;
+      prev = pos.ok ? pos.body.trim() : "";
+      await new Promise((resolve) => setTimeout(resolve, 1000));
+    }
+  }
+  receipt("ptz_preset", { camera, preset }, "allow", ok ? "preset recalled (vapix)" : "transport error", undefined, ok ? "device_acknowledged" : "unknown");
+  const aar = await emitAar(camera, "camera.ptz.preset", { preset }, {
+    status: ok ? 200 : 0, responseBody: jsonBytes({ body: r.body }),
+    outcomeLevel: ok && pos.ok ? "device_acknowledged" : "unknown",
+    outcomeState: "unknown",
+    observation: jsonBytes({ settled_position: pos.body.trim() }),
+  });
+  return { content: [{ type: "text", text: (ok ? `${camera} → preset '${preset}'\nsettled position: ${pos.body.trim().replace(/\n/g, " ")}` : "preset recall failed") + aar }] };
 });
 
 server.tool("ptz_move", "Relative PTZ move (degrees pan/tilt, zoom steps), bounded by policy",
@@ -196,8 +281,8 @@ server.tool("ptz_move", "Relative PTZ move (degrees pan/tilt, zoom steps), bound
   const reason = deny ?? bound;
   if (reason) { receipt("ptz_move", { camera, pan, tilt, zoom }, "deny", reason); return { content: [{ type: "text", text: `DENIED: ${reason}` }] }; }
   const ok = await ptzMove(camera, pan, tilt, zoom);
-  receipt("ptz_move", { camera, pan, tilt, zoom }, "allow", ok ? `moved via ${cameras[camera].protocol}` : "transport error");
-  return { content: [{ type: "text", text: ok ? `moved ${camera} pan=${pan}° tilt=${tilt}° zoom=${zoom} (${cameras[camera].protocol})` : "move failed" }] };
+  receipt("ptz_move", { camera, pan, tilt, zoom }, "allow", ok ? `moved via ${camOf(camera).protocol}` : "transport error");
+  return { content: [{ type: "text", text: ok ? `moved ${camera} pan=${pan}° tilt=${tilt}° zoom=${zoom} (${camOf(camera).protocol})` : "move failed" }] };
 });
 
 server.tool("config_baseline", "Capture allowed VAPIX parameters as the camera config baseline",
@@ -286,6 +371,31 @@ server.tool("get_receipts", "Return the last N signed receipts from the chain",
   receipt("get_receipts", { n }, "allow", `returned ${lines.length}`);
   return { content: [{ type: "text", text: lines.join("\n") || "(empty chain)" }] };
 });
+
+// --verify-aar [dir]: offline pyref verification of emitted AAR wire bundles
+if (process.argv.includes("--verify-aar")) {
+  const { readdirSync } = await import("node:fs");
+  const { resolve } = await import("node:path");
+  const arg = process.argv[process.argv.indexOf("--verify-aar") + 1];
+  const base = join(ROOT, "receipts", "aar");
+  const dirs = arg ? [resolve(arg)] : existsSync(base)
+    ? readdirSync(base).filter((d) => existsSync(join(base, d, "bundle.cbor"))).map((d) => join(base, d))
+    : [];
+  if (dirs.length === 0) { console.log("no AAR bundles found"); process.exit(1); }
+  let bad = 0;
+  for (const dir of dirs) {
+    try {
+      const { conformant, output } = verifyBundleDir(ROOT, dir);
+      console.log(`${conformant ? "CONFORMANT" : "NONCONFORMANT"}  ${dir}`);
+      if (!conformant) { bad++; console.log(output); }
+    } catch (error) {
+      bad++;
+      console.log(`NONCONFORMANT  ${dir}\nverification error: ${String(error)}`);
+    }
+  }
+  console.log(bad === 0 ? `${dirs.length} bundle(s) conformant (pyref offline verify)` : `${bad}/${dirs.length} bundles FAILED`);
+  process.exit(bad === 0 ? 0 : 1);
+}
 
 // --verify: recompute the hash chain + check every signature, then exit
 if (process.argv.includes("--verify")) {
