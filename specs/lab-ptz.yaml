@@ -1,0 +1,6 @@
+spec: camspec/0.1
+name: lab-ptz
+applies_to:
+  models: ["AXIS Q6358-LE"]
+presets:
+  Home: { pan: 0, tilt: 0, zoom: 1 }

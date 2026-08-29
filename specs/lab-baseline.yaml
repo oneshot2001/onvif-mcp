@@ -1,0 +1,5 @@
+spec: camspec/0.1
+name: lab-baseline
+params:
+  Time.NTP.Server: "0.0.0.0"
+  Image.I0.Appearance.Rotation: "0"

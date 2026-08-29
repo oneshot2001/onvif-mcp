@@ -46,6 +46,8 @@ attempt.
 - **No secrets on disk** — camera credentials resolve from a local credential
   store at startup and are never written or logged
 
+Commissioning-as-code turns a `specs/*.yaml` desired-state file into a read-only plan, an explicitly approved and postcondition-verified apply, or a later conformance check. Applies snapshot every changed parameter for rollback, presets are written only on PTZ cameras, and apply/verify runs emit signed JSON handoffs in `handoff/`; parameter access stays inside the existing config grant and hard denylist.
+
 ## Quick start
 
 ```bash
@@ -98,6 +100,9 @@ bun index.ts --verify
 | `get_snapshot` | Capture a JPEG, return path + SHA-256 | + camera granted |
 | `ptz_move` | Relative pan/tilt/zoom in degrees | + camera granted, camera is PTZ, step within `maxStep` |
 | `ptz_preset` | Recall a named PTZ preset (VAPIX); emits an AAR wire bundle | + camera granted, camera is PTZ, ptz grant |
+| `commission_plan` | Diff a camspec against live parameters; list applicable presets; no writes | + camera granted, config groups granted, all params allowed |
+| `commission_apply` | Dry-run unless `approve:true`; apply, verify, roll back on failure, emit signed handoff | + plan checks, config remediation grant for approved writes |
+| `commission_verify` | Check live camspec conformance and emit a signed handoff | + camera granted, config groups granted, all params allowed |
 | `get_receipts` | Tail the signed receipt chain | agent known, tool granted |
 
 Every call — allowed or denied — appends a receipt. A denial looks like this:

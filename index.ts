@@ -7,6 +7,7 @@ import { generateKeyPairSync, sign as edSign, verify as edVerify, createHash } f
 import { existsSync, readFileSync, writeFileSync, appendFileSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { AarWireProducer, jsonBytes, verifyBundleDir, type WireDispatch } from "./receipts-aar/producer";
+import { hardDenied, registerCommission, verifyHandoffs } from "./commission";
 
 const ROOT = import.meta.dir;
 const AGENT = process.env.AGENT_ID ?? "unknown";
@@ -49,7 +50,7 @@ function lastReceipt(): { seq: number; hash: string } {
 // outcome-evidence levels). Wire conformance (deterministic CBOR + detached
 // COSE_Sign1 ES256) is NOT claimed — this JSONL+ed25519 chain is a draft
 // transport; the conformant producer is scoped in docs/aar-alignment.md.
-const NODE_KIND: Record<string, string> = { ptz_move: "action_attempt", ptz_preset: "action_attempt", get_snapshot: "observation", list_cameras: "observation", get_receipts: "observation", config_baseline: "observation", config_drift: "observation", config_remediate: "action_attempt" };
+const NODE_KIND: Record<string, string> = { ptz_move: "action_attempt", ptz_preset: "action_attempt", get_snapshot: "observation", list_cameras: "observation", get_receipts: "observation", config_baseline: "observation", config_drift: "observation", config_remediate: "action_attempt", commission_plan: "observation", commission_apply: "action_attempt", commission_verify: "observation" };
 function receipt(tool: string, params: unknown, decision: "allow" | "deny", detail: string, resultHash?: string, evidence?: string) {
   const prev = lastReceipt();
   const body = {
@@ -93,7 +94,6 @@ async function vapix(camera: string, path: string, outFile?: string): Promise<{ 
 
 type Baseline = { camera: string; captured: string; groups: string[]; params: Record<string, string>; sha256: string };
 const BASELINES = join(ROOT, "baselines");
-const HARD_DENY = ["Network", "System.BoxRebootAction", "RemoteService"];
 const sha256 = (value: unknown) => createHash("sha256").update(typeof value === "string" ? value : JSON.stringify(value)).digest("hex");
 const inGroup = (param: string, groups: string[]) => groups.some((g) => param === g || param.startsWith(`${g}.`));
 const baselineFile = (camera: string) => join(BASELINES, `${camera}.json`);
@@ -209,6 +209,7 @@ async function emitAar(camera: string, actionName: "camera.stream.view" | "camer
 }
 
 const server = new McpServer({ name: "onvif-mcp", version: "0.1.0" });
+registerCommission(server, { root: ROOT, agent: AGENT, policy, policyBytes, cameras, privateKey: PRIV, vapix, configParams, parseParams, inGroup, sha256, receipt, lastReceipt });
 
 server.tool("list_cameras", "List cameras this agent may access, with live device info", {}, async () => {
   const deny = allowed("list_cameras");
@@ -356,7 +357,7 @@ server.tool("config_remediate", "Restore one drifted VAPIX parameter to its base
   if (deny) { receipt("config_remediate", params, "deny", deny); return { content: [{ type: "text", text: `DENIED: ${deny}` }] }; }
   const groups = policy[AGENT]!.config!.groups;
   const offGroup = !inGroup(param, groups) ? `param '${param}' is outside allowed config groups` : null;
-  const hard = HARD_DENY.some((g) => inGroup(param, [g])) || /Password|User|Root/.test(param) ? `param '${param}' is hard-denied` : null;
+  const hard = hardDenied(param, inGroup) ? `param '${param}' is hard-denied` : null;
   const reason = offGroup ?? hard;
   if (reason) { receipt("config_remediate", params, "deny", reason); return { content: [{ type: "text", text: `DENIED: ${reason}` }] }; }
   const file = baselineFile(camera);
@@ -429,7 +430,9 @@ if (process.argv.includes("--verify")) {
     if (!okHash || !okSig) { bad++; console.log(`BROKEN at seq ${r.seq}: hash=${okHash} sig=${okSig}`); }
     prev = hash;
   }
-  console.log(bad === 0 ? `chain OK — ${lines.length} receipts, every hash linked + signature valid` : `${bad} broken receipts`);
+  const handoffs = verifyHandoffs(ROOT, PUB);
+  bad += handoffs.bad.length;
+  console.log(bad === 0 ? `chain OK — ${lines.length} receipts, every hash linked + signature valid; ${handoffs.count} handoff signatures valid` : `${bad} broken receipts or handoffs${handoffs.bad.length ? ` (${handoffs.bad.join(", ")})` : ""}`);
   process.exit(bad === 0 ? 0 : 1);
 }
 
