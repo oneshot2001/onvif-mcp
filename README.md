@@ -180,3 +180,5 @@ Apache-2.0.
 Render a handoff for the customer: `bun render-handoff.ts handoff/<file>.json --pdf` (HTML + PDF next to the JSON; JSON stays the signed source of truth).
 
 Known device quirk (AXIS Q6358-LE, OS 12.9.57): `ptz.cgi?setserverpresetname=<new>` returns 204 but the preset is not persisted; `commission_verify` catches this via `query=presetposcam` readback and reports `preset:<name>` as failed — which is the reason readback exists.
+
+VAPIX OpenAPI + llms.txt (the quirks this server learned the hard way): https://github.com/oneshot2001/vapix-openapi
