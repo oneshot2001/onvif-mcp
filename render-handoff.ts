@@ -25,7 +25,7 @@ code,.mono{font-family:"JetBrains Mono",Menlo,monospace;font-size:8.5pt;word-bre
 <div class="muted">${esc(h.artifact)} · spec <b>${esc(h.spec.name)}</b> · run ${esc(h.run.started)} → ${esc(h.run.finished)}</div>
 <h2>Device</h2><div class="grid"><div>Camera: <b>${esc(h.camera.id)}</b> — ${esc(h.camera.model)}</div><div>Firmware: ${esc(h.camera.firmware)}</div><div>Serial: ${esc(h.camera.serial)}</div><div>Agent: ${esc(h.agent)}</div></div>
 <h2>Plan (live → desired)</h2>${rows(h.plan, ["param", "current", "desired"])}
-<h2>Applied</h2>${rows(h.applied.map((a: any) => a.param ? a : { param: `preset:${a.preset}`, previous: "", desired: `pan ${a.pan} tilt ${a.tilt} zoom ${a.zoom}` }), ["param", "previous", "desired"])}
+<h2>Applied</h2>${rows(h.applied.map((a: any) => a.param ? a : a.preset ? { param: `preset:${a.preset}`, previous: "", desired: `pan ${a.pan} tilt ${a.tilt} zoom ${a.zoom}` } : { param: `scenario:${a.scenario}`, previous: "", desired: `${a.type} (id ${a.id})` }), ["param", "previous", "desired"])}
 <h2>Verification — ${status}</h2>${rows(h.verify.failed, ["param", "desired", "observed"])}
 ${h.rollback ? `<p>Rollback performed: <b>${h.rollback.performed}</b> · rollback verified: <b>${h.rollback.verified}</b></p>` : ""}
 ${h.scenarios ? `<h2>Analytics scenarios</h2>${rows(h.scenarios.map((s: any) => ({ ...s, readback_diff: (s.readback_diff ?? []).length })), ["name", "id", "type", "deployed", "readback_diff"])}` : ""}
