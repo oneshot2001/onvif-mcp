@@ -176,3 +176,5 @@ WSDL files are redistributed; the SOAP envelopes are hand-authored.
 The [AAR specification](https://github.com/oneshot2001/aar) this project
 aligns with is separately licensed: spec text CC BY 4.0, reference code
 Apache-2.0.
+
+Render a handoff for the customer: `bun render-handoff.ts handoff/<file>.json --pdf` (HTML + PDF next to the JSON; JSON stays the signed source of truth).
