@@ -1,0 +1,39 @@
+{
+  "artifact": "camspec-handoff/0.1",
+  "spec": {
+    "name": "lab-ptz",
+    "sha256": "96d38afee98deb21571cba0bb6fe4e95a1a3b80f05ec92c1c30a10303449c477"
+  },
+  "camera": {
+    "id": "q6358",
+    "model": "AXIS Q6358-LE",
+    "firmware": "12.9.57",
+    "serial": "E82725146996"
+  },
+  "agent": "claude-main",
+  "policy_sha256": "7147df676d8af75d39d91ba6bab76fa1d6291945796d390a84039add0c2593d7",
+  "run": {
+    "started": "2026-08-30T00:58:41.988Z",
+    "finished": "2026-08-30T00:58:42.123Z"
+  },
+  "plan": [],
+  "applied": [
+    {
+      "preset": "Home",
+      "pan": 0,
+      "tilt": 0,
+      "zoom": 1
+    }
+  ],
+  "verify": {
+    "passed": true,
+    "failed": []
+  },
+  "rollback": null,
+  "receipts": {
+    "first_seq": 75,
+    "last_seq": 77,
+    "chain_head_hash": "cf1a7ab5cf497d3115ffbb9da845a0b228529021dcb116e2e820f7cfcd8b221f"
+  },
+  "sig": "70rIrlB6GKAOTJQzZTI2537h/Wavty7BONCY4ku7B7166iKZrGxQaV3JOU51A6Shdmh+gnnEXSaYGfSj5znRBw=="
+}

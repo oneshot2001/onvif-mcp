@@ -1,0 +1,44 @@
+{
+  "artifact": "camspec-handoff/0.1",
+  "spec": {
+    "name": "lab-baseline",
+    "sha256": "7f668ac9f532e88bfc2569796fb507a6317d3d8b4c49cf2c081052fb02d2ec72"
+  },
+  "camera": {
+    "id": "q6358",
+    "model": "AXIS Q6358-LE",
+    "firmware": "12.9.57",
+    "serial": "E82725146996"
+  },
+  "agent": "claude-main",
+  "policy_sha256": "7147df676d8af75d39d91ba6bab76fa1d6291945796d390a84039add0c2593d7",
+  "run": {
+    "started": "2026-08-30T00:58:30.927Z",
+    "finished": "2026-08-30T00:58:31.296Z"
+  },
+  "plan": [
+    {
+      "param": "Image.I0.Appearance.Rotation",
+      "current": "180",
+      "desired": "0"
+    }
+  ],
+  "applied": [],
+  "verify": {
+    "passed": false,
+    "failed": [
+      {
+        "param": "Image.I0.Appearance.Rotation",
+        "desired": "0",
+        "observed": "180"
+      }
+    ]
+  },
+  "rollback": null,
+  "receipts": {
+    "first_seq": 63,
+    "last_seq": 63,
+    "chain_head_hash": "046555549c1fd65fdc467809b217783bd3fac83046713d04b97dfa20ef30a128"
+  },
+  "sig": "JtPmPo7wL8+TOnku3nnPGJPLA2Xh3cpMGX6uNlYQp98CL3LUz7S5H+GoQNGxeWJS7TorI+cxAmzl9V92x1VtAw=="
+}
