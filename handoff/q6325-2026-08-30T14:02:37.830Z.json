@@ -1,0 +1,62 @@
+{
+  "artifact": "camspec-handoff/0.1",
+  "spec": {
+    "name": "lab-aoa",
+    "sha256": "f4b3eeb2dc58532b1001fb4ddb7eb51b71d54ad19e37b5b39101af5e960bd846"
+  },
+  "camera": {
+    "id": "q6325",
+    "model": "AXIS Q6325-LE",
+    "firmware": "12.9.57",
+    "serial": "E827252C9B9F"
+  },
+  "agent": "claude-main",
+  "policy_sha256": "9ce4998f1d881901a194431a4560aae0ef644dbf76715bade3da4d69368204ce",
+  "run": {
+    "started": "2026-08-30T14:02:07.446Z",
+    "finished": "2026-08-30T14:02:37.830Z"
+  },
+  "plan": [],
+  "applied": [
+    {
+      "scenario": "lab-motion",
+      "id": 2,
+      "type": "motion"
+    }
+  ],
+  "verify": {
+    "passed": true,
+    "failed": []
+  },
+  "rollback": null,
+  "scenarios": [
+    {
+      "name": "lab-motion",
+      "id": 2,
+      "type": "motion",
+      "deployed": true,
+      "readback_diff": []
+    }
+  ],
+  "observation": {
+    "window_seconds": 30,
+    "started": "2026-08-30T14:02:07.620Z",
+    "finished": "2026-08-30T14:02:37.827Z",
+    "fired": {
+      "lab-motion": {
+        "count": 0,
+        "first": null,
+        "last": null
+      }
+    },
+    "warnings": [
+      "lab-motion: 0 events in window"
+    ]
+  },
+  "receipts": {
+    "first_seq": 147,
+    "last_seq": 149,
+    "chain_head_hash": "fa57a0d5c0355cd6b6a42a226ed53413ac9cab3a0e0db94260005fc0c9d7b3bb"
+  },
+  "sig": "zc/WxGheddhueeGEIzxLQg1+R1EuCFfSozVO3DJtr9T+A/0aLpkbmW9xxnZ2GKQdiE8rsa/NhYI8t2cVHYpeAA=="
+}

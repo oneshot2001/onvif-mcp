@@ -1,0 +1,83 @@
+{
+  "artifact": "camspec-handoff/0.1",
+  "spec": {
+    "name": "lab-aoa-rb",
+    "sha256": "d1ecd5130a2b4cc4de8a32ca2d64826519a1281953111b47811fc61d8969c60f"
+  },
+  "camera": {
+    "id": "q6358",
+    "model": "AXIS Q6358-LE",
+    "firmware": "12.9.57",
+    "serial": "E82725146996"
+  },
+  "agent": "claude-main",
+  "policy_sha256": "9ce4998f1d881901a194431a4560aae0ef644dbf76715bade3da4d69368204ce",
+  "run": {
+    "started": "2026-08-30T14:01:54.250Z",
+    "finished": "2026-08-30T14:01:55.140Z"
+  },
+  "plan": [
+    {
+      "param": "Image.I0.Appearance.Rotation",
+      "current": "180",
+      "desired": "0"
+    }
+  ],
+  "applied": [
+    {
+      "param": "Image.I0.Appearance.Rotation",
+      "previous": "180",
+      "desired": "0"
+    },
+    {
+      "scenario": "lab-motion",
+      "id": 4,
+      "type": "motion"
+    }
+  ],
+  "verify": {
+    "passed": false,
+    "failed": [
+      {
+        "param": "Image.I0.Appearance.Rotation",
+        "desired": "0",
+        "observed": "0"
+      }
+    ]
+  },
+  "rollback": {
+    "performed": true,
+    "verified": true
+  },
+  "scenarios": [
+    {
+      "name": "lab-motion",
+      "id": 4,
+      "type": "motion",
+      "deployed": true,
+      "readback_diff": []
+    }
+  ],
+  "observation": {
+    "window_seconds": 0,
+    "started": "2026-08-30T14:01:54.817Z",
+    "finished": "2026-08-30T14:01:54.817Z",
+    "fired": {
+      "lab-motion": {
+        "count": 0,
+        "first": null,
+        "last": null
+      }
+    },
+    "warnings": [
+      "observation skipped by observe.seconds=0",
+      "lab-motion: 0 events in window"
+    ]
+  },
+  "receipts": {
+    "first_seq": 141,
+    "last_seq": 145,
+    "chain_head_hash": "8df70345834fd1f6d5b458417ed350257d0344e2780bc333769977c4eb2f755c"
+  },
+  "sig": "9Jgx86Mnxkj88YkSe2GHwJOnXae+YWPnMXxoJ437pyMdM9FzGJ7QsnswLhXyHFJtYobkBt5pqjb766hvD9LNDw=="
+}
