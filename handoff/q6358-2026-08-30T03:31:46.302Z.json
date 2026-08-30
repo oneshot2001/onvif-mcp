@@ -1,0 +1,68 @@
+{
+  "artifact": "camspec-handoff/0.1",
+  "spec": {
+    "name": "lab-aoa",
+    "sha256": "f4b3eeb2dc58532b1001fb4ddb7eb51b71d54ad19e37b5b39101af5e960bd846"
+  },
+  "camera": {
+    "id": "q6358",
+    "model": "AXIS Q6358-LE",
+    "firmware": "12.9.57",
+    "serial": "E82725146996"
+  },
+  "agent": "claude-main",
+  "policy_sha256": "9ce4998f1d881901a194431a4560aae0ef644dbf76715bade3da4d69368204ce",
+  "run": {
+    "started": "2026-08-30T03:31:46.158Z",
+    "finished": "2026-08-30T03:31:46.302Z"
+  },
+  "plan": [],
+  "applied": [],
+  "verify": {
+    "passed": false,
+    "failed": [
+      {
+        "param": "scenario:lab-motion",
+        "desired": "{\"name\":\"lab-motion\",\"type\":\"motion\",\"objects\":[\"human\"],\"geometry\":[[-0.9,-0.9],[0.9,-0.9],[0.9,0.9],[-0.9,0.9]]}",
+        "observed": null
+      }
+    ]
+  },
+  "rollback": {
+    "performed": true,
+    "verified": true
+  },
+  "scenarios": [
+    {
+      "name": "lab-motion",
+      "id": null,
+      "type": "motion",
+      "deployed": false,
+      "readback_diff": [
+        "scenario missing"
+      ]
+    }
+  ],
+  "observation": {
+    "window_seconds": 30,
+    "started": "2026-08-30T03:31:46.301Z",
+    "finished": "2026-08-30T03:31:46.301Z",
+    "fired": {
+      "lab-motion": {
+        "count": 0,
+        "first": null,
+        "last": null
+      }
+    },
+    "warnings": [
+      "observation skipped because scenarios were not deployed and verified",
+      "lab-motion: 0 events in window"
+    ]
+  },
+  "receipts": {
+    "first_seq": 80,
+    "last_seq": 81,
+    "chain_head_hash": "a9033186a0906cb559e835ff57c2f598c4f84845ee92caaa4f168e65b5b1764b"
+  },
+  "sig": "MZoDj68lCrwtHggYzrCljU5nlJmlDf1E4U0dbdnymBfonrOKVUBxoY7klnJUOG266Int7sMRUUAr0JWiUDbVDw=="
+}

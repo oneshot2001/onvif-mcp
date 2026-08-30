@@ -1,0 +1,56 @@
+{
+  "artifact": "camspec-handoff/0.1",
+  "spec": {
+    "name": "lab-aoa",
+    "sha256": "f4b3eeb2dc58532b1001fb4ddb7eb51b71d54ad19e37b5b39101af5e960bd846"
+  },
+  "camera": {
+    "id": "q6358",
+    "model": "AXIS Q6358-LE",
+    "firmware": "12.9.57",
+    "serial": "E82725146996"
+  },
+  "agent": "claude-main",
+  "policy_sha256": "9ce4998f1d881901a194431a4560aae0ef644dbf76715bade3da4d69368204ce",
+  "run": {
+    "started": "2026-08-30T03:33:03.456Z",
+    "finished": "2026-08-30T03:33:33.792Z"
+  },
+  "plan": [],
+  "applied": [],
+  "verify": {
+    "passed": true,
+    "failed": []
+  },
+  "rollback": null,
+  "scenarios": [
+    {
+      "name": "lab-motion",
+      "id": 4,
+      "type": "motion",
+      "deployed": true,
+      "readback_diff": []
+    }
+  ],
+  "observation": {
+    "window_seconds": 30,
+    "started": "2026-08-30T03:33:03.584Z",
+    "finished": "2026-08-30T03:33:33.787Z",
+    "fired": {
+      "lab-motion": {
+        "count": 0,
+        "first": null,
+        "last": null
+      }
+    },
+    "warnings": [
+      "lab-motion: 0 events in window"
+    ]
+  },
+  "receipts": {
+    "first_seq": 88,
+    "last_seq": 89,
+    "chain_head_hash": "e772fc48bde8b9497671bda2d327fd54dda02ca9e85acfcc2e4042648f7ce8e1"
+  },
+  "sig": "Jj88M1Y3IIwF6letNmWTarzvZFD4MRPntC/x1+YhEBQchJ0hEwV8bfgflrUOrT3Vb2eC3TVCKb5wNC4vt49DAA=="
+}

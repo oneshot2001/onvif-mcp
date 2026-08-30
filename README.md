@@ -46,7 +46,7 @@ attempt.
 - **No secrets on disk** — camera credentials resolve from a local credential
   store at startup and are never written or logged
 
-Commissioning-as-code turns a `specs/*.yaml` desired-state file into a read-only plan, an explicitly approved and postcondition-verified apply, or a later conformance check. Applies snapshot every changed parameter for rollback, presets are written only on PTZ cameras, and apply/verify runs emit signed JSON handoffs in `handoff/`; parameter access stays inside the existing config grant and hard denylist.
+Commissioning-as-code turns a `specs/*.yaml` desired-state file into a read-only plan, an explicitly approved and postcondition-verified apply, or a later conformance check. Applies snapshot every changed parameter for rollback, verify PTZ presets by name, and merge named AXIS Object Analytics scenarios without removing unmanaged scenarios. Approved AOA writes require `config.aoa: true`; after readback, apply observes filtered AOA topics with a Bun WebSocket using Basic authentication over TLS (accepting the camera's self-signed certificate, like `curl -k`) and records counts and warnings in the signed handoff. Apply/verify runs emit signed JSON handoffs in `handoff/`, while parameter access stays inside the existing config grant and hard denylist.
 
 ## Quick start
 
@@ -100,9 +100,9 @@ bun index.ts --verify
 | `get_snapshot` | Capture a JPEG, return path + SHA-256 | + camera granted |
 | `ptz_move` | Relative pan/tilt/zoom in degrees | + camera granted, camera is PTZ, step within `maxStep` |
 | `ptz_preset` | Recall a named PTZ preset (VAPIX); emits an AAR wire bundle | + camera granted, camera is PTZ, ptz grant |
-| `commission_plan` | Diff a camspec against live parameters; list applicable presets; no writes | + camera granted, config groups granted, all params allowed |
-| `commission_apply` | Dry-run unless `approve:true`; apply, verify, roll back on failure, emit signed handoff | + plan checks, config remediation grant for approved writes |
-| `commission_verify` | Check live camspec conformance and emit a signed handoff | + camera granted, config groups granted, all params allowed |
+| `commission_plan` | Diff parameters and named AOA scenarios; list applicable presets; no writes | + camera granted, config groups granted, all params allowed, AOA grant for scenario specs |
+| `commission_apply` | Dry-run unless `approve:true`; apply, read back, observe AOA events, roll back parameters on failure, emit signed handoff | + plan checks, config remediation grant for approved writes, `config.aoa` for scenarios |
+| `commission_verify` | Check parameter, preset-name, and AOA scenario conformance; emit a signed handoff | + camera granted, config groups granted, all params allowed, AOA grant for scenarios |
 | `get_receipts` | Tail the signed receipt chain | agent known, tool granted |
 
 Every call — allowed or denied — appends a receipt. A denial looks like this:
@@ -178,3 +178,5 @@ aligns with is separately licensed: spec text CC BY 4.0, reference code
 Apache-2.0.
 
 Render a handoff for the customer: `bun render-handoff.ts handoff/<file>.json --pdf` (HTML + PDF next to the JSON; JSON stays the signed source of truth).
+
+Known device quirk (AXIS Q6358-LE, OS 12.9.57): `ptz.cgi?setserverpresetname=<new>` returns 204 but the preset is not persisted; `commission_verify` catches this via `query=presetposcam` readback and reports `preset:<name>` as failed — which is the reason readback exists.

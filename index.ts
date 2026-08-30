@@ -16,7 +16,7 @@ const cameras: Record<string, { base: string; user: string; credKey: string; ptz
 // Raw bytes kept: the AAR producer signs the digest of the EXACT policy the
 // server evaluates (parsed once here) — never a fresh disk read (TOCTOU).
 const policyBytes = readFileSync(join(ROOT, "policy.json"));
-const policy: Record<string, { tools: string[]; cameras: string[]; ptz?: { maxStep: number }; config?: { groups: string[]; remediate?: boolean } }> =
+const policy: Record<string, { tools: string[]; cameras: string[]; ptz?: { maxStep: number }; config?: { groups: string[]; remediate?: boolean; aoa?: boolean } }> =
   JSON.parse(policyBytes.toString("utf8")).agents;
 
 // --- credentials: fetched from the cred store at startup, never persisted ---
@@ -90,6 +90,54 @@ async function vapix(camera: string, path: string, outFile?: string): Promise<{ 
   if (outFile) args.push("-o", outFile);
   const p = Bun.spawnSync(args);
   return { ok: p.exitCode === 0, body: p.stdout.toString() };
+}
+
+async function vapixPost(camera: string, path: string, body: unknown): Promise<{ ok: boolean; body: string }> {
+  const cam = camOf(camera);
+  const p = Bun.spawnSync(["curl", "-sk", "--digest", "-u", `${cam.user}:${passwords[camera]}`, "--max-time", "15",
+    "-H", "content-type: application/json", "-d", "@-", `${cam.base}${path}`], { stdin: Buffer.from(JSON.stringify(body)) });
+  return { ok: p.exitCode === 0, body: p.stdout.toString() };
+}
+
+async function observeEvents(camera: string, topics: string[], seconds: number): Promise<{ events: Array<{ topic: string; timestamp?: string | number; message?: { data?: Record<string, unknown> } }>; warnings: string[] }> {
+  const cam = camOf(camera);
+  const host = new URL(cam.base).host;
+  const events: Array<{ topic: string; timestamp?: string | number; message?: { data?: Record<string, unknown> } }> = [];
+  const warnings: string[] = [];
+  return await new Promise((resolve) => {
+    let opened = false, done = false;
+    let windowTimer: ReturnType<typeof setTimeout> | undefined;
+    const finish = (warning?: string) => {
+      if (done) return;
+      done = true;
+      clearTimeout(openTimer);
+      if (windowTimer) clearTimeout(windowTimer);
+      if (warning) warnings.push(warning);
+      if (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING) ws.close();
+      resolve({ events, warnings });
+    };
+    const ws = new WebSocket(`wss://${host}/vapix/ws-data-stream?sources=events`, {
+      headers: { Authorization: `Basic ${Buffer.from(`${cam.user}:${passwords[camera]}`).toString("base64")}` },
+      tls: { rejectUnauthorized: false },
+    });
+    const openTimer = setTimeout(() => finish("event WebSocket connection timed out"), 10_000);
+    ws.addEventListener("open", () => {
+      opened = true;
+      clearTimeout(openTimer);
+      ws.send(JSON.stringify({ apiVersion: "1.0", method: "events:configure", params: { eventFilterList: topics.map((topicFilter) => ({ topicFilter })) } }));
+      windowTimer = setTimeout(() => finish(), seconds * 1000);
+    });
+    ws.addEventListener("message", ({ data }) => {
+      try {
+        const value = JSON.parse(typeof data === "string" ? data : Buffer.from(data as ArrayBuffer).toString()) as { method?: unknown; params?: { notification?: unknown }; error?: { message?: unknown } };
+        if (value.error) warnings.push(`event stream error: ${String(value.error.message ?? "unknown")}`);
+        const notification = value.method === "events:notify" ? value.params?.notification : null;
+        if (notification && typeof notification === "object" && typeof (notification as { topic?: unknown }).topic === "string") events.push(notification as typeof events[number]);
+      } catch { warnings.push("event stream returned invalid JSON"); }
+    });
+    ws.addEventListener("error", () => finish("event WebSocket failed"));
+    ws.addEventListener("close", () => { if (!done) finish(opened ? "event WebSocket closed before the observation window finished" : "event WebSocket connection rejected"); });
+  });
 }
 
 type Baseline = { camera: string; captured: string; groups: string[]; params: Record<string, string>; sha256: string };
@@ -209,7 +257,7 @@ async function emitAar(camera: string, actionName: "camera.stream.view" | "camer
 }
 
 const server = new McpServer({ name: "onvif-mcp", version: "0.1.0" });
-registerCommission(server, { root: ROOT, agent: AGENT, policy, policyBytes, cameras, privateKey: PRIV, vapix, configParams, parseParams, inGroup, sha256, receipt, lastReceipt });
+registerCommission(server, { root: ROOT, agent: AGENT, policy, policyBytes, cameras, privateKey: PRIV, vapix, vapixPost, observeEvents, configParams, parseParams, inGroup, sha256, receipt, lastReceipt });
 
 server.tool("list_cameras", "List cameras this agent may access, with live device info", {}, async () => {
   const deny = allowed("list_cameras");
