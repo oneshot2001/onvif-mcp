@@ -1,0 +1,9 @@
+spec: camspec/0.1
+name: lab-aoa-p3285
+applies_to: { models: ["AXIS P3285-LVE"] }
+scenarios:
+  - name: lab-motion
+    type: motion
+    objects: [human]
+    area: [[-0.9, -0.9], [0.9, -0.9], [0.9, 0.9], [-0.9, 0.9]]
+observe: { seconds: 60 }

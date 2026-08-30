@@ -298,8 +298,7 @@ export function registerCommission(server: McpServer, d: CommissionDeps) {
         const data = event.message?.data ?? {};
         const active = data.active ?? data.state;
         if (active !== undefined && ![true, 1, "1", "true"].includes(active as never)) continue;
-        const raw = event.timestamp;
-        const at = typeof raw === "number" ? new Date(raw < 100_000_000_000 ? raw * 1000 : raw).toISOString() : typeof raw === "string" && !Number.isNaN(Date.parse(raw)) ? new Date(raw).toISOString() : new Date().toISOString();
+        const at = new Date().toISOString(); // host receive time — camera clocks drift (P3285 ran 17s ahead with no NTP)
         const item = fired[name]!;
         item.count++;
         item.first ??= at;

@@ -1,0 +1,58 @@
+{
+  "artifact": "camspec-handoff/0.1",
+  "spec": {
+    "name": "lab-aoa-p3285",
+    "sha256": "27d216817f3a1254c3592154cb4b7ce1d6440f61ac3a098869556511434e87a4"
+  },
+  "camera": {
+    "id": "p3285",
+    "model": "AXIS P3285-LVE",
+    "firmware": "12.7.61",
+    "serial": "E82725203C16"
+  },
+  "agent": "claude-main",
+  "policy_sha256": "9ce4998f1d881901a194431a4560aae0ef644dbf76715bade3da4d69368204ce",
+  "run": {
+    "started": "2026-08-30T13:31:51.258Z",
+    "finished": "2026-08-30T13:31:51.651Z"
+  },
+  "plan": [],
+  "applied": [],
+  "verify": {
+    "passed": true,
+    "failed": []
+  },
+  "rollback": null,
+  "scenarios": [
+    {
+      "name": "lab-motion",
+      "id": null,
+      "type": "motion",
+      "deployed": false,
+      "readback_diff": []
+    }
+  ],
+  "observation": {
+    "window_seconds": 60,
+    "started": "2026-08-30T13:31:51.650Z",
+    "finished": "2026-08-30T13:31:51.650Z",
+    "fired": {
+      "lab-motion": {
+        "count": 0,
+        "first": null,
+        "last": null
+      }
+    },
+    "warnings": [
+      "AOA application unavailable; scenarios skipped",
+      "observation skipped because scenarios were not deployed and verified",
+      "lab-motion: 0 events in window"
+    ]
+  },
+  "receipts": {
+    "first_seq": 135,
+    "last_seq": 135,
+    "chain_head_hash": "2e7714c5905c980caf5f7c0bfa597d0ae9b4d3de98c26faf5b685ca40f7626db"
+  },
+  "sig": "xiRsPG0Df5PljvsG4YVzv3Y/6Lj02SgMzrnra3EY6oE3E+5hUal2UsjONPrg76xBpcyn/+Qg39RB28964llCBA=="
+}

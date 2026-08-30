@@ -17,7 +17,7 @@ await client.connect(new StdioClientTransport({
 }));
 
 for (const [tool, args] of calls) {
-  const r = await client.callTool({ name: tool, arguments: args });
+  const r = await client.callTool({ name: tool, arguments: args }, undefined, { timeout: 600_000 });
   const text = (r.content as Array<{ type: string; text?: string }>).map((c) => c.text).join("");
   console.log(`[${agent}] ${tool}(${JSON.stringify(args)}) →\n${text}\n`);
 }
