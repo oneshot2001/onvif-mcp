@@ -36,6 +36,7 @@ attempt.
 
 - **Config drift executor** — baseline, diff, and safe remediation tools are VAPIX-only for now
 - **MCP tools** over stdio: `list_cameras`, `get_snapshot`, `ptz_move`, `ptz_preset`, `get_receipts`, plus the config-drift trio
+- **Inline snapshots** — JPEG snapshots return MCP image content alongside the saved file path and SHA-256 hash
 - **Fail-closed per-agent policy** — tool allowlist, camera allowlist, PTZ step
   bounds per agent identity; unknown agents get nothing
 - **Signed receipts on every call** — hash-chained JSONL, ed25519-signed,

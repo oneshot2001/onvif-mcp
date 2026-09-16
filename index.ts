@@ -8,6 +8,7 @@ import { existsSync, readFileSync, writeFileSync, appendFileSync, mkdirSync } fr
 import { join } from "node:path";
 import { AarWireProducer, jsonBytes, verifyBundleDir, type WireDispatch } from "./receipts-aar/producer";
 import { hardDenied, registerCommission, verifyHandoffs } from "./commission";
+import { snapshotContent } from "./snapshot-content";
 
 const ROOT = import.meta.dir;
 const AGENT = process.env.AGENT_ID ?? "unknown";
@@ -269,7 +270,7 @@ server.tool("list_cameras", "List cameras this agent may access, with live devic
   return { content: [{ type: "text", text: out.join("\n") }] };
 });
 
-server.tool("get_snapshot", "Capture a JPEG snapshot from a camera; returns saved file path",
+server.tool("get_snapshot", "Capture a JPEG snapshot from a camera; returns the image plus saved file path and sha256",
   { camera: z.string().describe("camera id from list_cameras") }, async ({ camera }) => {
   const startedAt = Math.floor(Date.now() / 1000);
   const deny = allowed("get_snapshot", camera);
@@ -294,7 +295,7 @@ server.tool("get_snapshot", "Capture a JPEG snapshot from a camera; returns save
     outcomeState: jpegValid ? "consistent" : "unknown",
     observation: jpeg,
   } });
-  return { content: [{ type: "text", text: `${file} sha256:${h.slice(0, 16)}…${aar}` }] };
+  return { content: snapshotContent(jpeg, file, h, aar) };
 });
 
 server.tool("ptz_preset", "Send a PTZ camera to a named preset (VAPIX cameras only)",
