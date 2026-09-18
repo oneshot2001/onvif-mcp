@@ -863,60 +863,6 @@
       "epoch_seq": 5,
       "receipt_id": "f091cda5ed0973571dc486716528d8d238c48c70eb33081e341e49f5a57e50e7",
       "envelope_digest": "bbf4b01d08c455aef464bbca48464684aa3330a0515db8fec7f54ea15f31f74b"
-    },
-    {
-      "issuer_kid": "a7a8f25a426adc513a7f96c50c94ab0606c2710691d1e5483bcef1fde61aff56",
-      "issuer_seq": 1800,
-      "epoch_owner_kid": "bb0327c69603071a7569ebe3c33e05f43d972a805d2cef3aa870ef3c39bfe171",
-      "epoch_id": 18,
-      "epoch_seq": 0,
-      "receipt_id": "6eb00c5499958be16c50dc56fdbb6b032087e031c0fe07eee4ed59c7e078a629",
-      "envelope_digest": "281b47f4e8519d11dddf25233888218b08594872f390818ba3fd69fd95f6d343"
-    },
-    {
-      "issuer_kid": "a7a8f25a426adc513a7f96c50c94ab0606c2710691d1e5483bcef1fde61aff56",
-      "issuer_seq": 1801,
-      "epoch_owner_kid": "bb0327c69603071a7569ebe3c33e05f43d972a805d2cef3aa870ef3c39bfe171",
-      "epoch_id": 18,
-      "epoch_seq": 1,
-      "receipt_id": "cb55e1b2fc56d0bf0141cb8e53eb907e70699bc2980a317835ae373f3e4afd1b",
-      "envelope_digest": "0922ae8e51b9bd3e98b48adebbc242ca3e9df370df76eb4ec3d5ca8df1dbec02"
-    },
-    {
-      "issuer_kid": "bb0327c69603071a7569ebe3c33e05f43d972a805d2cef3aa870ef3c39bfe171",
-      "issuer_seq": 1802,
-      "epoch_owner_kid": "bb0327c69603071a7569ebe3c33e05f43d972a805d2cef3aa870ef3c39bfe171",
-      "epoch_id": 18,
-      "epoch_seq": 2,
-      "receipt_id": "7b36f3178413e15af5812c5e1098d6fde4ade18c9fc73f659f79e6b97e2a5ab5",
-      "envelope_digest": "42805ca10d5d7e1e128d40fb063e6dd91afce90a1108e309582aece1ad31a28b"
-    },
-    {
-      "issuer_kid": "bb0327c69603071a7569ebe3c33e05f43d972a805d2cef3aa870ef3c39bfe171",
-      "issuer_seq": 1803,
-      "epoch_owner_kid": "bb0327c69603071a7569ebe3c33e05f43d972a805d2cef3aa870ef3c39bfe171",
-      "epoch_id": 18,
-      "epoch_seq": 3,
-      "receipt_id": "df74bb3ae0402c5d366bafbfb24786599578f9cb43acad8dad7922cd248e79ed",
-      "envelope_digest": "abca48b70f738220eb1e56eeea4cd1bbc370e4b3637a80d91874d8e5698f83c6"
-    },
-    {
-      "issuer_kid": "bb0327c69603071a7569ebe3c33e05f43d972a805d2cef3aa870ef3c39bfe171",
-      "issuer_seq": 1804,
-      "epoch_owner_kid": "bb0327c69603071a7569ebe3c33e05f43d972a805d2cef3aa870ef3c39bfe171",
-      "epoch_id": 18,
-      "epoch_seq": 4,
-      "receipt_id": "578552ed7d1ed25d8074d3cc67c49ecae593c01f460ea13db6c9eb429aebdd8d",
-      "envelope_digest": "4b852532f51209149d2b91a1ed3da7189dee28470ee51f85a771eafa55821825"
-    },
-    {
-      "issuer_kid": "4273d056a64100f557ecf27d6d4c0ba3c57674e022686a01e5a120d6fbf841a3",
-      "issuer_seq": 1805,
-      "epoch_owner_kid": "bb0327c69603071a7569ebe3c33e05f43d972a805d2cef3aa870ef3c39bfe171",
-      "epoch_id": 18,
-      "epoch_seq": 5,
-      "receipt_id": "db2e1308e1aee3356b0186bb63e26463fe32ffe1cf9af242dfbfc9f4863f51d2",
-      "envelope_digest": "794360b1b8e21f1f49a87ee62693b892eda2b45d2219bfb3fd8e09b8c9ac3e31"
     }
   ],
   "entries": []
