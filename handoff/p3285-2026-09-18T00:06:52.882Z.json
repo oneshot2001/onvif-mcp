@@ -1,0 +1,42 @@
+{
+  "artifact": "camspec-handoff/0.1",
+  "spec": {
+    "name": "lab-aoa-p3285",
+    "sha256": "27d216817f3a1254c3592154cb4b7ce1d6440f61ac3a098869556511434e87a4"
+  },
+  "camera": {
+    "id": "p3285",
+    "model": "AXIS P3285-LVE",
+    "firmware": "12.7.61",
+    "serial": "E82725203C16"
+  },
+  "agent": "claude-main",
+  "policy_sha256": "9ce4998f1d881901a194431a4560aae0ef644dbf76715bade3da4d69368204ce",
+  "run": {
+    "started": "2026-09-18T00:06:52.161Z",
+    "finished": "2026-09-18T00:06:52.882Z"
+  },
+  "plan": [],
+  "applied": [],
+  "verify": {
+    "passed": true,
+    "failed": []
+  },
+  "rollback": null,
+  "scenarios": [
+    {
+      "name": "lab-motion",
+      "id": 3,
+      "type": "motion",
+      "deployed": true,
+      "readback_diff": []
+    }
+  ],
+  "observation": null,
+  "receipts": {
+    "first_seq": 162,
+    "last_seq": 162,
+    "chain_head_hash": "3b30d82ca7c52a2a6187fb485437f12d7b0154542b3d651bbd3e65aabc2fd6c4"
+  },
+  "sig": "Ct6BPOikPHBlx8MrjCqhsYH9MkKIgcpciIjE4QI/yjq6Vf7IkxCbiCLwW5CxkB0hTnT1X/qaKQePiq6aKqACCA=="
+}

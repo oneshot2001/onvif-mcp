@@ -1,0 +1,42 @@
+{
+  "artifact": "camspec-handoff/0.1",
+  "spec": {
+    "name": "lab-aoa",
+    "sha256": "f4b3eeb2dc58532b1001fb4ddb7eb51b71d54ad19e37b5b39101af5e960bd846"
+  },
+  "camera": {
+    "id": "q6325",
+    "model": "AXIS Q6325-LE",
+    "firmware": "12.9.57",
+    "serial": "E827252C9B9F"
+  },
+  "agent": "claude-main",
+  "policy_sha256": "9ce4998f1d881901a194431a4560aae0ef644dbf76715bade3da4d69368204ce",
+  "run": {
+    "started": "2026-09-18T00:06:51.390Z",
+    "finished": "2026-09-18T00:06:51.528Z"
+  },
+  "plan": [],
+  "applied": [],
+  "verify": {
+    "passed": true,
+    "failed": []
+  },
+  "rollback": null,
+  "scenarios": [
+    {
+      "name": "lab-motion",
+      "id": 2,
+      "type": "motion",
+      "deployed": true,
+      "readback_diff": []
+    }
+  ],
+  "observation": null,
+  "receipts": {
+    "first_seq": 160,
+    "last_seq": 160,
+    "chain_head_hash": "299da03386da938d3d8b0ad0f017ed7b48d773c929f3253f770855eb9d069905"
+  },
+  "sig": "H1+RkGcvf9pDhXGBuUyIFU/fQZKQVtbEnDD2JiQ9ytKwrXc1iqL49EJJZ92V7Y4pZ30LxZrNl91/rCHMSAhCAw=="
+}
