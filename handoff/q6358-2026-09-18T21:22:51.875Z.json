@@ -1,0 +1,57 @@
+{
+  "artifact": "camspec-handoff/0.1",
+  "spec": {
+    "name": "lab-aoa",
+    "sha256": "f4b3eeb2dc58532b1001fb4ddb7eb51b71d54ad19e37b5b39101af5e960bd846"
+  },
+  "camera": {
+    "id": "q6358",
+    "model": "AXIS Q6358-LE",
+    "firmware": "12.9.57",
+    "serial": "E82725146996"
+  },
+  "agent": "claude-main",
+  "policy_sha256": "9ce4998f1d881901a194431a4560aae0ef644dbf76715bade3da4d69368204ce",
+  "run": {
+    "started": "2026-09-18T21:22:21.520Z",
+    "finished": "2026-09-18T21:22:51.875Z"
+  },
+  "plan": [],
+  "applied": [],
+  "verify": {
+    "passed": true,
+    "failed": []
+  },
+  "rollback": null,
+  "scenarios": [
+    {
+      "name": "lab-motion",
+      "id": 4,
+      "type": "motion",
+      "deployed": true,
+      "readback_diff": []
+    }
+  ],
+  "observation": {
+    "window_seconds": 30,
+    "started": "2026-09-18T21:22:21.670Z",
+    "finished": "2026-09-18T21:22:51.874Z",
+    "fired": {
+      "lab-motion": {
+        "count": 0,
+        "first": null,
+        "last": null
+      }
+    },
+    "warnings": [
+      "lab-motion: 0 events in window"
+    ]
+  },
+  "notes": "Nobody in zone during the window at fifteen hours and twenty two minutes. Yard empty. Daylight. No dogs loose in the yard.",
+  "receipts": {
+    "first_seq": 189,
+    "last_seq": 190,
+    "chain_head_hash": "3da120a02e5f2602174fe44a24398510a589d7dea115bd758731a62eddbca3c7"
+  },
+  "sig": "5KLb/wmhCUkdHbDGHedpTO3wmGROnkh8mwDWSYXOXLjtq2kVdaKstFh0pyeF8msaQY1pBCDH+tlyjamyf678Dg=="
+}

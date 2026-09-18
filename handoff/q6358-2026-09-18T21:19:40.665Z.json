@@ -1,0 +1,55 @@
+{
+  "artifact": "camspec-handoff/0.1",
+  "spec": {
+    "name": "lab-aoa",
+    "sha256": "f4b3eeb2dc58532b1001fb4ddb7eb51b71d54ad19e37b5b39101af5e960bd846"
+  },
+  "camera": {
+    "id": "q6358",
+    "model": "AXIS Q6358-LE",
+    "firmware": "12.9.57",
+    "serial": "E82725146996"
+  },
+  "agent": "claude-main",
+  "policy_sha256": "9ce4998f1d881901a194431a4560aae0ef644dbf76715bade3da4d69368204ce",
+  "run": {
+    "started": "2026-09-18T21:19:10.314Z",
+    "finished": "2026-09-18T21:19:40.665Z"
+  },
+  "plan": [],
+  "applied": [],
+  "verify": {
+    "passed": true,
+    "failed": []
+  },
+  "rollback": null,
+  "scenarios": [
+    {
+      "name": "lab-motion",
+      "id": 4,
+      "type": "motion",
+      "deployed": true,
+      "readback_diff": []
+    }
+  ],
+  "observation": {
+    "window_seconds": 30,
+    "started": "2026-09-18T21:19:10.460Z",
+    "finished": "2026-09-18T21:19:40.663Z",
+    "fired": {
+      "lab-motion": {
+        "count": 2,
+        "first": "2026-09-18T21:19:40.663Z",
+        "last": "2026-09-18T21:19:40.663Z"
+      }
+    },
+    "warnings": []
+  },
+  "notes": "Enter the zone at fifteen eighteen. Stood for about five seconds. Left the same way. Daylight.",
+  "receipts": {
+    "first_seq": 183,
+    "last_seq": 184,
+    "chain_head_hash": "f4d9521f56010507523bcfaaea8cc5226b930e01b3f61f3faec6fb20be194d07"
+  },
+  "sig": "EZjarBj+asg+eLQuMp3yluqExoeThRxJClajEmyco7yL7k/3DYM5FG4DWoPjB1J2HP36Q+Kjke9ITT3R0VhxBQ=="
+}

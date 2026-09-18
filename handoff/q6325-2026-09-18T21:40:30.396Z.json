@@ -1,0 +1,55 @@
+{
+  "artifact": "camspec-handoff/0.1",
+  "spec": {
+    "name": "lab-aoa",
+    "sha256": "f4b3eeb2dc58532b1001fb4ddb7eb51b71d54ad19e37b5b39101af5e960bd846"
+  },
+  "camera": {
+    "id": "q6325",
+    "model": "AXIS Q6325-LE",
+    "firmware": "12.9.57",
+    "serial": "E827252C9B9F"
+  },
+  "agent": "claude-main",
+  "policy_sha256": "9ce4998f1d881901a194431a4560aae0ef644dbf76715bade3da4d69368204ce",
+  "run": {
+    "started": "2026-09-18T21:40:00.072Z",
+    "finished": "2026-09-18T21:40:30.396Z"
+  },
+  "plan": [],
+  "applied": [],
+  "verify": {
+    "passed": true,
+    "failed": []
+  },
+  "rollback": null,
+  "scenarios": [
+    {
+      "name": "lab-motion",
+      "id": 2,
+      "type": "motion",
+      "deployed": true,
+      "readback_diff": []
+    }
+  ],
+  "observation": {
+    "window_seconds": 30,
+    "started": "2026-09-18T21:40:00.199Z",
+    "finished": "2026-09-18T21:40:30.393Z",
+    "fired": {
+      "lab-motion": {
+        "count": 1,
+        "first": "2026-09-18T21:40:30.392Z",
+        "last": "2026-09-18T21:40:30.392Z"
+      }
+    },
+    "warnings": []
+  },
+  "notes": "Standing still inside the zone from before the window opened at fifteen hours, thirty nine minutes did not move until it closed. Daylight. No dog with me.",
+  "receipts": {
+    "first_seq": 220,
+    "last_seq": 221,
+    "chain_head_hash": "1f7a8e99605b149f65e7d8a459c6af27473e1368173ce55b0e743f90d9d1c73c"
+  },
+  "sig": "QNvdqDfsSVuC5u//NbXp84tHBXyDofFeTBOzteopd/XXJn/1ELwd1Wrjfb8nFg+RuolpwJqoCfEuJWpLM2twAw=="
+}

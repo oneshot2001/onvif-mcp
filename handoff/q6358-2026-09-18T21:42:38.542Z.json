@@ -1,0 +1,57 @@
+{
+  "artifact": "camspec-handoff/0.1",
+  "spec": {
+    "name": "lab-aoa",
+    "sha256": "f4b3eeb2dc58532b1001fb4ddb7eb51b71d54ad19e37b5b39101af5e960bd846"
+  },
+  "camera": {
+    "id": "q6358",
+    "model": "AXIS Q6358-LE",
+    "firmware": "12.9.57",
+    "serial": "E82725146996"
+  },
+  "agent": "claude-main",
+  "policy_sha256": "9ce4998f1d881901a194431a4560aae0ef644dbf76715bade3da4d69368204ce",
+  "run": {
+    "started": "2026-09-18T21:42:08.167Z",
+    "finished": "2026-09-18T21:42:38.542Z"
+  },
+  "plan": [],
+  "applied": [],
+  "verify": {
+    "passed": true,
+    "failed": []
+  },
+  "rollback": null,
+  "scenarios": [
+    {
+      "name": "lab-motion",
+      "id": 4,
+      "type": "motion",
+      "deployed": true,
+      "readback_diff": []
+    }
+  ],
+  "observation": {
+    "window_seconds": 30,
+    "started": "2026-09-18T21:42:08.344Z",
+    "finished": "2026-09-18T21:42:38.540Z",
+    "fired": {
+      "lab-motion": {
+        "count": 0,
+        "first": null,
+        "last": null
+      }
+    },
+    "warnings": [
+      "lab-motion: 0 events in window"
+    ]
+  },
+  "notes": "Walk the zone twice at fifteen forty one. Camera had panned off its normal view before the run and was pointed at the roof. Daylight, one dog present.",
+  "receipts": {
+    "first_seq": 228,
+    "last_seq": 229,
+    "chain_head_hash": "1b5b4f81897d0153620dc3e544ebd719b209046625a11267dcdc4498573f3c42"
+  },
+  "sig": "liS3mrzkSug2uBK18E9rKStLpMjcsKDt1bCESB9WnXdIlyWDpwXcU7bqt3Qe+fU6ROu29frkPz91lQG0iLr4CQ=="
+}

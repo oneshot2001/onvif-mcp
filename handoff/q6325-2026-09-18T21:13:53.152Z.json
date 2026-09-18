@@ -1,0 +1,55 @@
+{
+  "artifact": "camspec-handoff/0.1",
+  "spec": {
+    "name": "lab-aoa",
+    "sha256": "f4b3eeb2dc58532b1001fb4ddb7eb51b71d54ad19e37b5b39101af5e960bd846"
+  },
+  "camera": {
+    "id": "q6325",
+    "model": "AXIS Q6325-LE",
+    "firmware": "12.9.57",
+    "serial": "E827252C9B9F"
+  },
+  "agent": "claude-main",
+  "policy_sha256": "9ce4998f1d881901a194431a4560aae0ef644dbf76715bade3da4d69368204ce",
+  "run": {
+    "started": "2026-09-18T21:13:22.822Z",
+    "finished": "2026-09-18T21:13:53.152Z"
+  },
+  "plan": [],
+  "applied": [],
+  "verify": {
+    "passed": true,
+    "failed": []
+  },
+  "rollback": null,
+  "scenarios": [
+    {
+      "name": "lab-motion",
+      "id": 2,
+      "type": "motion",
+      "deployed": true,
+      "readback_diff": []
+    }
+  ],
+  "observation": {
+    "window_seconds": 30,
+    "started": "2026-09-18T21:13:22.960Z",
+    "finished": "2026-09-18T21:13:53.151Z",
+    "fired": {
+      "lab-motion": {
+        "count": 1,
+        "first": "2026-09-18T21:13:53.151Z",
+        "last": "2026-09-18T21:13:53.151Z"
+      }
+    },
+    "warnings": []
+  },
+  "notes": "One slow pass through the zone at fifteen hours and thirteen minutes. About ten seconds in the frame, daylight.",
+  "receipts": {
+    "first_seq": 174,
+    "last_seq": 175,
+    "chain_head_hash": "4c8f746e050bda9954899d4676c32d0deeef27cbfee5e8be5c5716c4f1214928"
+  },
+  "sig": "JW41MCjy3xmRxWZZ9RXmGQENEr/n7+von4vi4NqFvhthSSVz84ph7HrWW4iQ/t8MtIls3unXP0AghWkF+wOtCw=="
+}

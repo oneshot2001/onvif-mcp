@@ -1,0 +1,57 @@
+{
+  "artifact": "camspec-handoff/0.1",
+  "spec": {
+    "name": "lab-aoa",
+    "sha256": "f4b3eeb2dc58532b1001fb4ddb7eb51b71d54ad19e37b5b39101af5e960bd846"
+  },
+  "camera": {
+    "id": "q6325",
+    "model": "AXIS Q6325-LE",
+    "firmware": "12.9.57",
+    "serial": "E827252C9B9F"
+  },
+  "agent": "claude-main",
+  "policy_sha256": "9ce4998f1d881901a194431a4560aae0ef644dbf76715bade3da4d69368204ce",
+  "run": {
+    "started": "2026-09-18T21:23:35.654Z",
+    "finished": "2026-09-18T21:24:06.005Z"
+  },
+  "plan": [],
+  "applied": [],
+  "verify": {
+    "passed": true,
+    "failed": []
+  },
+  "rollback": null,
+  "scenarios": [
+    {
+      "name": "lab-motion",
+      "id": 2,
+      "type": "motion",
+      "deployed": true,
+      "readback_diff": []
+    }
+  ],
+  "observation": {
+    "window_seconds": 30,
+    "started": "2026-09-18T21:23:35.809Z",
+    "finished": "2026-09-18T21:24:06.004Z",
+    "fired": {
+      "lab-motion": {
+        "count": 0,
+        "first": null,
+        "last": null
+      }
+    },
+    "warnings": [
+      "lab-motion: 0 events in window"
+    ]
+  },
+  "notes": "Nobody in zone during the window at fifteen hours, twenty three minutes, yard empty. One dog out.",
+  "receipts": {
+    "first_seq": 192,
+    "last_seq": 193,
+    "chain_head_hash": "da7ac5ebbba626c707262a0ffc80f456566789b09f45faf64eb2c0e43dd34b7b"
+  },
+  "sig": "r7cdV64Zgd16V6BIYNcHG7iXjAAKAkP8bO6kpr0TzU3k8nV8WO9hkFk3p2uEm1/JH5YnHZHA3+ha4UmO4L/oAg=="
+}

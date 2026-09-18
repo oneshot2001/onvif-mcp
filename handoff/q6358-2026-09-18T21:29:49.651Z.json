@@ -1,0 +1,57 @@
+{
+  "artifact": "camspec-handoff/0.1",
+  "spec": {
+    "name": "lab-aoa",
+    "sha256": "f4b3eeb2dc58532b1001fb4ddb7eb51b71d54ad19e37b5b39101af5e960bd846"
+  },
+  "camera": {
+    "id": "q6358",
+    "model": "AXIS Q6358-LE",
+    "firmware": "12.9.57",
+    "serial": "E82725146996"
+  },
+  "agent": "claude-main",
+  "policy_sha256": "9ce4998f1d881901a194431a4560aae0ef644dbf76715bade3da4d69368204ce",
+  "run": {
+    "started": "2026-09-18T21:29:19.305Z",
+    "finished": "2026-09-18T21:29:49.651Z"
+  },
+  "plan": [],
+  "applied": [],
+  "verify": {
+    "passed": true,
+    "failed": []
+  },
+  "rollback": null,
+  "scenarios": [
+    {
+      "name": "lab-motion",
+      "id": 4,
+      "type": "motion",
+      "deployed": true,
+      "readback_diff": []
+    }
+  ],
+  "observation": {
+    "window_seconds": 30,
+    "started": "2026-09-18T21:29:19.447Z",
+    "finished": "2026-09-18T21:29:49.644Z",
+    "fired": {
+      "lab-motion": {
+        "count": 0,
+        "first": null,
+        "last": null
+      }
+    },
+    "warnings": [
+      "lab-motion: 0 events in window"
+    ]
+  },
+  "notes": "We've one arm into the frame edge at fifteen hours twenty nine minutes for about five seconds. Body, never in zone, daylight. One dog in frame sitting on the ground.",
+  "receipts": {
+    "first_seq": 204,
+    "last_seq": 205,
+    "chain_head_hash": "a225188c791f81f5e6a9ee1e60b1ea3abe7ab6609fc4941a656d1fc992394f1b"
+  },
+  "sig": "BDCcNSPZA45Sornmi6cjN0oEdM5cAbsAhyopa4WrC+XeJtp4HMZDI1fdZnEeT+cjZnE4PVHC+JyWAULaPekeDw=="
+}

@@ -1,0 +1,55 @@
+{
+  "artifact": "camspec-handoff/0.1",
+  "spec": {
+    "name": "lab-aoa",
+    "sha256": "f4b3eeb2dc58532b1001fb4ddb7eb51b71d54ad19e37b5b39101af5e960bd846"
+  },
+  "camera": {
+    "id": "q6325",
+    "model": "AXIS Q6325-LE",
+    "firmware": "12.9.57",
+    "serial": "E827252C9B9F"
+  },
+  "agent": "claude-main",
+  "policy_sha256": "9ce4998f1d881901a194431a4560aae0ef644dbf76715bade3da4d69368204ce",
+  "run": {
+    "started": "2026-09-18T21:27:41.059Z",
+    "finished": "2026-09-18T21:28:11.383Z"
+  },
+  "plan": [],
+  "applied": [],
+  "verify": {
+    "passed": true,
+    "failed": []
+  },
+  "rollback": null,
+  "scenarios": [
+    {
+      "name": "lab-motion",
+      "id": 2,
+      "type": "motion",
+      "deployed": true,
+      "readback_diff": []
+    }
+  ],
+  "observation": {
+    "window_seconds": 30,
+    "started": "2026-09-18T21:27:41.189Z",
+    "finished": "2026-09-18T21:28:11.383Z",
+    "fired": {
+      "lab-motion": {
+        "count": 1,
+        "first": "2026-09-18T21:28:11.383Z",
+        "last": "2026-09-18T21:28:11.383Z"
+      }
+    },
+    "warnings": []
+  },
+  "notes": "walked around behind the camera at fifteen hours, twenty seven minutes in the frame for a very short amount of time, but walked out of view or behind the frame Dogs partially in frame daylight hours",
+  "receipts": {
+    "first_seq": 201,
+    "last_seq": 202,
+    "chain_head_hash": "a1f09d03b25219e4b904c7f66b3cb6f93d07f40f0a5ceef9cb6bd8d99be39165"
+  },
+  "sig": "k1tMCPYm10kGlf8eTBu09G8ZZqUzBc3gNziXY68cO3qz0dPaT+HDQBzFh0blLnipYzIg9Z3pmZsj2Pbc0Fg/Bg=="
+}

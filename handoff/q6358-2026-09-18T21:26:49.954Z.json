@@ -1,0 +1,57 @@
+{
+  "artifact": "camspec-handoff/0.1",
+  "spec": {
+    "name": "lab-aoa",
+    "sha256": "f4b3eeb2dc58532b1001fb4ddb7eb51b71d54ad19e37b5b39101af5e960bd846"
+  },
+  "camera": {
+    "id": "q6358",
+    "model": "AXIS Q6358-LE",
+    "firmware": "12.9.57",
+    "serial": "E82725146996"
+  },
+  "agent": "claude-main",
+  "policy_sha256": "9ce4998f1d881901a194431a4560aae0ef644dbf76715bade3da4d69368204ce",
+  "run": {
+    "started": "2026-09-18T21:26:19.611Z",
+    "finished": "2026-09-18T21:26:49.954Z"
+  },
+  "plan": [],
+  "applied": [],
+  "verify": {
+    "passed": true,
+    "failed": []
+  },
+  "rollback": null,
+  "scenarios": [
+    {
+      "name": "lab-motion",
+      "id": 4,
+      "type": "motion",
+      "deployed": true,
+      "readback_diff": []
+    }
+  ],
+  "observation": {
+    "window_seconds": 30,
+    "started": "2026-09-18T21:26:19.751Z",
+    "finished": "2026-09-18T21:26:49.952Z",
+    "fired": {
+      "lab-motion": {
+        "count": 0,
+        "first": null,
+        "last": null
+      }
+    },
+    "warnings": [
+      "lab-motion: 0 events in window"
+    ]
+  },
+  "notes": "Nobody in zone during the window at fifteen hours, twenty six minutes, daylight, yard empty, one dog partially in view.",
+  "receipts": {
+    "first_seq": 198,
+    "last_seq": 199,
+    "chain_head_hash": "87caa9e4383704c09102dc7ab8609551da178b8b5feaf1f92dc80011b3832bee"
+  },
+  "sig": "LYmGXjL1j1DD6bEozGsFFNCuEPOEYU4rWTwwhvm9B0edv/fqF+X3euTD4fyIgh0vmnsEYBsF6L7VEPBulj21Ag=="
+}

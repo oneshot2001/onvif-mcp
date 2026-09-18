@@ -1,0 +1,57 @@
+{
+  "artifact": "camspec-handoff/0.1",
+  "spec": {
+    "name": "lab-aoa-p3285",
+    "sha256": "27d216817f3a1254c3592154cb4b7ce1d6440f61ac3a098869556511434e87a4"
+  },
+  "camera": {
+    "id": "p3285",
+    "model": "AXIS P3285-LVE",
+    "firmware": "12.7.61",
+    "serial": "E82725203C16"
+  },
+  "agent": "claude-main",
+  "policy_sha256": "9ce4998f1d881901a194431a4560aae0ef644dbf76715bade3da4d69368204ce",
+  "run": {
+    "started": "2026-09-18T21:44:04.020Z",
+    "finished": "2026-09-18T21:45:04.914Z"
+  },
+  "plan": [],
+  "applied": [],
+  "verify": {
+    "passed": true,
+    "failed": []
+  },
+  "rollback": null,
+  "scenarios": [
+    {
+      "name": "lab-motion",
+      "id": 3,
+      "type": "motion",
+      "deployed": true,
+      "readback_diff": []
+    }
+  ],
+  "observation": {
+    "window_seconds": 60,
+    "started": "2026-09-18T21:44:04.766Z",
+    "finished": "2026-09-18T21:45:04.910Z",
+    "fired": {
+      "lab-motion": {
+        "count": 0,
+        "first": null,
+        "last": null
+      }
+    },
+    "warnings": [
+      "lab-motion: 0 events in window"
+    ]
+  },
+  "notes": "One pass through the zone at fifteen hours forty three minutes. This camera has no NTP configured, and its clock runs ahead of host by roughly a minute and a half daylight, possibly a dog with me.",
+  "receipts": {
+    "first_seq": 234,
+    "last_seq": 235,
+    "chain_head_hash": "87a156662c96859f9b700e3624de23b417b2b76e3e119c6d8d36df8b4775d656"
+  },
+  "sig": "XSjCZMU60M2eed62k0r3r/LOGWNUjh4KDB1jiCEqnNZc86AoRYlqFFAtEW2S1DIpM+ETBpaAljiB47r/1Pz1DQ=="
+}

@@ -1,0 +1,55 @@
+{
+  "artifact": "camspec-handoff/0.1",
+  "spec": {
+    "name": "lab-aoa",
+    "sha256": "f4b3eeb2dc58532b1001fb4ddb7eb51b71d54ad19e37b5b39101af5e960bd846"
+  },
+  "camera": {
+    "id": "q6358",
+    "model": "AXIS Q6358-LE",
+    "firmware": "12.9.57",
+    "serial": "E82725146996"
+  },
+  "agent": "claude-main",
+  "policy_sha256": "9ce4998f1d881901a194431a4560aae0ef644dbf76715bade3da4d69368204ce",
+  "run": {
+    "started": "2026-09-18T21:10:35.829Z",
+    "finished": "2026-09-18T21:11:06.184Z"
+  },
+  "plan": [],
+  "applied": [],
+  "verify": {
+    "passed": true,
+    "failed": []
+  },
+  "rollback": null,
+  "scenarios": [
+    {
+      "name": "lab-motion",
+      "id": 4,
+      "type": "motion",
+      "deployed": true,
+      "readback_diff": []
+    }
+  ],
+  "observation": {
+    "window_seconds": 30,
+    "started": "2026-09-18T21:10:35.976Z",
+    "finished": "2026-09-18T21:11:06.183Z",
+    "fired": {
+      "lab-motion": {
+        "count": 1,
+        "first": "2026-09-18T21:11:06.183Z",
+        "last": "2026-09-18T21:11:06.183Z"
+      }
+    },
+    "warnings": []
+  },
+  "notes": "Walk through the zone twice at fifteen ten time normal pace daylight. Two dogs loose in the yard.",
+  "receipts": {
+    "first_seq": 171,
+    "last_seq": 172,
+    "chain_head_hash": "ca4c2f9af25e13f0578d467d2f049fb9c03b5e57b3151abd9756d1a3667b6a03"
+  },
+  "sig": "bUqoc9I1+UuS1XYfsuL+fHVKMNRIL4ZRhtTHQCtmQq089qPxVusyMd7jtV1BXH0Qcbmzs8waeqdZQ2GGbfyiDg=="
+}

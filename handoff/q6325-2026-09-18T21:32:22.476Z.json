@@ -1,0 +1,57 @@
+{
+  "artifact": "camspec-handoff/0.1",
+  "spec": {
+    "name": "lab-aoa",
+    "sha256": "f4b3eeb2dc58532b1001fb4ddb7eb51b71d54ad19e37b5b39101af5e960bd846"
+  },
+  "camera": {
+    "id": "q6325",
+    "model": "AXIS Q6325-LE",
+    "firmware": "12.9.57",
+    "serial": "E827252C9B9F"
+  },
+  "agent": "claude-main",
+  "policy_sha256": "9ce4998f1d881901a194431a4560aae0ef644dbf76715bade3da4d69368204ce",
+  "run": {
+    "started": "2026-09-18T21:31:52.145Z",
+    "finished": "2026-09-18T21:32:22.476Z"
+  },
+  "plan": [],
+  "applied": [],
+  "verify": {
+    "passed": true,
+    "failed": []
+  },
+  "rollback": null,
+  "scenarios": [
+    {
+      "name": "lab-motion",
+      "id": 2,
+      "type": "motion",
+      "deployed": true,
+      "readback_diff": []
+    }
+  ],
+  "observation": {
+    "window_seconds": 30,
+    "started": "2026-09-18T21:31:52.280Z",
+    "finished": "2026-09-18T21:32:22.473Z",
+    "fired": {
+      "lab-motion": {
+        "count": 0,
+        "first": null,
+        "last": null
+      }
+    },
+    "warnings": [
+      "lab-motion: 0 events in window"
+    ]
+  },
+  "notes": "Stayed out of the frame at fifteen hours and thirty one minutes. One, possibly two dog ran through the frame zone after a thrown toy. No person in the picture daylight.",
+  "receipts": {
+    "first_seq": 207,
+    "last_seq": 208,
+    "chain_head_hash": "22b8a159f404ebd1e6d9ce98750ce89fb5c1a7288b8b8edbac55fbd5e6d1a8a6"
+  },
+  "sig": "YW9P545nJ5G1V80YhFVcQj+YIkJgTRHT7sSBOrxPdViPnAHMyaTWoL6ONArGwvvYjcI+H0qzN24rhMlWYNgtAQ=="
+}

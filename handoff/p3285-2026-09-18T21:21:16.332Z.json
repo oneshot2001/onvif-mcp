@@ -1,0 +1,55 @@
+{
+  "artifact": "camspec-handoff/0.1",
+  "spec": {
+    "name": "lab-aoa-p3285",
+    "sha256": "27d216817f3a1254c3592154cb4b7ce1d6440f61ac3a098869556511434e87a4"
+  },
+  "camera": {
+    "id": "p3285",
+    "model": "AXIS P3285-LVE",
+    "firmware": "12.7.61",
+    "serial": "E82725203C16"
+  },
+  "agent": "claude-main",
+  "policy_sha256": "9ce4998f1d881901a194431a4560aae0ef644dbf76715bade3da4d69368204ce",
+  "run": {
+    "started": "2026-09-18T21:20:15.483Z",
+    "finished": "2026-09-18T21:21:16.332Z"
+  },
+  "plan": [],
+  "applied": [],
+  "verify": {
+    "passed": true,
+    "failed": []
+  },
+  "rollback": null,
+  "scenarios": [
+    {
+      "name": "lab-motion",
+      "id": 3,
+      "type": "motion",
+      "deployed": true,
+      "readback_diff": []
+    }
+  ],
+  "observation": {
+    "window_seconds": 60,
+    "started": "2026-09-18T21:20:16.188Z",
+    "finished": "2026-09-18T21:21:16.330Z",
+    "fired": {
+      "lab-motion": {
+        "count": 2,
+        "first": "2026-09-18T21:21:16.330Z",
+        "last": "2026-09-18T21:21:16.330Z"
+      }
+    },
+    "warnings": []
+  },
+  "notes": "Three in and outs entries at fifteen twenty two seconds each daylight.",
+  "receipts": {
+    "first_seq": 186,
+    "last_seq": 187,
+    "chain_head_hash": "ee74d98df1caa635b0cd9c439fc0b4b9f20d61270315806f459af8b7569f0c0d"
+  },
+  "sig": "xv0rrVQk9P8TZO2lVpsj9IJ23CWbzKMzLG/ROFUwKLZYLhv+azfsSTsqablt+yr1T5/ZYcrdTPq7pVNdArKfDw=="
+}

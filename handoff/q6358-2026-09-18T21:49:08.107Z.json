@@ -1,0 +1,35 @@
+{
+  "artifact": "camspec-handoff/0.1",
+  "spec": {
+    "name": "lab-baseline",
+    "sha256": "7f668ac9f532e88bfc2569796fb507a6317d3d8b4c49cf2c081052fb02d2ec72"
+  },
+  "camera": {
+    "id": "q6358",
+    "model": "AXIS Q6358-LE",
+    "firmware": "12.9.57",
+    "serial": "E82725146996"
+  },
+  "agent": "claude-main",
+  "policy_sha256": "9ce4998f1d881901a194431a4560aae0ef644dbf76715bade3da4d69368204ce",
+  "run": {
+    "started": "2026-09-18T21:49:07.707Z",
+    "finished": "2026-09-18T21:49:08.107Z"
+  },
+  "plan": [],
+  "applied": [],
+  "verify": {
+    "passed": true,
+    "failed": []
+  },
+  "rollback": null,
+  "scenarios": [],
+  "observation": null,
+  "notes": "Baseline check at fifteen hours forty eight minutes. Plan shows no difference against the spec. Nothing changed since last week.",
+  "receipts": {
+    "first_seq": 244,
+    "last_seq": 244,
+    "chain_head_hash": "893d46260213816531ec16bc2af540367ebcb62ce065450afe709e9d5e78b328"
+  },
+  "sig": "pC59PgSla2oc0RwW7OdiVeWK/XYHlk5x8slbHrImkBfvbOVWFIKa26o/EHeQ0Rb1vCOo29Rz3TJeApdJwqetCw=="
+}

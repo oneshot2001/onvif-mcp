@@ -1,0 +1,55 @@
+{
+  "artifact": "camspec-handoff/0.1",
+  "spec": {
+    "name": "lab-aoa-p3285",
+    "sha256": "27d216817f3a1254c3592154cb4b7ce1d6440f61ac3a098869556511434e87a4"
+  },
+  "camera": {
+    "id": "p3285",
+    "model": "AXIS P3285-LVE",
+    "firmware": "12.7.61",
+    "serial": "E82725203C16"
+  },
+  "agent": "claude-main",
+  "policy_sha256": "9ce4998f1d881901a194431a4560aae0ef644dbf76715bade3da4d69368204ce",
+  "run": {
+    "started": "2026-09-18T21:17:13.102Z",
+    "finished": "2026-09-18T21:18:13.988Z"
+  },
+  "plan": [],
+  "applied": [],
+  "verify": {
+    "passed": true,
+    "failed": []
+  },
+  "rollback": null,
+  "scenarios": [
+    {
+      "name": "lab-motion",
+      "id": 3,
+      "type": "motion",
+      "deployed": true,
+      "readback_diff": []
+    }
+  ],
+  "observation": {
+    "window_seconds": 60,
+    "started": "2026-09-18T21:17:13.843Z",
+    "finished": "2026-09-18T21:18:13.985Z",
+    "fired": {
+      "lab-motion": {
+        "count": 3,
+        "first": "2026-09-18T21:18:13.985Z",
+        "last": "2026-09-18T21:18:13.985Z"
+      }
+    },
+    "warnings": []
+  },
+  "notes": "Two passes through the p thirty five or the p thirty two eighty five zone at fifteen hours and seventeen minutes a few seconds apart daylight.",
+  "receipts": {
+    "first_seq": 180,
+    "last_seq": 181,
+    "chain_head_hash": "cbbe9c9e89de5f038fac86e87735fd71302667ec37c96740d8ff1d780c4d2889"
+  },
+  "sig": "lz9Q1pXps+V8Xle/EOQ4Kqu957fwui/p872aps11T5q9Ve1MQquNjpd2l5LPOdrb754gPlJ5n0+b9WF8ORojAw=="
+}

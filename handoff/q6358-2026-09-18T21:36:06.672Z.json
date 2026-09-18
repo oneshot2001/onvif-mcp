@@ -1,0 +1,57 @@
+{
+  "artifact": "camspec-handoff/0.1",
+  "spec": {
+    "name": "lab-aoa",
+    "sha256": "f4b3eeb2dc58532b1001fb4ddb7eb51b71d54ad19e37b5b39101af5e960bd846"
+  },
+  "camera": {
+    "id": "q6358",
+    "model": "AXIS Q6358-LE",
+    "firmware": "12.9.57",
+    "serial": "E82725146996"
+  },
+  "agent": "claude-main",
+  "policy_sha256": "9ce4998f1d881901a194431a4560aae0ef644dbf76715bade3da4d69368204ce",
+  "run": {
+    "started": "2026-09-18T21:35:36.312Z",
+    "finished": "2026-09-18T21:36:06.672Z"
+  },
+  "plan": [],
+  "applied": [],
+  "verify": {
+    "passed": true,
+    "failed": []
+  },
+  "rollback": null,
+  "scenarios": [
+    {
+      "name": "lab-motion",
+      "id": 4,
+      "type": "motion",
+      "deployed": true,
+      "readback_diff": []
+    }
+  ],
+  "observation": {
+    "window_seconds": 30,
+    "started": "2026-09-18T21:35:36.472Z",
+    "finished": "2026-09-18T21:36:06.670Z",
+    "fired": {
+      "lab-motion": {
+        "count": 0,
+        "first": null,
+        "last": null
+      }
+    },
+    "warnings": [
+      "lab-motion: 0 events in window"
+    ]
+  },
+  "notes": "Rolled a red ball through the zone from outside the frame at fifteen hours thirty five minutes. No person in the frame or picture daylight. One dog in the frame, status moving around, possibly chasing the ball.",
+  "receipts": {
+    "first_seq": 214,
+    "last_seq": 215,
+    "chain_head_hash": "9b99a119a45d85e11252a702406023e3476c75d4716ce169cb493bfe2a063904"
+  },
+  "sig": "ZGe0Nl5LVqkHtFjJXlJvvnBkBcU1KI+HtvVlp5PUWhQ8wW1gmnZDmZqEucOkzAcA8hg2QMQsN7g45EWs28EsBg=="
+}
