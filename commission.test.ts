@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { createHash, generateKeyPairSync } from "node:crypto";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { createHash, generateKeyPairSync, sign } from "node:crypto";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { readCommissionSpec, registerCommission, verifyHandoffs, type CommissionDeps } from "./commission";
@@ -43,7 +43,7 @@ function harness(options: { ptz?: boolean; aoa?: boolean; aoaInstalled?: boolean
     configParams: async (_camera, groups) => ({ ok: true, params: Object.fromEntries(Object.entries(state).filter(([param]) => groups.some((group) => param === group || param.startsWith(`${group}.`)))) }),
     vapix: async (_camera, path) => {
       if (path.includes("Brand.ProdShortName")) return { ok: true, body: "root.Brand.ProdShortName=AXIS TEST\nroot.Properties.Firmware.Version=1.2.3\nroot.Properties.System.SerialNumber=serial\n" };
-      if (path.includes("query=presetposition")) return { ok: true, body: [...presets].map((name, i) => `presetposno${i + 1}=${name}`).join("\n") };
+      if (path.includes("query=presetposcam")) return { ok: true, body: [...presets].map((name, i) => `presetposno${i + 1}=${name}`).join("\n") };
       if (path.includes("setserverpresetname=")) presets.add(decodeURIComponent(path.split("setserverpresetname=")[1]!));
       if (path.includes("action=update")) {
         writes.push(path);
@@ -67,7 +67,7 @@ function harness(options: { ptz?: boolean; aoa?: boolean; aoaInstalled?: boolean
     observeEvents: async (_camera, topics) => ({ events: topics.length ? [{ topic: topics[0]!, timestamp: 1_700_000_000_000, message: { data: { active: "1" } } }] : [], warnings: [] }),
   };
   registerCommission(server as never, deps);
-  return { root, state, writes, posts, receipts, presets, handlers, aoa: () => aoa, publicKey: publicKey.export({ type: "spki", format: "pem" }).toString() };
+  return { root, state, writes, posts, receipts, presets, handlers, aoa: () => aoa, privateKey, publicKey: publicKey.export({ type: "spki", format: "pem" }).toString() };
 }
 
 describe("commission specs", () => {
@@ -103,12 +103,52 @@ describe("commission specs", () => {
     const h = harness();
     writeFileSync(join(h.root, "specs", "apply.yaml"), "spec: camspec/0.1\nname: apply\nparams:\n  Time.NTP.Server: new\n");
     process.env.COMMISSION_FAIL_PARAM = "Time.NTP.Server";
-    const result = await h.handlers.commission_apply!({ camera: "cam", spec: "apply", approve: true });
+    const result = await h.handlers.commission_apply!({ camera: "cam", spec: "apply", approve: true, notes: "Readback failed; rolled back." });
     const out = JSON.parse(result.content[0]!.text);
     expect(out).toMatchObject({ passed: false, rolled_back: true, rollback_verified: true });
     expect(out.failed).toEqual([{ param: "Time.NTP.Server", desired: "new", observed: "new" }]);
     expect(h.state["Time.NTP.Server"]).toBe("old");
     expect(h.writes).toHaveLength(2);
+    expect(JSON.parse(readFileSync(out.handoff, "utf8")).notes).toBe("Readback failed; rolled back.");
+    expect(verifyHandoffs(h.root, h.publicKey)).toEqual({ count: 1, bad: [] });
+  });
+
+  test("verify records signed notes immediately after observation", async () => {
+    const h = harness();
+    writeFileSync(join(h.root, "specs", "verify.yaml"), "spec: camspec/0.1\nname: verify\n");
+    const notes = "walk test at 10:41, two zone entries, count stayed 0";
+    const result = await h.handlers.commission_verify!({ camera: "cam", spec: "verify", notes });
+    const out = JSON.parse(result.content[0]!.text);
+    const handoff = JSON.parse(readFileSync(out.handoff, "utf8"));
+    expect(handoff.notes).toBe(notes);
+    expect(Object.keys(handoff)).toEqual(["artifact", "spec", "camera", "agent", "policy_sha256", "run", "plan", "applied", "verify", "rollback", "scenarios", "observation", "notes", "receipts", "sig"]);
+    expect(verifyHandoffs(h.root, h.publicKey)).toEqual({ count: 1, bad: [] });
+  });
+
+  test("verify without notes records null", async () => {
+    const h = harness();
+    writeFileSync(join(h.root, "specs", "verify.yaml"), "spec: camspec/0.1\nname: verify\n");
+    const result = await h.handlers.commission_verify!({ camera: "cam", spec: "verify" });
+    const out = JSON.parse(result.content[0]!.text);
+    expect(JSON.parse(readFileSync(out.handoff, "utf8")).notes).toBeNull();
+    expect(verifyHandoffs(h.root, h.publicKey)).toEqual({ count: 1, bad: [] });
+  });
+
+  test("verifies a legacy handoff signed without the notes key", () => {
+    const h = harness();
+    const handoff = {
+      artifact: "camspec-handoff/0.1", spec: { name: "legacy", sha256: "spec-hash" },
+      camera: { id: "cam", model: "AXIS TEST", firmware: "1.2.3", serial: "serial" },
+      agent: "claude-main", policy_sha256: "policy-hash",
+      run: { started: "2026-01-01T00:00:00.000Z", finished: "2026-01-01T00:00:01.000Z" },
+      plan: [], applied: [], verify: { passed: true, failed: [] }, rollback: null,
+      scenarios: [], observation: null,
+      receipts: { first_seq: 1, last_seq: 1, chain_head_hash: "hash-1" },
+    };
+    const hash = createHash("sha256").update(JSON.stringify(handoff)).digest("hex");
+    const sig = sign(null, Buffer.from(hash), h.privateKey).toString("base64");
+    mkdirSync(join(h.root, "handoff"));
+    writeFileSync(join(h.root, "handoff", "legacy.json"), JSON.stringify({ ...handoff, sig }, null, 2) + "\n");
     expect(verifyHandoffs(h.root, h.publicKey)).toEqual({ count: 1, bad: [] });
   });
 
@@ -140,11 +180,12 @@ describe("commission specs", () => {
     expect(h.writes).toEqual(["AOA:setConfiguration"]);
   });
 
-  test("AOA absence warns without failing and preset verification detects deletion", async () => {
+  test("AOA absence fails verification with a warning and preset verification detects deletion", async () => {
     const unavailable = harness({ aoaInstalled: false });
     writeFileSync(join(unavailable.root, "specs", "aoa.yaml"), "spec: camspec/0.1\nname: aoa\nscenarios:\n  - name: motion\n    type: motion\n    objects: [human]\n    area: [[-0.9,-0.9],[0.9,-0.9],[0.9,0.9],[-0.9,0.9]]\nobserve: { seconds: 0 }\n");
     const skipped = JSON.parse((await unavailable.handlers.commission_apply!({ camera: "cam", spec: "aoa", approve: true })).content[0]!.text);
-    expect(skipped.passed).toBeTrue();
+    expect(skipped.passed).toBeFalse();
+    expect(skipped.failed).toMatchObject([{ param: "scenario:motion", observed: null }]);
     expect(skipped.observation.warnings).toContain("AOA application unavailable; scenarios skipped");
 
     const ptz = harness({ ptz: true });

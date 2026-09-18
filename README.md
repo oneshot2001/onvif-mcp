@@ -47,7 +47,7 @@ attempt.
 - **No secrets on disk** — camera credentials resolve from a local credential
   store at startup and are never written or logged
 
-Commissioning-as-code turns a `specs/*.yaml` desired-state file into a read-only plan, an explicitly approved and postcondition-verified apply, or a later conformance check. Applies snapshot every changed parameter for rollback, verify PTZ presets by name, and merge named AXIS Object Analytics scenarios without removing unmanaged scenarios. Approved AOA writes require `config.aoa: true`; after readback, apply observes filtered AOA topics with a Bun WebSocket using Basic authentication over TLS (accepting the camera's self-signed certificate, like `curl -k`) and records counts and warnings in the signed handoff. Apply/verify runs emit signed JSON handoffs in `handoff/`, while parameter access stays inside the existing config grant and hard denylist.
+Commissioning-as-code turns a `specs/*.yaml` desired-state file into a read-only plan, an explicitly approved and postcondition-verified apply, or a later conformance check. Applies snapshot every changed parameter for rollback, verify PTZ presets by name, and merge named AXIS Object Analytics scenarios without removing unmanaged scenarios. Approved AOA writes require `config.aoa: true`; after readback, apply observes filtered AOA topics with a Bun WebSocket using Basic authentication over TLS (accepting the camera's self-signed certificate, like `curl -k`) and records counts and warnings in the signed handoff. Apply/verify runs emit signed JSON handoffs in `handoff/`, while parameter access stays inside the existing config grant and hard denylist. Both tools accept optional free-text `notes` (up to 2000 characters) to record installer or agent observations in the signed handoff; omitted notes are stored as `null`.
 
 ## Quick start
 
@@ -102,8 +102,8 @@ bun index.ts --verify
 | `ptz_move` | Relative pan/tilt/zoom in degrees | + camera granted, camera is PTZ, step within `maxStep` |
 | `ptz_preset` | Recall a named PTZ preset (VAPIX); emits an AAR wire bundle | + camera granted, camera is PTZ, ptz grant |
 | `commission_plan` | Diff parameters and named AOA scenarios; list applicable presets; no writes | + camera granted, config groups granted, all params allowed, AOA grant for scenario specs |
-| `commission_apply` | Dry-run unless `approve:true`; apply, read back, observe AOA events, roll back parameters on failure, emit signed handoff | + plan checks, config remediation grant for approved writes, `config.aoa` for scenarios |
-| `commission_verify` | Check parameter, preset-name, and AOA scenario conformance; emit a signed handoff | + camera granted, config groups granted, all params allowed, AOA grant for scenarios |
+| `commission_apply` | Dry-run unless `approve:true`; apply, read back, observe AOA events, roll back parameters on failure, emit signed handoff; optional `notes` (string, max 2000 characters) | + plan checks, config remediation grant for approved writes, `config.aoa` for scenarios |
+| `commission_verify` | Check parameter, preset-name, and AOA scenario conformance; emit a signed handoff; optional `notes` (string, max 2000 characters) | + camera granted, config groups granted, all params allowed, AOA grant for scenarios |
 | `get_receipts` | Tail the signed receipt chain | agent known, tool granted |
 
 Every call — allowed or denied — appends a receipt. A denial looks like this:

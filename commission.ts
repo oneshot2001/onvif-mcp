@@ -33,6 +33,7 @@ type Handoff = {
   rollback: { performed: boolean; verified: boolean } | null;
   scenarios: ScenarioResult[];
   observation: Observation | null;
+  notes: string | null;
   receipts: { first_seq: number; last_seq: number; chain_head_hash: string };
 };
 
@@ -323,13 +324,14 @@ export function registerCommission(server: McpServer, d: CommissionDeps) {
     writeFileSync(file, bytes);
     return { file, hash: d.sha256(bytes) };
   };
-  const finish = (tool: "commission_apply" | "commission_verify", params: unknown, started: string, firstSeq: number, prepared: Awaited<ReturnType<typeof prepare>>, applied: Applied[], verify: { passed: boolean; failed: Failure[] }, rollback: Handoff["rollback"], scenarios: ScenarioResult[], observation: Observation | null) => {
+  const finish = (tool: "commission_apply" | "commission_verify", params: unknown, started: string, firstSeq: number, prepared: Awaited<ReturnType<typeof prepare>>, applied: Applied[], verify: { passed: boolean; failed: Failure[] }, rollback: Handoff["rollback"], scenarios: ScenarioResult[], observation: Observation | null, notes?: string) => {
     d.receipt(tool, params, "allow", verify.passed ? "verification passed" : "verification FAILED", d.sha256(verify));
     const head = d.lastReceipt();
     const finished = new Date().toISOString();
     const handoff: Handoff = {
       artifact: "camspec-handoff/0.1", spec: { name: prepared.spec.name, sha256: prepared.sha256 }, camera: prepared.cameraMeta,
       agent: d.agent, policy_sha256: d.sha256(Buffer.from(d.policyBytes).toString()), run: { started, finished }, plan: prepared.plan, applied, verify, rollback, scenarios, observation,
+      notes: notes ?? null,
       receipts: { first_seq: firstSeq, last_seq: head.seq, chain_head_hash: head.hash },
     };
     const artifact = writeHandoff(handoff);
@@ -357,8 +359,8 @@ export function registerCommission(server: McpServer, d: CommissionDeps) {
     } catch (e) { return error("commission_plan", params, e); }
   });
 
-  server.tool("commission_apply", "Plan or explicitly apply a camspec, verify, and roll back parameters on failure",
-    { camera: z.string(), spec: z.string(), approve: z.boolean() }, async ({ camera, spec: ref, approve }) => {
+  server.tool("commission_apply", "Plan or explicitly apply a camspec, verify, and roll back parameters on failure; optional free-text notes recorded in the handoff",
+    { camera: z.string(), spec: z.string(), approve: z.boolean(), notes: z.string().max(2000).optional() }, async ({ camera, spec: ref, approve, notes }) => {
     const params = { camera, spec: ref, approve };
     const reason = denied("commission_apply", camera, approve);
     if (reason) { d.receipt("commission_apply", params, "deny", reason); return { content: [{ type: "text", text: `DENIED: ${reason}` }] }; }
@@ -422,14 +424,14 @@ export function registerCommission(server: McpServer, d: CommissionDeps) {
         }
         rollback = { performed: true, verified: rollbackWrites && (await checkParams(camera, rollbackSpec)).length === 0 };
       }
-      const file = finish("commission_apply", params, started, firstSeq, p, applied, checked.verify, rollback, checked.scenarios, observation);
+      const file = finish("commission_apply", params, started, firstSeq, p, applied, checked.verify, rollback, checked.scenarios, observation, notes);
       const out = { ...checked.verify, rolled_back: rollback?.performed ?? false, rollback_verified: rollback?.verified ?? null, scenarios: checked.scenarios, observation, handoff: file };
       return { content: [{ type: "text", text: JSON.stringify(out, null, 2) }] };
     } catch (e) { return error("commission_apply", params, e); }
   });
 
-  server.tool("commission_verify", "Verify live conformance to a camspec and emit a signed handoff",
-    { camera: z.string(), spec: z.string() }, async ({ camera, spec: ref }) => {
+  server.tool("commission_verify", "Verify live conformance to a camspec and emit a signed handoff; optional free-text notes recorded in the handoff",
+    { camera: z.string(), spec: z.string(), notes: z.string().max(2000).optional() }, async ({ camera, spec: ref, notes }) => {
     const params = { camera, spec: ref };
     const reason = denied("commission_verify", camera);
     if (reason) { d.receipt("commission_verify", params, "deny", reason); return { content: [{ type: "text", text: `DENIED: ${reason}` }] }; }
@@ -438,7 +440,7 @@ export function registerCommission(server: McpServer, d: CommissionDeps) {
     try {
       const p = await prepare(camera, ref);
       const checked = await check(camera, p);
-      const file = finish("commission_verify", params, started, firstSeq, p, [], checked.verify, null, checked.scenarios, null);
+      const file = finish("commission_verify", params, started, firstSeq, p, [], checked.verify, null, checked.scenarios, null, notes);
       return { content: [{ type: "text", text: JSON.stringify({ ...checked.verify, scenarios: checked.scenarios, observation: null, handoff: file }, null, 2) }] };
     } catch (e) { return error("commission_verify", params, e); }
   });
