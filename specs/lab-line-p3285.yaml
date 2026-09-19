@@ -1,0 +1,9 @@
+spec: camspec/0.1
+name: lab-line-p3285
+applies_to: { models: ["AXIS P3285-LVE"] }
+scenarios:
+  - name: lab-line
+    type: crosslinecounting
+    objects: [human]
+    line: [[0, -0.9], [0, 0.9]]
+observe: { seconds: 60 }

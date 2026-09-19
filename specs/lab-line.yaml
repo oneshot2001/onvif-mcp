@@ -1,0 +1,9 @@
+spec: camspec/0.1
+name: lab-line
+applies_to: { models: ["AXIS Q6358-LE", "AXIS Q6325-LE"] }
+scenarios:
+  - name: lab-line
+    type: crosslinecounting
+    objects: [human]
+    line: [[0, -0.9], [0, 0.9]]
+observe: { seconds: 30 }
