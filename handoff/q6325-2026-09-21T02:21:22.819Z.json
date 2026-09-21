@@ -1,0 +1,55 @@
+{
+  "artifact": "camspec-handoff/0.1",
+  "spec": {
+    "name": "lab-aoa",
+    "sha256": "f4b3eeb2dc58532b1001fb4ddb7eb51b71d54ad19e37b5b39101af5e960bd846"
+  },
+  "camera": {
+    "id": "q6325",
+    "model": "AXIS Q6325-LE",
+    "firmware": "12.9.57",
+    "serial": "E827252C9B9F"
+  },
+  "agent": "claude-main",
+  "policy_sha256": "9ce4998f1d881901a194431a4560aae0ef644dbf76715bade3da4d69368204ce",
+  "run": {
+    "started": "2026-09-21T02:20:52.480Z",
+    "finished": "2026-09-21T02:21:22.819Z"
+  },
+  "plan": [],
+  "applied": [],
+  "verify": {
+    "passed": true,
+    "failed": []
+  },
+  "rollback": null,
+  "scenarios": [
+    {
+      "name": "lab-motion",
+      "id": 2,
+      "type": "motion",
+      "deployed": true,
+      "readback_diff": []
+    }
+  ],
+  "observation": {
+    "window_seconds": 30,
+    "started": "2026-09-21T02:20:52.612Z",
+    "finished": "2026-09-21T02:21:22.818Z",
+    "fired": {
+      "lab-motion": {
+        "count": 1,
+        "first": "2026-09-21T02:21:22.818Z",
+        "last": "2026-09-21T02:21:22.818Z"
+      }
+    },
+    "warnings": []
+  },
+  "notes": "Walked the lawn twice at 20:21, after dark, no yard lights.",
+  "receipts": {
+    "first_seq": 257,
+    "last_seq": 258,
+    "chain_head_hash": "269a35173f56ab519091e4a3351439b6a4e9dec107b994b11cb1ad6d41a2ac8b"
+  },
+  "sig": "xYLuRZ8KB5QwqvL0hg/M7F0hBcjatLlIoyxCGYXlnMcqfE1cOo0QVnWrm7qCz3icihB3v85rEktB1kt0rEpLAQ=="
+}
