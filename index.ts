@@ -9,6 +9,7 @@ import { join } from "node:path";
 import { AarWireProducer, jsonBytes, verifyBundleDir, type WireDispatch } from "./receipts-aar/producer";
 import { hardDenied, registerCommission, verifyHandoffs } from "./commission";
 import { snapshotContent } from "./snapshot-content";
+import { curlRequest } from "./curl-args";
 
 const ROOT = import.meta.dir;
 const AGENT = process.env.AGENT_ID ?? "unknown";
@@ -87,16 +88,15 @@ function camOf(id: string) {
 // Digest auth via curl — it does the digest dance; native fetch can't.
 async function vapix(camera: string, path: string, outFile?: string): Promise<{ ok: boolean; body: string }> {
   const cam = camOf(camera);
-  const args = ["curl", "-sk", "--anyauth", "-u", `${cam.user}:${passwords[camera]}`, "--max-time", "10", `${cam.base}${path}`];
-  if (outFile) args.push("-o", outFile);
-  const p = Bun.spawnSync(args);
+  const { args, stdin } = curlRequest(cam, passwords[camera]!, path, { outFile });
+  const p = Bun.spawnSync(args, { stdin: Buffer.from(stdin) });
   return { ok: p.exitCode === 0, body: p.stdout.toString() };
 }
 
 async function vapixPost(camera: string, path: string, body: unknown): Promise<{ ok: boolean; body: string }> {
   const cam = camOf(camera);
-  const p = Bun.spawnSync(["curl", "-sk", "--anyauth", "-u", `${cam.user}:${passwords[camera]}`, "--max-time", "15",
-    "-H", "content-type: application/json", "-d", "@-", `${cam.base}${path}`], { stdin: Buffer.from(JSON.stringify(body)) });
+  const { args, stdin } = curlRequest(cam, passwords[camera]!, path, { jsonBody: body, maxTime: 15 });
+  const p = Bun.spawnSync(args, { stdin: Buffer.from(stdin) });
   return { ok: p.exitCode === 0, body: p.stdout.toString() };
 }
 
@@ -177,10 +177,10 @@ async function configParams(camera: string, groups: string[]): Promise<{ ok: boo
 // ONVIF SOAP call. AXIS serves every ONVIF service at /onvif/services (per GetServices).
 async function soap(camera: string, body: string): Promise<{ ok: boolean; body: string }> {
   const cam = camOf(camera);
-  const p = Bun.spawnSync(["curl", "-sk", "--anyauth", "-u", `${cam.user}:${passwords[camera]}`,
-    "-H", "Content-Type: application/soap+xml", "--data",
-    `<?xml version="1.0"?><s:Envelope xmlns:s="http://www.w3.org/2003/05/soap-envelope"><s:Body>${body}</s:Body></s:Envelope>`,
-    "--max-time", "10", `${cam.base}/onvif/services`]);
+  const { args, stdin } = curlRequest(cam, passwords[camera]!, "/onvif/services", {
+    soapBody: `<?xml version="1.0"?><s:Envelope xmlns:s="http://www.w3.org/2003/05/soap-envelope"><s:Body>${body}</s:Body></s:Envelope>`,
+  });
+  const p = Bun.spawnSync(args, { stdin: Buffer.from(stdin) });
   const out = p.stdout.toString();
   return { ok: p.exitCode === 0 && !out.includes("s:Fault") && !out.includes("SOAP-ENV:Fault"), body: out };
 }
