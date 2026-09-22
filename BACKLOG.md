@@ -1,6 +1,6 @@
 # BACKLOG — nightly Astra loop input (Claude writes, Matthew edits)
 
-Rules: loop takes the TOP Ready item only. No `accept:` line → loop does not fire.
+Rules: loop takes the TOP Ready item, up to 3 per night (2026-09-22), one commit each, stops at first BLOCKED. No `accept:` line → loop does not fire.
 Branch `night/YYYY-MM-DD` off `main`. Never push. No live camera calls (192.168.1.x) — tests run offline.
 
 ## Ready
