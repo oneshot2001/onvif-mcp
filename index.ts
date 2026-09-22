@@ -4,12 +4,13 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";
 import { generateKeyPairSync, sign as edSign, verify as edVerify, createHash } from "node:crypto";
-import { existsSync, readFileSync, writeFileSync, appendFileSync, mkdirSync } from "node:fs";
+import { existsSync, readFileSync, writeFileSync, appendFileSync, mkdirSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { AarWireProducer, jsonBytes, verifyBundleDir, type WireDispatch } from "./receipts-aar/producer";
 import { hardDenied, registerCommission, verifyHandoffs } from "./commission";
 import { snapshotContent } from "./snapshot-content";
 import { curlRequest } from "./curl-args";
+import { keyModeProblem } from "./key-perms";
 
 const ROOT = import.meta.dir;
 const AGENT = process.env.AGENT_ID ?? "unknown";
@@ -35,10 +36,15 @@ mkdirSync(KEYDIR, { recursive: true });
 mkdirSync(join(ROOT, "receipts"), { recursive: true });
 if (!existsSync(join(KEYDIR, "receipt.key"))) {
   const { privateKey, publicKey } = generateKeyPairSync("ed25519");
-  writeFileSync(join(KEYDIR, "receipt.key"), privateKey.export({ type: "pkcs8", format: "pem" }));
+  writeFileSync(join(KEYDIR, "receipt.key"), privateKey.export({ type: "pkcs8", format: "pem" }), { mode: 0o600 });
   writeFileSync(join(KEYDIR, "receipt.pub"), publicKey.export({ type: "spki", format: "pem" }));
 }
 const PRIV = readFileSync(join(KEYDIR, "receipt.key"), "utf8");
+const keyProblem = keyModeProblem(statSync(join(KEYDIR, "receipt.key")).mode);
+if (keyProblem !== null) {
+  console.error(keyProblem);
+  process.exit(1);
+}
 const PUB = readFileSync(join(KEYDIR, "receipt.pub"), "utf8");
 
 function lastReceipt(): { seq: number; hash: string } {
