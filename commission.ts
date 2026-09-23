@@ -56,8 +56,8 @@ export type CommissionDeps = {
 };
 
 const TOP_KEYS = ["spec", "name", "applies_to", "params", "presets", "scenarios", "observe"];
-const HARD_DENY = ["Network", "System.BoxRebootAction", "RemoteService"];
-export const hardDenied = (param: string, inGroup: (param: string, groups: string[]) => boolean) => HARD_DENY.some((group) => inGroup(param, [group])) || /Password|User|Root/.test(param);
+const HARD_DENY = ["Network", "System.BoxRebootAction", "RemoteService", "Time"];
+export const hardDenied = (param: string, inGroup: (param: string, groups: string[]) => boolean) => HARD_DENY.some((group) => inGroup(param, [group])) || /password|user|root/i.test(param);
 
 export function readCommissionSpec(root: string, ref: string): { spec: Spec; sha256: string } {
   const dir = resolve(root, "specs");

@@ -72,7 +72,7 @@ function harness(options: { ptz?: boolean; aoa?: boolean; aoaInstalled?: boolean
 
 describe("commission specs", () => {
   test("loads the committed fixtures and rejects unknown top-level keys", () => {
-    expect(readCommissionSpec(import.meta.dir, "lab-baseline").spec.params["Time.NTP.Server"]).toBe("0.0.0.0");
+    expect(readCommissionSpec(import.meta.dir, "lab-baseline").spec.params).toEqual({ "Image.I0.Appearance.Rotation": "0" });
     expect(readCommissionSpec(import.meta.dir, "lab-aoa").spec).toMatchObject({ scenarios: [{ name: "lab-motion", type: "motion", objects: ["human"] }], observe: { seconds: 30 } });
     const { root } = harness();
     writeFileSync(join(root, "specs", "bad.yaml"), "spec: camspec/0.1\nname: bad\nextra: true\n");
@@ -89,25 +89,43 @@ describe("commission specs", () => {
     expect(h.receipts.at(-1)).toMatchObject({ decision: "deny" });
   });
 
+  test("denies clock parameters despite a Time config grant before any write", async () => {
+    const h = harness();
+    writeFileSync(join(h.root, "specs", "clock.yaml"), "spec: camspec/0.1\nname: clock\nparams:\n  Time.NTP.Server: new\n");
+    const result = await h.handlers.commission_apply!({ camera: "cam", spec: "clock", approve: true });
+    expect(result.content[0]!.text).toBe("DENIED: param 'Time.NTP.Server' is hard-denied");
+    expect(h.writes).toEqual([]);
+    expect(h.receipts.at(-1)).toMatchObject({ decision: "deny" });
+  });
+
+  test("denies lowercase password parameters before any write", async () => {
+    const h = harness();
+    writeFileSync(join(h.root, "specs", "password.yaml"), "spec: camspec/0.1\nname: password\nparams:\n  Image.I0.password: new\n");
+    const result = await h.handlers.commission_apply!({ camera: "cam", spec: "password", approve: true });
+    expect(result.content[0]!.text).toBe("DENIED: param 'Image.I0.password' is hard-denied");
+    expect(h.writes).toEqual([]);
+    expect(h.receipts.at(-1)).toMatchObject({ decision: "deny" });
+  });
+
   test("plan and unapproved apply are identical read-only diffs", async () => {
     const h = harness();
-    writeFileSync(join(h.root, "specs", "plan.yaml"), "spec: camspec/0.1\nname: plan\nparams:\n  Time.NTP.Server: new\npresets:\n  Home: { pan: 0, tilt: 0, zoom: 1 }\n");
+    writeFileSync(join(h.root, "specs", "plan.yaml"), "spec: camspec/0.1\nname: plan\nparams:\n  Image.I0.Appearance.Rotation: \"180\"\npresets:\n  Home: { pan: 0, tilt: 0, zoom: 1 }\n");
     const plan = await h.handlers.commission_plan!({ camera: "cam", spec: "plan" });
     const dry = await h.handlers.commission_apply!({ camera: "cam", spec: "plan", approve: false });
     expect(JSON.parse(dry.content[0]!.text)).toEqual(JSON.parse(plan.content[0]!.text));
-    expect(JSON.parse(plan.content[0]!.text)).toEqual({ diff: [{ param: "Time.NTP.Server", current: "old", desired: "new" }], presets: [], scenarios: [], warnings: [] });
+    expect(JSON.parse(plan.content[0]!.text)).toEqual({ diff: [{ param: "Image.I0.Appearance.Rotation", current: "0", desired: "180" }], presets: [], scenarios: [], warnings: [] });
     expect(h.writes).toEqual([]);
   });
 
   test("forced verify failure rolls back and emits a verifiable signed handoff", async () => {
     const h = harness();
-    writeFileSync(join(h.root, "specs", "apply.yaml"), "spec: camspec/0.1\nname: apply\nparams:\n  Time.NTP.Server: new\n");
-    process.env.COMMISSION_FAIL_PARAM = "Time.NTP.Server";
+    writeFileSync(join(h.root, "specs", "apply.yaml"), "spec: camspec/0.1\nname: apply\nparams:\n  Image.I0.Appearance.Rotation: \"180\"\n");
+    process.env.COMMISSION_FAIL_PARAM = "Image.I0.Appearance.Rotation";
     const result = await h.handlers.commission_apply!({ camera: "cam", spec: "apply", approve: true, notes: "Readback failed; rolled back." });
     const out = JSON.parse(result.content[0]!.text);
     expect(out).toMatchObject({ passed: false, rolled_back: true, rollback_verified: true });
-    expect(out.failed).toEqual([{ param: "Time.NTP.Server", desired: "new", observed: "new" }]);
-    expect(h.state["Time.NTP.Server"]).toBe("old");
+    expect(out.failed).toEqual([{ param: "Image.I0.Appearance.Rotation", desired: "180", observed: "180" }]);
+    expect(h.state["Image.I0.Appearance.Rotation"]).toBe("0");
     expect(h.writes).toHaveLength(2);
     expect(JSON.parse(readFileSync(out.handoff, "utf8")).notes).toBe("Readback failed; rolled back.");
     expect(verifyHandoffs(h.root, h.publicKey)).toEqual({ count: 1, bad: [] });
