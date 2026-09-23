@@ -11,6 +11,7 @@ import { hardDenied, registerCommission, verifyHandoffs } from "./commission";
 import { snapshotContent } from "./snapshot-content";
 import { curlRequest } from "./curl-args";
 import { keyModeProblem } from "./key-perms";
+import { missingPasswords } from "./creds-check";
 
 const ROOT = import.meta.dir;
 const AGENT = process.env.AGENT_ID ?? "unknown";
@@ -27,6 +28,11 @@ const passwords: Record<string, string> = {};
 for (const [id, cam] of Object.entries(cameras)) {
   const p = Bun.spawnSync([`${process.env.HOME}/.claude/bin/cred`, "get", cam.credKey]);
   passwords[id] = p.stdout.toString().trim();
+}
+const missing = missingPasswords(passwords);
+if (missing.length > 0) {
+  console.error(`Missing camera passwords: ${missing.map((id) => `${id} (credKey: ${cameras[id]!.credKey})`).join(", ")}`);
+  process.exit(1);
 }
 
 // --- receipts: hash chain + ed25519 signature ---
