@@ -9,6 +9,7 @@ import { join } from "node:path";
 import { AarWireProducer, jsonBytes, verifyBundleDir, type WireDispatch } from "./receipts-aar/producer";
 import { hardDenied, registerCommission, verifyHandoffs } from "./commission";
 import { snapshotContent } from "./snapshot-content";
+import { parseParams } from "./vapix-params";
 import { curlRequest } from "./curl-args";
 import { keyModeProblem } from "./key-perms";
 import { missingPasswords } from "./creds-check";
@@ -166,18 +167,6 @@ function configDenied(tool: string, camera: string, approve = false): string | n
   if (!config) return `agent '${AGENT}' has no config grant`;
   if (tool === "config_remediate" && approve && !config.remediate) return `agent '${AGENT}' has no config remediation grant`;
   return null;
-}
-
-function parseParams(body: string): Record<string, string> {
-  const params: Record<string, string> = {};
-  for (const line of body.split(/\r?\n/)) {
-    // Firmware quirk (AXIS OS 12.x): group listings prefix lines with "root.",
-    // exact-param queries don't. Accept both.
-    const key = line.startsWith("root.") ? line.slice(5) : line;
-    const i = key.indexOf("=");
-    if (i > 0 && /^[A-Za-z]/.test(key)) params[key.slice(0, i)] = key.slice(i + 1);
-  }
-  return Object.fromEntries(Object.entries(params).sort(([a], [b]) => a.localeCompare(b)));
 }
 
 async function configParams(camera: string, groups: string[]): Promise<{ ok: boolean; params: Record<string, string> }> {
