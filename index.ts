@@ -13,6 +13,7 @@ import { parseParams } from "./vapix-params";
 import { curlRequest } from "./curl-args";
 import { keyModeProblem } from "./key-perms";
 import { missingPasswords } from "./creds-check";
+import { allowed as policyAllowed, configDenied as policyConfigDenied, type Policy } from "./policy-check";
 
 const ROOT = import.meta.dir;
 const AGENT = process.env.AGENT_ID ?? "unknown";
@@ -21,7 +22,7 @@ const cameras: Record<string, { base: string; user: string; credKey: string; ptz
 // Raw bytes kept: the AAR producer signs the digest of the EXACT policy the
 // server evaluates (parsed once here) — never a fresh disk read (TOCTOU).
 const policyBytes = readFileSync(join(ROOT, "policy.json"));
-const policy: Record<string, { tools: string[]; cameras: string[]; ptz?: { maxStep: number }; config?: { groups: string[]; remediate?: boolean; aoa?: boolean } }> =
+const policy: Policy =
   JSON.parse(policyBytes.toString("utf8")).agents;
 
 // --- credentials: fetched from the cred store at startup, never persisted ---
@@ -85,11 +86,7 @@ function receipt(tool: string, params: unknown, decision: "allow" | "deny", deta
 }
 
 function allowed(tool: string, camera?: string): string | null {
-  const p = policy[AGENT];
-  if (!p) return `agent '${AGENT}' not in policy (fail closed)`;
-  if (!p.tools.includes(tool)) return `tool '${tool}' not allowlisted for agent '${AGENT}'`;
-  if (camera && !p.cameras.includes(camera)) return `camera '${camera}' not allowlisted for agent '${AGENT}'`;
-  return null;
+  return policyAllowed(policy, AGENT, tool, camera);
 }
 
 function camOf(id: string) {
@@ -161,12 +158,7 @@ const inGroup = (param: string, groups: string[]) => groups.some((g) => param ==
 const baselineFile = (camera: string) => join(BASELINES, `${camera}.json`);
 
 function configDenied(tool: string, camera: string, approve = false): string | null {
-  const deny = allowed(tool, camera);
-  if (deny) return deny;
-  const config = policy[AGENT]?.config;
-  if (!config) return `agent '${AGENT}' has no config grant`;
-  if (tool === "config_remediate" && approve && !config.remediate) return `agent '${AGENT}' has no config remediation grant`;
-  return null;
+  return policyConfigDenied(policy, AGENT, tool, camera, approve);
 }
 
 async function configParams(camera: string, groups: string[]): Promise<{ ok: boolean; params: Record<string, string> }> {
