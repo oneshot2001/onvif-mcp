@@ -10,6 +10,7 @@ import { AarWireProducer, jsonBytes, verifyBundleDir, type WireDispatch } from "
 import { hardDenied, registerCommission, verifyHandoffs } from "./commission";
 import { snapshotContent } from "./snapshot-content";
 import { parseParams } from "./vapix-params";
+import { parseEventMessage } from "./event-parse";
 import { curlRequest } from "./curl-args";
 import { keyModeProblem } from "./key-perms";
 import { missingPasswords } from "./creds-check";
@@ -139,12 +140,9 @@ async function observeEvents(camera: string, topics: string[], seconds: number):
       windowTimer = setTimeout(() => finish(), seconds * 1000);
     });
     ws.addEventListener("message", ({ data }) => {
-      try {
-        const value = JSON.parse(typeof data === "string" ? data : Buffer.from(data as ArrayBuffer).toString()) as { method?: unknown; params?: { notification?: unknown }; error?: { message?: unknown } };
-        if (value.error) warnings.push(`event stream error: ${String(value.error.message ?? "unknown")}`);
-        const notification = value.method === "events:notify" ? value.params?.notification : null;
-        if (notification && typeof notification === "object" && typeof (notification as { topic?: unknown }).topic === "string") events.push(notification as typeof events[number]);
-      } catch { warnings.push("event stream returned invalid JSON"); }
+      const { event, warning } = parseEventMessage(data);
+      if (warning) warnings.push(warning);
+      if (event) events.push(event);
     });
     ws.addEventListener("error", () => finish("event WebSocket failed"));
     ws.addEventListener("close", () => { if (!done) finish(opened ? "event WebSocket closed before the observation window finished" : "event WebSocket connection rejected"); });
