@@ -11,6 +11,7 @@ import { hardDenied, registerCommission, verifyHandoffs } from "./commission";
 import { snapshotContent } from "./snapshot-content";
 import { parseParams } from "./vapix-params";
 import { parseEventMessage } from "./event-parse";
+import { lastReceiptFrom } from "./receipt-chain";
 import { curlRequest } from "./curl-args";
 import { keyModeProblem } from "./key-perms";
 import { missingPasswords } from "./creds-check";
@@ -57,10 +58,7 @@ if (keyProblem !== null) {
 const PUB = readFileSync(join(KEYDIR, "receipt.pub"), "utf8");
 
 function lastReceipt(): { seq: number; hash: string } {
-  if (!existsSync(LOG)) return { seq: 0, hash: "genesis" };
-  const lines = readFileSync(LOG, "utf8").trim().split("\n");
-  const last = JSON.parse(lines[lines.length - 1]!);
-  return { seq: last.seq, hash: last.hash };
+  return lastReceiptFrom(existsSync(LOG) ? readFileSync(LOG, "utf8") : "");
 }
 
 // Receipt semantics follow AAR v0.2 vocabulary (node kinds, principal roles,
