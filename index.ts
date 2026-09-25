@@ -474,4 +474,10 @@ if (process.argv.includes("--verify")) {
   process.exit(bad === 0 ? 0 : 1);
 }
 
+try {
+  lastReceipt();
+} catch (error) {
+  console.error(`${error instanceof Error ? error.message : String(error)} (${LOG})`);
+  process.exit(1);
+}
 await server.connect(new StdioServerTransport());

@@ -21,4 +21,14 @@ describe("last receipt parsing", () => {
     expect(lastReceiptFrom(lines.join("\n"))).toEqual({ seq: 3, hash: "hash-3" });
     expect(lastReceiptFrom(lines.join("\r\n") + "\r\n \t")).toEqual({ seq: 3, hash: "hash-3" });
   });
+
+  test.each([
+    ['{"seq":2,"hash":', "truncated JSON"],
+    ["{}", "missing sequence and hash"],
+    ['{"seq":0,"hash":"x"}', "zero sequence"],
+    ['{"seq":2,"hash":""}', "empty hash"],
+  ])("rejects corrupt last line %s (%s)", (line) => {
+    expect(() => lastReceiptFrom('{"seq":1,"hash":"hash-1"}\n' + line + "\n \t\n"))
+      .toThrow(/^receipt chain corrupt:/);
+  });
 });
