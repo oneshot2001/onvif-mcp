@@ -1,3 +1,42 @@
+import { createHash, verify as edVerify } from "node:crypto";
+
+export function verifyChain(lines: string[], publicKeyPem: string): { count: number; bad: Array<{ seq: number; reason: string }> } {
+  const bad: Array<{ seq: number; reason: string }> = [];
+  let prev: string | undefined = "genesis";
+  for (const [index, line] of lines.entries()) {
+    let r;
+    try {
+      r = JSON.parse(line);
+    } catch {
+      bad.push({ seq: index + 1, reason: "invalid JSON" });
+      prev = undefined;
+      continue;
+    }
+    if (!r || typeof r !== "object" || Array.isArray(r)) {
+      bad.push({ seq: index + 1, reason: "invalid receipt" });
+      prev = undefined;
+      continue;
+    }
+    const { hash, sig, ...body } = r;
+    const expected = createHash("sha256").update(JSON.stringify(body)).digest("hex");
+    const reasons: string[] = [];
+    if (expected !== hash) reasons.push("hash mismatch");
+    let okSig = false;
+    if (typeof hash === "string" && typeof sig === "string") {
+      try {
+        okSig = edVerify(null, Buffer.from(hash), publicKeyPem, Buffer.from(sig, "base64"));
+      } catch {
+        // Malformed signatures must be reported as verification failures.
+      }
+    }
+    if (!okSig) reasons.push("invalid signature");
+    if (prev === undefined || body.prev !== prev) reasons.push("prev mismatch");
+    if (reasons.length) bad.push({ seq: Number.isInteger(r.seq) ? r.seq : index + 1, reason: reasons.join(", ") });
+    prev = typeof hash === "string" ? hash : undefined;
+  }
+  return { count: lines.length, bad };
+}
+
 export function emptyChainConflict(head: { seq: number; hash: string }, handoffHeads: string[]): string | null {
   return head.seq === 0 && handoffHeads.length > 0
     ? `receipt chain is empty but ${handoffHeads.length} handoff(s) reference earlier receipts — chain truncated?`
