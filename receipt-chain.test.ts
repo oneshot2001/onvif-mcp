@@ -1,5 +1,20 @@
 import { describe, expect, test } from "bun:test";
-import { lastReceiptFrom } from "./receipt-chain";
+import { emptyChainConflict, lastReceiptFrom } from "./receipt-chain";
+
+describe("empty receipt chain conflict", () => {
+  test("allows a fresh install with no handoffs", () => {
+    expect(emptyChainConflict({ seq: 0, hash: "genesis" }, [])).toBeNull();
+  });
+
+  test("reports two handoffs referencing an empty chain", () => {
+    expect(emptyChainConflict({ seq: 0, hash: "genesis" }, ["hash-1", "hash-2"]))
+      .toBe("receipt chain is empty but 2 handoff(s) reference earlier receipts — chain truncated?");
+  });
+
+  test("allows a non-empty chain with handoffs", () => {
+    expect(emptyChainConflict({ seq: 2, hash: "hash-2" }, ["hash-1", "hash-2"])).toBeNull();
+  });
+});
 
 describe("last receipt parsing", () => {
   test("returns genesis for empty text", () => {

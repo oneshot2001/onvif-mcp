@@ -4,14 +4,14 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";
 import { generateKeyPairSync, sign as edSign, verify as edVerify, createHash } from "node:crypto";
-import { existsSync, readFileSync, writeFileSync, appendFileSync, mkdirSync, statSync } from "node:fs";
+import { existsSync, readFileSync, readdirSync, writeFileSync, appendFileSync, mkdirSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { AarWireProducer, jsonBytes, verifyBundleDir, type WireDispatch } from "./receipts-aar/producer";
 import { hardDenied, registerCommission, verifyHandoffs } from "./commission";
 import { snapshotContent } from "./snapshot-content";
 import { parseParams } from "./vapix-params";
 import { parseEventMessage } from "./event-parse";
-import { lastReceiptFrom } from "./receipt-chain";
+import { emptyChainConflict, lastReceiptFrom } from "./receipt-chain";
 import { curlRequest } from "./curl-args";
 import { keyModeProblem } from "./key-perms";
 import { missingPasswords } from "./creds-check";
@@ -475,7 +475,14 @@ if (process.argv.includes("--verify")) {
 }
 
 try {
-  lastReceipt();
+  const head = lastReceipt();
+  const handoffDir = join(ROOT, "handoff");
+  const handoffHeads: string[] = existsSync(handoffDir)
+    ? readdirSync(handoffDir).filter((file) => file.endsWith(".json"))
+      .map((file) => JSON.parse(readFileSync(join(handoffDir, file), "utf8")).receipts.chain_head_hash)
+    : [];
+  const conflict = emptyChainConflict(head, handoffHeads);
+  if (conflict !== null) throw new Error(conflict);
 } catch (error) {
   console.error(`${error instanceof Error ? error.message : String(error)} (${LOG})`);
   process.exit(1);

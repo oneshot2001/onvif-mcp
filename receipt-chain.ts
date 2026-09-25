@@ -1,3 +1,9 @@
+export function emptyChainConflict(head: { seq: number; hash: string }, handoffHeads: string[]): string | null {
+  return head.seq === 0 && handoffHeads.length > 0
+    ? `receipt chain is empty but ${handoffHeads.length} handoff(s) reference earlier receipts — chain truncated?`
+    : null;
+}
+
 export function lastReceiptFrom(text: string): { seq: number; hash: string } {
   const trimmed = text.trim();
   if (!trimmed) return { seq: 0, hash: "genesis" };
