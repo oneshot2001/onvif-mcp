@@ -3,7 +3,7 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";
-import { generateKeyPairSync, sign as edSign, verify as edVerify, createHash } from "node:crypto";
+import { generateKeyPairSync, sign as edSign, createHash } from "node:crypto";
 import { existsSync, readFileSync, readdirSync, writeFileSync, appendFileSync, mkdirSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { AarWireProducer, jsonBytes, verifyBundleDir, type WireDispatch } from "./receipts-aar/producer";
@@ -11,13 +11,47 @@ import { hardDenied, registerCommission, verifyHandoffs } from "./commission";
 import { snapshotContent } from "./snapshot-content";
 import { parseParams } from "./vapix-params";
 import { parseEventMessage } from "./event-parse";
-import { emptyChainConflict, lastReceiptFrom } from "./receipt-chain";
+import { emptyChainConflict, lastReceiptFrom, missingHandoffHeads, verifyChain } from "./receipt-chain";
 import { curlRequest } from "./curl-args";
 import { keyModeProblem } from "./key-perms";
 import { missingPasswords } from "./creds-check";
 import { allowed as policyAllowed, configDenied as policyConfigDenied, type Policy } from "./policy-check";
 
 const ROOT = import.meta.dir;
+const KEYDIR = join(ROOT, ".keys");
+const LOG = join(ROOT, "receipts", "chain.jsonl");
+
+// --verify: read-only verification, before credentials or signing-key setup.
+if (process.argv.includes("--verify")) {
+  const publicKey = readFileSync(join(KEYDIR, "receipt.pub"), "utf8");
+  const text = existsSync(LOG) ? readFileSync(LOG, "utf8").trim() : "";
+  const lines = text ? text.split("\n") : [];
+  const chain = verifyChain(lines, publicKey);
+  for (const { seq, reason } of chain.bad) console.log(`BROKEN at seq ${seq}: ${reason}`);
+  const chainHashes = new Set<string>();
+  for (const line of lines) {
+    try {
+      const hash = JSON.parse(line)?.hash;
+      if (typeof hash === "string") chainHashes.add(hash);
+    } catch { /* Invalid JSON is already reported by verifyChain. */ }
+  }
+  const handoffs = verifyHandoffs(ROOT, publicKey);
+  const handoffDir = join(ROOT, "handoff");
+  const heads: Array<{ file: string; chain_head_hash: string }> = [];
+  if (existsSync(handoffDir)) {
+    for (const file of readdirSync(handoffDir).filter((file) => file.endsWith(".json"))) {
+      if (handoffs.bad.includes(file)) continue;
+      const handoff = JSON.parse(readFileSync(join(handoffDir, file), "utf8"));
+      heads.push({ file, chain_head_hash: handoff.receipts?.chain_head_hash });
+    }
+  }
+  const missing = missingHandoffHeads(chainHashes, heads);
+  if (missing.length) console.log(`handoff head missing — chain truncated? ${missing.join(", ")}`);
+  const bad = chain.bad.length + handoffs.bad.length + missing.length;
+  console.log(bad === 0 ? `chain OK — ${chain.count} receipts, every hash linked + signature valid; ${handoffs.count} handoff signatures valid, heads present` : `${bad} broken receipts or handoffs${handoffs.bad.length ? ` (${handoffs.bad.join(", ")})` : ""}`);
+  process.exit(bad === 0 ? 0 : 1);
+}
+
 const AGENT = process.env.AGENT_ID ?? "unknown";
 const cameras: Record<string, { base: string; user: string; credKey: string; ptz: boolean; protocol: "vapix" | "onvif"; profile?: string }> =
   JSON.parse(readFileSync(join(ROOT, "cameras.json"), "utf8"));
@@ -40,8 +74,6 @@ if (missing.length > 0) {
 }
 
 // --- receipts: hash chain + ed25519 signature ---
-const KEYDIR = join(ROOT, ".keys");
-const LOG = join(ROOT, "receipts", "chain.jsonl");
 mkdirSync(KEYDIR, { recursive: true });
 mkdirSync(join(ROOT, "receipts"), { recursive: true });
 if (!existsSync(join(KEYDIR, "receipt.key"))) {
@@ -456,23 +488,6 @@ if (process.argv.includes("--verify-aar")) {
   process.exit(bad === 0 ? 0 : 1);
 }
 
-// --verify: recompute the hash chain + check every signature, then exit
-if (process.argv.includes("--verify")) {
-  const lines = readFileSync(LOG, "utf8").trim().split("\n").map((l) => JSON.parse(l));
-  let prev = "genesis", bad = 0;
-  for (const r of lines) {
-    const { hash, sig, ...body } = r;
-    const expect = createHash("sha256").update(JSON.stringify(body)).digest("hex");
-    const okHash = expect === hash && body.prev === prev;
-    const okSig = edVerify(null, Buffer.from(hash), PUB, Buffer.from(sig, "base64"));
-    if (!okHash || !okSig) { bad++; console.log(`BROKEN at seq ${r.seq}: hash=${okHash} sig=${okSig}`); }
-    prev = hash;
-  }
-  const handoffs = verifyHandoffs(ROOT, PUB);
-  bad += handoffs.bad.length;
-  console.log(bad === 0 ? `chain OK — ${lines.length} receipts, every hash linked + signature valid; ${handoffs.count} handoff signatures valid` : `${bad} broken receipts or handoffs${handoffs.bad.length ? ` (${handoffs.bad.join(", ")})` : ""}`);
-  process.exit(bad === 0 ? 0 : 1);
-}
 
 try {
   const head = lastReceipt();

@@ -3,6 +3,7 @@ import { createHash, verify as edVerify } from "node:crypto";
 export function verifyChain(lines: string[], publicKeyPem: string): { count: number; bad: Array<{ seq: number; reason: string }> } {
   const bad: Array<{ seq: number; reason: string }> = [];
   let prev: string | undefined = "genesis";
+  let prevSeq: number | undefined = 0;
   for (const [index, line] of lines.entries()) {
     let r;
     try {
@@ -10,11 +11,13 @@ export function verifyChain(lines: string[], publicKeyPem: string): { count: num
     } catch {
       bad.push({ seq: index + 1, reason: "invalid JSON" });
       prev = undefined;
+      prevSeq = undefined;
       continue;
     }
     if (!r || typeof r !== "object" || Array.isArray(r)) {
       bad.push({ seq: index + 1, reason: "invalid receipt" });
       prev = undefined;
+      prevSeq = undefined;
       continue;
     }
     const { hash, sig, ...body } = r;
@@ -31,10 +34,16 @@ export function verifyChain(lines: string[], publicKeyPem: string): { count: num
     }
     if (!okSig) reasons.push("invalid signature");
     if (prev === undefined || body.prev !== prev) reasons.push("prev mismatch");
+    if (!Number.isInteger(r.seq) || prevSeq === undefined || r.seq !== prevSeq + 1) reasons.push("seq gap");
     if (reasons.length) bad.push({ seq: Number.isInteger(r.seq) ? r.seq : index + 1, reason: reasons.join(", ") });
     prev = typeof hash === "string" ? hash : undefined;
+    prevSeq = Number.isInteger(r.seq) ? r.seq : undefined;
   }
   return { count: lines.length, bad };
+}
+
+export function missingHandoffHeads(chainHashes: Set<string>, handoffs: Array<{ file: string; chain_head_hash: string }>): string[] {
+  return handoffs.filter(({ chain_head_hash }) => !chainHashes.has(chain_head_hash)).map(({ file }) => file);
 }
 
 export function emptyChainConflict(head: { seq: number; hash: string }, handoffHeads: string[]): string | null {
