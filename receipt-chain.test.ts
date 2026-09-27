@@ -1,5 +1,29 @@
 import { describe, expect, test } from "bun:test";
-import { emptyChainConflict, lastReceiptFrom } from "./receipt-chain";
+import { emptyChainConflict, lastReceiptFrom, selectReceipts } from "./receipt-chain";
+
+describe("receipt selection", () => {
+  const own = [1, 2, 3, 4, 5, 6].map((seq) => JSON.stringify({ seq, principal: { id: "caller" } }));
+  const other = JSON.stringify({ seq: 7, principal: { id: "other" }, params: { private: true } });
+  const mixed = own.flatMap((line) => [line, other]);
+
+  test.each([1, 5])("returns the caller's last %i receipts in chain order", (n) => {
+    expect(selectReceipts(mixed, "caller", n)).toEqual(own.slice(-n));
+  });
+
+  test("skips malformed lines without throwing", () => {
+    expect(selectReceipts([own[0]!, '{"principal":', "null", "{}", other, own[1]!], "caller", 5))
+      .toEqual(own.slice(0, 2));
+  });
+
+  test("returns no receipts for an absent caller or empty chain", () => {
+    expect(selectReceipts(mixed, "unknown", 5)).toEqual([]);
+    expect(selectReceipts([], "caller", 5)).toEqual([]);
+  });
+
+  test("zero does not return the entire chain", () => {
+    expect(selectReceipts(mixed, "caller", 0)).toEqual([]);
+  });
+});
 
 describe("empty receipt chain conflict", () => {
   test("allows a fresh install with no handoffs", () => {

@@ -11,7 +11,7 @@ import { hardDenied, registerCommission, verifyHandoffs } from "./commission";
 import { snapshotContent } from "./snapshot-content";
 import { parseParams } from "./vapix-params";
 import { parseEventMessage } from "./event-parse";
-import { appendLocked, emptyChainConflict, lastReceiptFrom, missingHandoffHeads, verifyChain } from "./receipt-chain";
+import { appendLocked, emptyChainConflict, lastReceiptFrom, missingHandoffHeads, selectReceipts, verifyChain } from "./receipt-chain";
 import { curlRequest } from "./curl-args";
 import { keyModeProblem } from "./key-perms";
 import { missingPasswords } from "./creds-check";
@@ -455,11 +455,11 @@ server.tool("config_remediate", "Restore one drifted VAPIX parameter to its base
   return { content: [{ type: "text", text: detail }] };
 });
 
-server.tool("get_receipts", "Return the last N signed receipts from the chain",
-  { n: z.number().default(5) }, async ({ n }) => {
+server.tool("get_receipts", "Return the caller's last N signed receipts from the chain",
+  { n: z.number().int().min(1).max(100).default(5) }, async ({ n }) => {
   const deny = allowed("get_receipts");
   if (deny) { receipt("get_receipts", { n }, "deny", deny); return { content: [{ type: "text", text: `DENIED: ${deny}` }] }; }
-  const lines = existsSync(LOG) ? readFileSync(LOG, "utf8").trim().split("\n").slice(-n) : [];
+  const lines = existsSync(LOG) ? selectReceipts(readFileSync(LOG, "utf8").trim().split("\n"), AGENT, n) : [];
   receipt("get_receipts", { n }, "allow", `returned ${lines.length}`);
   return { content: [{ type: "text", text: lines.join("\n") || "(empty chain)" }] };
 });

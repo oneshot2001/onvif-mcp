@@ -1,6 +1,17 @@
 import { createHash, verify as edVerify } from "node:crypto";
 import { appendFileSync, closeSync, existsSync, fstatSync, openSync, readFileSync, statSync, unlinkSync, writeFileSync } from "node:fs";
 
+export function selectReceipts(lines: string[], agent: string, n: number): string[] {
+  if (n <= 0) return [];
+  return lines.filter((line) => {
+    try {
+      return JSON.parse(line)?.principal?.id === agent;
+    } catch {
+      return false;
+    }
+  }).slice(-n);
+}
+
 export function appendLocked(logPath: string, build: (prev: { seq: number; hash: string }) => string): void {
   const lockPath = logPath + ".lock";
   let lock: number;
