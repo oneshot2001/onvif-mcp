@@ -1,0 +1,104 @@
+import { describe, expect, test } from "bun:test";
+import { generateKeyPairSync } from "node:crypto";
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { appendLocked, verifyChain } from "./receipt-chain";
+
+describe("receipt chain locking", () => {
+  test("four processes append 100 signed receipts without forks or seq gaps", async () => {
+    const root = mkdtempSync(join(tmpdir(), "receipt-chain-lock-"));
+    const log = join(root, "chain.jsonl");
+    const children: Bun.Subprocess<"ignore", "pipe", "pipe">[] = [];
+    try {
+      const { privateKey, publicKey } = generateKeyPairSync("ed25519");
+      writeFileSync(join(root, "test-key.pem"), privateKey.export({ type: "pkcs8", format: "pem" }));
+      const worker = join(root, "writer.ts");
+      writeFileSync(worker, `
+        import { appendLocked } from ${JSON.stringify(join(import.meta.dir, "receipt-chain.ts"))};
+        import { createHash, sign } from "node:crypto";
+        import { existsSync, readFileSync, writeFileSync } from "node:fs";
+        const [log, keyPath, ready, start] = process.argv.slice(2);
+        const key = readFileSync(keyPath, "utf8");
+        writeFileSync(ready, "ready");
+        while (!existsSync(start)) Bun.sleepSync(5);
+        for (let i = 0; i < 25; i++) {
+          appendLocked(log, (prev) => {
+            Bun.sleepSync(2); // Widen the read/append window to exercise contention.
+            const body = { seq: prev.seq + 1, prev: prev.hash, writer: process.pid, i };
+            const hash = createHash("sha256").update(JSON.stringify(body)).digest("hex");
+            const sig = sign(null, Buffer.from(hash), key).toString("base64");
+            return JSON.stringify({ ...body, hash, sig });
+          });
+        }
+      `);
+      // Hold a live owner's lock until all children have attempted an append.
+      writeFileSync(log + ".lock", String(process.pid));
+      for (let i = 0; i < 4; i++) {
+        children.push(Bun.spawn([process.execPath, worker, log, join(root, "test-key.pem"), join(root, `ready-${i}`), join(root, "start")], {
+          cwd: root, stdin: "ignore", stdout: "pipe", stderr: "pipe",
+        }));
+      }
+      const deadline = Date.now() + 5000;
+      while (![0, 1, 2, 3].every((i) => existsSync(join(root, `ready-${i}`)))) {
+        if (Date.now() > deadline) throw new Error("writers did not become ready");
+        await Bun.sleep(10);
+      }
+      writeFileSync(join(root, "start"), "start");
+      await Bun.sleep(100);
+      expect(existsSync(log)).toBe(false);
+      expect(readFileSync(log + ".lock", "utf8")).toBe(String(process.pid));
+      rmSync(log + ".lock");
+      const results = await Promise.all(children.map(async (child) => ({
+        code: await child.exited,
+        stderr: await new Response(child.stderr).text(),
+      })));
+      expect(results).toEqual(Array.from({ length: 4 }, () => ({ code: 0, stderr: "" })));
+      const lines = readFileSync(log, "utf8").trim().split("\n");
+      const result = verifyChain(lines, publicKey.export({ type: "spki", format: "pem" }).toString());
+      expect(lines).toHaveLength(100);
+      expect(result).toEqual({ count: 100, bad: [] });
+      expect(result.bad.some(({ reason }) => reason.includes("seq gap"))).toBe(false);
+      expect(new Set(lines.map((line) => JSON.parse(line).writer)).size).toBe(4);
+      expect(existsSync(log + ".lock")).toBe(false);
+    } finally {
+      for (const child of children) if (child.exitCode === null) child.kill();
+      await Promise.all(children.map((child) => child.exited));
+      rmSync(root, { recursive: true, force: true });
+    }
+  }, 15000);
+
+  test("reclaims a dead owner's lock", async () => {
+    const root = mkdtempSync(join(tmpdir(), "receipt-chain-dead-lock-"));
+    const log = join(root, "chain.jsonl");
+    try {
+      const child = Bun.spawn([process.execPath, "-e", ""], { cwd: root });
+      expect(await child.exited).toBe(0);
+      writeFileSync(log + ".lock", String(child.pid));
+      appendLocked(log, (prev) => {
+        expect(prev).toEqual({ seq: 0, hash: "genesis" });
+        return JSON.stringify({ seq: 1, hash: "test-hash" });
+      });
+      expect(readFileSync(log, "utf8")).toBe('{"seq":1,"hash":"test-hash"}\n');
+      expect(existsSync(log + ".lock")).toBe(false);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  test("releases the lock after callback and corrupt-tail errors without changing the chain", () => {
+    const root = mkdtempSync(join(tmpdir(), "receipt-chain-error-lock-"));
+    const log = join(root, "chain.jsonl");
+    try {
+      expect(() => appendLocked(log, () => { throw new Error("build failed"); })).toThrow("build failed");
+      expect(existsSync(log + ".lock")).toBe(false);
+      expect(existsSync(log)).toBe(false);
+      writeFileSync(log, '{"seq":');
+      expect(() => appendLocked(log, () => { throw new Error("must not build"); })).toThrow("receipt chain corrupt:");
+      expect(readFileSync(log, "utf8")).toBe('{"seq":');
+      expect(existsSync(log + ".lock")).toBe(false);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+});

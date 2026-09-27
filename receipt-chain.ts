@@ -1,4 +1,49 @@
 import { createHash, verify as edVerify } from "node:crypto";
+import { appendFileSync, closeSync, existsSync, fstatSync, openSync, readFileSync, statSync, unlinkSync, writeFileSync } from "node:fs";
+
+export function appendLocked(logPath: string, build: (prev: { seq: number; hash: string }) => string): void {
+  const lockPath = logPath + ".lock";
+  let lock: number;
+  while (true) {
+    try {
+      lock = openSync(lockPath, "wx");
+      break;
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
+    }
+    // An empty lock may belong to a writer that has not written its PID yet.
+    try {
+      const fd = openSync(lockPath, "r");
+      try {
+        const owner = fstatSync(fd);
+        const pid = Number(readFileSync(fd, "utf8"));
+        if (Number.isSafeInteger(pid) && pid > 0) {
+          try {
+            process.kill(pid, 0);
+          } catch (error) {
+            // EPERM does not mean the owner is dead.
+            if ((error as NodeJS.ErrnoException).code !== "ESRCH") throw error;
+            const current = statSync(lockPath);
+            if (current.dev === owner.dev && current.ino === owner.ino) unlinkSync(lockPath);
+          }
+        }
+      } finally {
+        closeSync(fd);
+      }
+    } catch (error) {
+      if (!["ENOENT", "EPERM"].includes((error as NodeJS.ErrnoException).code ?? "")) throw error;
+    }
+    Bun.sleepSync(10);
+  }
+  try {
+    writeFileSync(lock, String(process.pid));
+    const prev = lastReceiptFrom(existsSync(logPath) ? readFileSync(logPath, "utf8") : "");
+    appendFileSync(logPath, build(prev) + "\n");
+  } finally {
+    closeSync(lock);
+    unlinkSync(lockPath);
+  }
+}
 
 export function verifyChain(lines: string[], publicKeyPem: string): { count: number; bad: Array<{ seq: number; reason: string }> } {
   const bad: Array<{ seq: number; reason: string }> = [];

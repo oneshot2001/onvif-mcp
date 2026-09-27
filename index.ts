@@ -4,14 +4,14 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";
 import { generateKeyPairSync, sign as edSign, createHash } from "node:crypto";
-import { existsSync, readFileSync, readdirSync, writeFileSync, appendFileSync, mkdirSync, statSync } from "node:fs";
+import { existsSync, readFileSync, readdirSync, writeFileSync, mkdirSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { AarWireProducer, jsonBytes, verifyBundleDir, type WireDispatch } from "./receipts-aar/producer";
 import { hardDenied, registerCommission, verifyHandoffs } from "./commission";
 import { snapshotContent } from "./snapshot-content";
 import { parseParams } from "./vapix-params";
 import { parseEventMessage } from "./event-parse";
-import { emptyChainConflict, lastReceiptFrom, missingHandoffHeads, verifyChain } from "./receipt-chain";
+import { appendLocked, emptyChainConflict, lastReceiptFrom, missingHandoffHeads, verifyChain } from "./receipt-chain";
 import { curlRequest } from "./curl-args";
 import { keyModeProblem } from "./key-perms";
 import { missingPasswords } from "./creds-check";
@@ -99,21 +99,22 @@ function lastReceipt(): { seq: number; hash: string } {
 // transport; the conformant producer is scoped in docs/aar-alignment.md.
 const NODE_KIND: Record<string, string> = { ptz_move: "action_attempt", ptz_preset: "action_attempt", get_snapshot: "observation", list_cameras: "observation", get_receipts: "observation", config_baseline: "observation", config_drift: "observation", config_remediate: "action_attempt", commission_plan: "observation", commission_apply: "action_attempt", commission_verify: "observation" };
 function receipt(tool: string, params: unknown, decision: "allow" | "deny", detail: string, resultHash?: string, evidence?: string) {
-  const prev = lastReceipt();
-  const body = {
-    seq: prev.seq + 1, ts: new Date().toISOString(),
-    profile: "aar-0.2-draft-alignment",
-    principal: { role: "agent", type: "service", id: AGENT },
-    enforcement_point: "onvif-mcp/0.1.0",
-    node_kind: decision === "deny" ? "authorization" : NODE_KIND[tool] ?? "action_attempt",
-    action: { tool, params },
-    decision, detail,
-    outcome_evidence: decision === "deny" ? null : evidence ?? (tool === "ptz_move" ? (detail.startsWith("moved") ? "device_acknowledged" : "unknown") : resultHash ? "independently_sensed" : null),
-    result_sha256: resultHash ?? null, prev: prev.hash,
-  };
-  const hash = createHash("sha256").update(JSON.stringify(body)).digest("hex");
-  const sig = edSign(null, Buffer.from(hash), PRIV).toString("base64");
-  appendFileSync(LOG, JSON.stringify({ ...body, hash, sig }) + "\n");
+  appendLocked(LOG, (prev) => {
+    const body = {
+      seq: prev.seq + 1, ts: new Date().toISOString(),
+      profile: "aar-0.2-draft-alignment",
+      principal: { role: "agent", type: "service", id: AGENT },
+      enforcement_point: "onvif-mcp/0.1.0",
+      node_kind: decision === "deny" ? "authorization" : NODE_KIND[tool] ?? "action_attempt",
+      action: { tool, params },
+      decision, detail,
+      outcome_evidence: decision === "deny" ? null : evidence ?? (tool === "ptz_move" ? (detail.startsWith("moved") ? "device_acknowledged" : "unknown") : resultHash ? "independently_sensed" : null),
+      result_sha256: resultHash ?? null, prev: prev.hash,
+    };
+    const hash = createHash("sha256").update(JSON.stringify(body)).digest("hex");
+    const sig = edSign(null, Buffer.from(hash), PRIV).toString("base64");
+    return JSON.stringify({ ...body, hash, sig });
+  });
 }
 
 function allowed(tool: string, camera?: string): string | null {
