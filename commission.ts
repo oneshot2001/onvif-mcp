@@ -1,5 +1,6 @@
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
+import { cameraId, specRef } from "./schemas";
 import { sign as edSign, verify as edVerify } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, readdirSync, realpathSync, writeFileSync } from "node:fs";
 import { basename, join, resolve, sep } from "node:path";
@@ -348,7 +349,7 @@ export function registerCommission(server: McpServer, d: CommissionDeps) {
   const planOutput = (prepared: Awaited<ReturnType<typeof prepare>>) => ({ diff: prepared.plan, presets: prepared.presets, scenarios: prepared.aoa.plan, warnings: prepared.aoa.warning ? [prepared.aoa.warning] : [] });
 
   server.tool("commission_plan", "Plan a camspec against live VAPIX parameters without writes",
-    { camera: z.string(), spec: z.string() }, async ({ camera, spec: ref }) => {
+    { camera: cameraId, spec: specRef }, async ({ camera, spec: ref }) => {
     const params = { camera, spec: ref };
     const reason = denied("commission_plan", camera);
     if (reason) { d.receipt("commission_plan", params, "deny", reason); return { content: [{ type: "text", text: `DENIED: ${reason}` }] }; }
@@ -361,7 +362,7 @@ export function registerCommission(server: McpServer, d: CommissionDeps) {
   });
 
   server.tool("commission_apply", "Plan or explicitly apply a camspec, verify, and roll back parameters on failure; optional free-text notes recorded in the handoff",
-    { camera: z.string(), spec: z.string(), approve: z.boolean(), notes: z.string().max(2000).optional() }, async ({ camera, spec: ref, approve, notes }) => {
+    { camera: cameraId, spec: specRef, approve: z.boolean(), notes: z.string().max(2000).optional() }, async ({ camera, spec: ref, approve, notes }) => {
     const params = { camera, spec: ref, approve };
     const reason = denied("commission_apply", camera, approve) ?? (approve ? d.checkActuation() : null);
     if (reason) { d.receipt("commission_apply", params, "deny", reason); return { content: [{ type: "text", text: `DENIED: ${reason}` }] }; }
@@ -432,7 +433,7 @@ export function registerCommission(server: McpServer, d: CommissionDeps) {
   });
 
   server.tool("commission_verify", "Verify live conformance to a camspec and emit a signed handoff; optional free-text notes recorded in the handoff",
-    { camera: z.string(), spec: z.string(), notes: z.string().max(2000).optional() }, async ({ camera, spec: ref, notes }) => {
+    { camera: cameraId, spec: specRef, notes: z.string().max(2000).optional() }, async ({ camera, spec: ref, notes }) => {
     const params = { camera, spec: ref };
     const reason = denied("commission_verify", camera);
     if (reason) { d.receipt("commission_verify", params, "deny", reason); return { content: [{ type: "text", text: `DENIED: ${reason}` }] }; }

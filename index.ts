@@ -3,6 +3,7 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";
+import { cameraId, presetName, paramName } from "./schemas";
 import { generateKeyPairSync, sign as edSign, createHash } from "node:crypto";
 import { existsSync, readFileSync, readdirSync, writeFileSync, mkdirSync, statSync } from "node:fs";
 import { join } from "node:path";
@@ -299,7 +300,7 @@ server.tool("list_cameras", "List cameras this agent may access, with live devic
 });
 
 server.tool("get_snapshot", "Capture a JPEG snapshot from a camera; returns the image plus saved file path and sha256",
-  { camera: z.string().describe("camera id from list_cameras") }, async ({ camera }) => {
+  { camera: cameraId.describe("camera id from list_cameras") }, async ({ camera }) => {
   const startedAt = Math.floor(Date.now() / 1000);
   const deny = allowed("get_snapshot", camera) ?? rateDenied("snapshot");
   if (deny) {
@@ -327,7 +328,7 @@ server.tool("get_snapshot", "Capture a JPEG snapshot from a camera; returns the 
 });
 
 server.tool("ptz_preset", "Send a PTZ camera to a named preset (VAPIX cameras only)",
-  { camera: z.string(), preset: z.string().default("Home") }, async ({ camera, preset }) => {
+  { camera: cameraId, preset: presetName.default("Home") }, async ({ camera, preset }) => {
   const startedAt = Math.floor(Date.now() / 1000);
   const deny = allowed("ptz_preset", camera);
   const cam = cameras[camera];
@@ -368,7 +369,7 @@ server.tool("ptz_preset", "Send a PTZ camera to a named preset (VAPIX cameras on
 });
 
 server.tool("ptz_move", "Relative PTZ move (degrees pan/tilt, zoom steps), bounded by policy",
-  { camera: z.string(), pan: z.number().default(0), tilt: z.number().default(0), zoom: z.number().default(0) },
+  { camera: cameraId, pan: z.number().default(0), tilt: z.number().default(0), zoom: z.number().default(0) },
   async ({ camera, pan, tilt, zoom }) => {
   const deny = allowed("ptz_move", camera);
   const cam = cameras[camera];
@@ -382,7 +383,7 @@ server.tool("ptz_move", "Relative PTZ move (degrees pan/tilt, zoom steps), bound
 });
 
 server.tool("config_baseline", "Capture allowed VAPIX parameters as the camera config baseline",
-  { camera: z.string() }, async ({ camera }) => {
+  { camera: cameraId }, async ({ camera }) => {
   const params = { camera };
   const deny = configDenied("config_baseline", camera);
   if (deny) { receipt("config_baseline", params, "deny", deny); return { content: [{ type: "text", text: `DENIED: ${deny}` }] }; }
@@ -398,7 +399,7 @@ server.tool("config_baseline", "Capture allowed VAPIX parameters as the camera c
 });
 
 server.tool("config_drift", "Compare live VAPIX parameters with the saved config baseline",
-  { camera: z.string() }, async ({ camera }) => {
+  { camera: cameraId }, async ({ camera }) => {
   const params = { camera };
   const deny = configDenied("config_drift", camera);
   if (deny) { receipt("config_drift", params, "deny", deny); return { content: [{ type: "text", text: `DENIED: ${deny}` }] }; }
@@ -426,7 +427,7 @@ server.tool("config_drift", "Compare live VAPIX parameters with the saved config
 });
 
 server.tool("config_remediate", "Restore one drifted VAPIX parameter to its baseline value",
-  { camera: z.string(), param: z.string(), approve: z.boolean().optional() }, async ({ camera, param, approve }) => {
+  { camera: cameraId, param: paramName, approve: z.boolean().optional() }, async ({ camera, param, approve }) => {
   const params = { camera, param, approve };
   const deny = configDenied("config_remediate", camera, approve) ?? (approve ? rateDenied("actuation") : null);
   if (deny) { receipt("config_remediate", params, "deny", deny); return { content: [{ type: "text", text: `DENIED: ${deny}` }] }; }
