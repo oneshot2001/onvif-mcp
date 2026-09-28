@@ -1,11 +1,43 @@
 import { describe, expect, test } from "bun:test";
-import { allowed, configDenied, type Policy } from "./policy-check";
+import { allowed, configDenied, ptzBound, type Policy } from "./policy-check";
 
 const policy: Policy = {
   viewer: { tools: ["get_snapshot", "config_drift"], cameras: ["cam"] },
   auditor: { tools: ["config_drift", "config_remediate"], cameras: ["cam"], config: { groups: ["Image"] } },
   operator: { tools: ["list_cameras", "config_drift", "config_remediate"], cameras: ["cam"], config: { groups: ["Image"], remediate: true } },
 };
+
+describe("PTZ bounds", () => {
+  const ptz = { maxStep: 30, maxZoomStep: 25 };
+
+  test("allows in-bounds moves including both signed limits", () => {
+    expect(ptzBound(ptz, 10, -15, 20)).toBeNull();
+    expect(ptzBound(ptz, 30, -30, 25)).toBeNull();
+    expect(ptzBound(ptz, -30, 30, -25)).toBeNull();
+  });
+
+  test.each([31, -31])("denies pan %i over the limit", (pan) => {
+    expect(ptzBound(ptz, pan, 0, 0)).toBe("step exceeds policy maxStep 30°");
+  });
+
+  test.each([31, -31])("denies tilt %i over the limit", (tilt) => {
+    expect(ptzBound(ptz, 0, tilt, 0)).toBe("step exceeds policy maxStep 30°");
+  });
+
+  test.each([26, -26])("denies zoom %i over the limit", (zoom) => {
+    expect(ptzBound(ptz, 0, 0, zoom)).toBe("zoom step exceeds policy maxZoomStep 25");
+  });
+
+  test("only allows zero zoom when maxZoomStep is missing", () => {
+    expect(ptzBound({ maxStep: 30 }, 10, -15, 1)).toBe("zoom step exceeds policy maxZoomStep 0");
+    expect(ptzBound({ maxStep: 30 }, 10, -15, -1)).toBe("zoom step exceeds policy maxZoomStep 0");
+    expect(ptzBound({ maxStep: 30 }, 10, -15, 0)).toBeNull();
+  });
+
+  test("denies without a PTZ grant", () => {
+    expect(ptzBound(undefined, 0, 0, 0)).toBe("agent has no ptz grant");
+  });
+});
 
 describe("policy checks", () => {
   test("unknown agent fails closed", () => {

@@ -15,7 +15,7 @@ import { appendLocked, emptyChainConflict, lastReceiptFrom, missingHandoffHeads,
 import { curlRequest } from "./curl-args";
 import { keyModeProblem } from "./key-perms";
 import { missingPasswords } from "./creds-check";
-import { allowed as policyAllowed, configDenied as policyConfigDenied, type Policy } from "./policy-check";
+import { allowed as policyAllowed, configDenied as policyConfigDenied, ptzBound, type Policy } from "./policy-check";
 
 const ROOT = import.meta.dir;
 const KEYDIR = join(ROOT, ".keys");
@@ -366,10 +366,8 @@ server.tool("ptz_move", "Relative PTZ move (degrees pan/tilt, zoom steps), bound
   async ({ camera, pan, tilt, zoom }) => {
   const deny = allowed("ptz_move", camera);
   const cam = cameras[camera];
-  const max = policy[AGENT]?.ptz?.maxStep ?? 0;
   const bound = !deny && (!cam?.ptz ? `camera '${camera}' is not PTZ` :
-    !policy[AGENT]?.ptz ? "agent has no ptz grant" :
-    Math.abs(pan) > max || Math.abs(tilt) > max ? `step exceeds policy maxStep ${max}°` : null);
+    ptzBound(policy[AGENT]?.ptz, pan, tilt, zoom));
   const reason = deny ?? bound;
   if (reason) { receipt("ptz_move", { camera, pan, tilt, zoom }, "deny", reason); return { content: [{ type: "text", text: `DENIED: ${reason}` }] }; }
   const ok = await ptzMove(camera, pan, tilt, zoom);

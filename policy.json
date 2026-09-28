@@ -20,7 +20,8 @@
         "p3285"
       ],
       "ptz": {
-        "maxStep": 30
+        "maxStep": 30,
+        "maxZoomStep": 25
       },
       "config": {
         "groups": [
