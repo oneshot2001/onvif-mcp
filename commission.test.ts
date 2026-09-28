@@ -4,6 +4,7 @@ import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "nod
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { readCommissionSpec, registerCommission, verifyHandoffs, type CommissionDeps } from "./commission";
+import { makeLimiter } from "./rate-limit";
 
 const roots: string[] = [];
 afterEach(() => {
@@ -11,7 +12,7 @@ afterEach(() => {
   for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true });
 });
 
-function harness(options: { ptz?: boolean; aoa?: boolean; aoaInstalled?: boolean } = {}) {
+function harness(options: { ptz?: boolean; aoa?: boolean; aoaInstalled?: boolean; checkActuation?: () => string | null } = {}) {
   const root = mkdtempSync(join(tmpdir(), "onvif-commission-"));
   roots.push(root);
   mkdirSync(join(root, "specs"));
@@ -39,6 +40,7 @@ function harness(options: { ptz?: boolean; aoa?: boolean; aoaInstalled?: boolean
     inGroup: (param, groups) => groups.some((group) => param === group || param.startsWith(`${group}.`)),
     sha256: (value) => createHash("sha256").update(typeof value === "string" ? value : JSON.stringify(value)).digest("hex"),
     lastReceipt: () => ({ seq, hash: seq ? `hash-${seq}` : "genesis" }),
+    checkActuation: options.checkActuation ?? (() => null),
     receipt: (tool, _params, decision, detail, resultHash, evidence) => { seq++; receipts.push({ tool, decision, detail, resultHash, evidence }); },
     configParams: async (_camera, groups) => ({ ok: true, params: Object.fromEntries(Object.entries(state).filter(([param]) => groups.some((group) => param === group || param.startsWith(`${group}.`)))) }),
     vapix: async (_camera, path) => {
@@ -71,6 +73,26 @@ function harness(options: { ptz?: boolean; aoa?: boolean; aoaInstalled?: boolean
 }
 
 describe("commission specs", () => {
+  test("approved apply shares the actuation budget and receipts rate denials; previews do not count", async () => {
+    const limiter = makeLimiter(() => 0);
+    const h = harness({ checkActuation: () => limiter.check("actuation", 6) });
+    writeFileSync(join(h.root, "specs", "rate.yaml"), "spec: camspec/0.1\nname: rate\nparams:\n  Image.I0.Appearance.Rotation: '180'\n");
+    for (let i = 0; i < 6; i++) {
+      const preview = await h.handlers.commission_apply!({ camera: "cam", spec: "rate", approve: false });
+      expect(preview.content[0]!.text).not.toContain("DENIED:");
+    }
+    expect(limiter.check("actuation", 6)).toBeNull();
+    await h.handlers.commission_apply!({ camera: "cam", spec: "rate", approve: true });
+    expect(h.writes).toHaveLength(1);
+    for (let i = 0; i < 4; i++) expect(limiter.check("actuation", 6)).toBeNull();
+    const denied = await h.handlers.commission_apply!({ camera: "cam", spec: "rate", approve: true });
+    expect(denied.content[0]!.text).toBe("DENIED: rate limit: 6/min for actuation");
+    expect(h.receipts.at(-1)).toMatchObject({ tool: "commission_apply", decision: "deny", detail: "rate limit: 6/min for actuation" });
+    expect(h.writes).toHaveLength(1);
+    const preview = await h.handlers.commission_apply!({ camera: "cam", spec: "rate", approve: false });
+    expect(preview.content[0]!.text).not.toContain("DENIED:");
+  });
+
   test("loads the committed fixtures and rejects unknown top-level keys", () => {
     expect(readCommissionSpec(import.meta.dir, "lab-baseline").spec.params).toEqual({ "Image.I0.Appearance.Rotation": "0" });
     expect(readCommissionSpec(import.meta.dir, "lab-aoa").spec).toMatchObject({ scenarios: [{ name: "lab-motion", type: "motion", objects: ["human"] }], observe: { seconds: 30 } });

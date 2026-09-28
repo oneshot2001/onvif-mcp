@@ -1,4 +1,4 @@
-export type Policy = Record<string, { tools: string[]; cameras: string[]; ptz?: { maxStep: number; maxZoomStep?: number }; config?: { groups: string[]; remediate?: boolean; aoa?: boolean } }>;
+export type Policy = Record<string, { tools: string[]; cameras: string[]; ptz?: { maxStep: number; maxZoomStep?: number }; config?: { groups: string[]; remediate?: boolean; aoa?: boolean }; rate?: { actuationPerMin?: number; snapshotPerMin?: number } }>;
 
 export function ptzBound(ptz: { maxStep: number; maxZoomStep?: number } | undefined, pan: number, tilt: number, zoom: number): string | null {
   if (!ptz) return "agent has no ptz grant";

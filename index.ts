@@ -15,6 +15,7 @@ import { appendLocked, emptyChainConflict, lastReceiptFrom, missingHandoffHeads,
 import { curlRequest } from "./curl-args";
 import { keyModeProblem } from "./key-perms";
 import { missingPasswords } from "./creds-check";
+import { makeLimiter } from "./rate-limit";
 import { allowed as policyAllowed, configDenied as policyConfigDenied, ptzBound, type Policy } from "./policy-check";
 
 const ROOT = import.meta.dir;
@@ -60,6 +61,11 @@ const cameras: Record<string, { base: string; user: string; credKey: string; ptz
 const policyBytes = readFileSync(join(ROOT, "policy.json"));
 const policy: Policy =
   JSON.parse(policyBytes.toString("utf8")).agents;
+const limiter = makeLimiter(Date.now);
+function rateDenied(key: "actuation" | "snapshot"): string | null {
+  const perMinute = policy[AGENT]?.rate?.[key === "actuation" ? "actuationPerMin" : "snapshotPerMin"];
+  return perMinute === undefined ? null : limiter.check(key, perMinute);
+}
 
 // --- credentials: fetched from the cred store at startup, never persisted ---
 const passwords: Record<string, string> = {};
@@ -280,7 +286,7 @@ async function emitAar(camera: string, actionName: "camera.stream.view" | "camer
 }
 
 const server = new McpServer({ name: "onvif-mcp", version: "0.1.0" });
-registerCommission(server, { root: ROOT, agent: AGENT, policy, policyBytes, cameras, privateKey: PRIV, vapix, vapixPost, observeEvents, configParams, parseParams, inGroup, sha256, receipt, lastReceipt });
+registerCommission(server, { root: ROOT, agent: AGENT, policy, policyBytes, cameras, privateKey: PRIV, vapix, vapixPost, observeEvents, configParams, parseParams, inGroup, sha256, receipt, lastReceipt, checkActuation: () => rateDenied("actuation") });
 
 server.tool("list_cameras", "List cameras this agent may access, with live device info", {}, async () => {
   const deny = allowed("list_cameras");
@@ -295,7 +301,7 @@ server.tool("list_cameras", "List cameras this agent may access, with live devic
 server.tool("get_snapshot", "Capture a JPEG snapshot from a camera; returns the image plus saved file path and sha256",
   { camera: z.string().describe("camera id from list_cameras") }, async ({ camera }) => {
   const startedAt = Math.floor(Date.now() / 1000);
-  const deny = allowed("get_snapshot", camera);
+  const deny = allowed("get_snapshot", camera) ?? rateDenied("snapshot");
   if (deny) {
     receipt("get_snapshot", { camera }, "deny", deny);
     const aar = await emitAar(camera, "camera.stream.view", {}, startedAt, { refusal: deny });
@@ -328,7 +334,7 @@ server.tool("ptz_preset", "Send a PTZ camera to a named preset (VAPIX cameras on
   const bound = !deny && (!cam?.ptz ? `camera '${camera}' is not PTZ` :
     !policy[AGENT]?.ptz ? "agent has no ptz grant" :
     cam.protocol !== "vapix" ? "preset recall implemented for vapix protocol only" : null);
-  const reason = deny ?? bound;
+  const reason = deny ?? bound ?? rateDenied("actuation");
   if (reason) {
     receipt("ptz_preset", { camera, preset }, "deny", reason);
     const aar = await emitAar(camera, "camera.ptz.preset", { preset }, startedAt, { refusal: reason });
@@ -368,7 +374,7 @@ server.tool("ptz_move", "Relative PTZ move (degrees pan/tilt, zoom steps), bound
   const cam = cameras[camera];
   const bound = !deny && (!cam?.ptz ? `camera '${camera}' is not PTZ` :
     ptzBound(policy[AGENT]?.ptz, pan, tilt, zoom));
-  const reason = deny ?? bound;
+  const reason = deny ?? bound ?? rateDenied("actuation");
   if (reason) { receipt("ptz_move", { camera, pan, tilt, zoom }, "deny", reason); return { content: [{ type: "text", text: `DENIED: ${reason}` }] }; }
   const ok = await ptzMove(camera, pan, tilt, zoom);
   receipt("ptz_move", { camera, pan, tilt, zoom }, "allow", ok ? `moved via ${camOf(camera).protocol}` : "transport error");
@@ -422,7 +428,7 @@ server.tool("config_drift", "Compare live VAPIX parameters with the saved config
 server.tool("config_remediate", "Restore one drifted VAPIX parameter to its baseline value",
   { camera: z.string(), param: z.string(), approve: z.boolean().optional() }, async ({ camera, param, approve }) => {
   const params = { camera, param, approve };
-  const deny = configDenied("config_remediate", camera, approve);
+  const deny = configDenied("config_remediate", camera, approve) ?? (approve ? rateDenied("actuation") : null);
   if (deny) { receipt("config_remediate", params, "deny", deny); return { content: [{ type: "text", text: `DENIED: ${deny}` }] }; }
   const groups = policy[AGENT]!.config!.groups;
   const offGroup = !inGroup(param, groups) ? `param '${param}' is outside allowed config groups` : null;

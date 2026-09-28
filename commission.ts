@@ -53,6 +53,7 @@ export type CommissionDeps = {
   sha256: (value: unknown) => string;
   receipt: (tool: string, params: unknown, decision: "allow" | "deny", detail: string, resultHash?: string, evidence?: string) => void;
   lastReceipt: () => ReceiptHead;
+  checkActuation: () => string | null;
 };
 
 const TOP_KEYS = ["spec", "name", "applies_to", "params", "presets", "scenarios", "observe"];
@@ -362,7 +363,7 @@ export function registerCommission(server: McpServer, d: CommissionDeps) {
   server.tool("commission_apply", "Plan or explicitly apply a camspec, verify, and roll back parameters on failure; optional free-text notes recorded in the handoff",
     { camera: z.string(), spec: z.string(), approve: z.boolean(), notes: z.string().max(2000).optional() }, async ({ camera, spec: ref, approve, notes }) => {
     const params = { camera, spec: ref, approve };
-    const reason = denied("commission_apply", camera, approve);
+    const reason = denied("commission_apply", camera, approve) ?? (approve ? d.checkActuation() : null);
     if (reason) { d.receipt("commission_apply", params, "deny", reason); return { content: [{ type: "text", text: `DENIED: ${reason}` }] }; }
     const started = new Date().toISOString();
     const firstSeq = d.lastReceipt().seq + 1;
