@@ -170,6 +170,14 @@ export function registerCommission(server: McpServer, d: CommissionDeps) {
     if (!data || typeof data !== "object" || Array.isArray(data) || !Array.isArray((data as { scenarios?: unknown }).scenarios)) throw new Error("AOA getConfiguration returned an invalid configuration");
     return data as AoaConfiguration;
   };
+  const guardAoaConfiguration = async (camera: string, snapshot: AoaConfiguration, scenarios: Scenario[]) => {
+    const current = await readAoaConfiguration(camera);
+    const managed = new Set(scenarios.map((scenario) => scenario.name));
+    const byName = (config: AoaConfiguration) => new Map(config.scenarios.filter((scenario) => !managed.has(scenario.name)).map((scenario) => [scenario.name, JSON.stringify(scenario)]));
+    const before = byName(snapshot), now = byName(current);
+    const changed = [...new Set([...before.keys(), ...now.keys()])].filter((name) => before.get(name) !== now.get(name)).sort();
+    if (changed.length) throw new Error(`AOA configuration changed underneath this run (${changed.join(", ")})`);
+  };
   const viewDesired = (scenario: Scenario) => ({
     name: scenario.name, type: scenario.type, objects: [...scenario.objects].sort(),
     geometry: scenario.type === "motion" ? scenario.area : scenario.line,
@@ -397,15 +405,22 @@ export function registerCommission(server: McpServer, d: CommissionDeps) {
         applied.push({ preset: preset.name, pan: preset.pan, tilt: preset.tilt, zoom: preset.zoom });
       }
       if (!writeFailed && p.aoa.installed && p.aoa.plan.length) {
-        const r = await d.vapixPost(camera, "/local/objectanalytics/control.cgi", { apiVersion: "1.0", method: "setConfiguration", params: p.aoa.merged });
-        let ok = r.ok, why = r.ok ? "" : "transport failed";
-        if (ok) try { parseRpc(r.body, "setConfiguration"); } catch (e) { ok = false; why = e instanceof Error ? e.message : String(e); }
+        let ok = false, why = "";
+        try {
+          await guardAoaConfiguration(camera, p.aoa.config!, p.spec.scenarios);
+          const r = await d.vapixPost(camera, "/local/objectanalytics/control.cgi", { apiVersion: "1.0", method: "setConfiguration", params: p.aoa.merged });
+          ok = r.ok; why = r.ok ? "" : "transport failed";
+          if (ok) parseRpc(r.body, "setConfiguration");
+        } catch (e) { ok = false; why = e instanceof Error ? e.message : String(e); }
         for (const scenario of p.aoa.plan) d.receipt("commission_apply", { ...params, scenario: scenario.name }, "allow", ok ? `deployed scenario ${scenario.name}` : `scenario write FAILED ${scenario.name}: ${why}`, undefined, ok ? "device_acknowledged" : "unknown");
-        if (!ok) writeFailed = { param: `scenario:${p.aoa.plan[0]!.name}`, desired: JSON.stringify(viewDesired(p.spec.scenarios.find((scenario) => scenario.name === p.aoa.plan[0]!.name)!)), observed: null };
+        if (!ok) writeFailed = { param: `scenario:${p.aoa.plan[0]!.name}`, desired: JSON.stringify(viewDesired(p.spec.scenarios.find((scenario) => scenario.name === p.aoa.plan[0]!.name)!)), observed: why };
         else for (const scenario of p.aoa.plan) applied.push({ scenario: scenario.name, id: scenario.id, type: scenario.type });
       }
       const checked = await check(camera, p, true);
-      if (writeFailed && !checked.verify.failed.some((failure) => failure.param === writeFailed!.param)) checked.verify.failed.unshift(writeFailed);
+      if (writeFailed) {
+        checked.verify.failed = checked.verify.failed.filter((failure) => failure.param !== writeFailed!.param);
+        checked.verify.failed.unshift(writeFailed);
+      }
       checked.verify.passed = checked.verify.failed.length === 0;
       const observation = await observe(camera, p, checked.scenarios, checked.verify.passed);
       let rollback: Handoff["rollback"] = null;
@@ -419,10 +434,15 @@ export function registerCommission(server: McpServer, d: CommissionDeps) {
         }
         const rollbackSpec: Spec = { ...p.spec, params: Object.fromEntries(applied.filter((a): a is Extract<Applied, { param: string }> => "param" in a).map((item) => [item.param, item.previous])) };
         if (applied.some((a) => "scenario" in a) && p.aoa.config) {
-          const r = await d.vapixPost(camera, "/local/objectanalytics/control.cgi", { apiVersion: "1.0", method: "setConfiguration", params: p.aoa.config });
-          let ok = r.ok; if (ok) try { parseRpc(r.body, "setConfiguration"); } catch { ok = false; }
+          let ok = false, why = "";
+          try {
+            await guardAoaConfiguration(camera, p.aoa.config, p.spec.scenarios);
+            const r = await d.vapixPost(camera, "/local/objectanalytics/control.cgi", { apiVersion: "1.0", method: "setConfiguration", params: p.aoa.config });
+            ok = r.ok;
+            if (ok) parseRpc(r.body, "setConfiguration");
+          } catch (e) { ok = false; why = e instanceof Error ? e.message : String(e); }
           rollbackWrites &&= ok;
-          d.receipt("commission_apply", { ...params, rollback: "aoa-configuration" }, "allow", ok ? "restored prior AOA configuration" : "AOA rollback FAILED", undefined, ok ? "device_acknowledged" : "unknown");
+          d.receipt("commission_apply", { ...params, rollback: "aoa-configuration" }, "allow", ok ? "restored prior AOA configuration" : `AOA rollback FAILED${why ? `: ${why}` : ""}`, undefined, ok ? "device_acknowledged" : "unknown");
         }
         rollback = { performed: true, verified: rollbackWrites && (await checkParams(camera, rollbackSpec)).length === 0 };
       }

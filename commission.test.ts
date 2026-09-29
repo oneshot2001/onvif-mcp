@@ -12,7 +12,7 @@ afterEach(() => {
   for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true });
 });
 
-function harness(options: { ptz?: boolean; aoa?: boolean; aoaInstalled?: boolean; checkActuation?: () => string | null } = {}) {
+function harness(options: { ptz?: boolean; aoa?: boolean; aoaInstalled?: boolean; checkActuation?: () => string | null; beforeAoaRead?: (read: number) => void } = {}) {
   const root = mkdtempSync(join(tmpdir(), "onvif-commission-"));
   roots.push(root);
   mkdirSync(join(root, "specs"));
@@ -23,6 +23,7 @@ function harness(options: { ptz?: boolean; aoa?: boolean; aoaInstalled?: boolean
   const presets = new Set<string>();
   let aoa = { devices: [{ id: 1 }], scenarios: [{ id: 4, name: "keep-me", type: "motion", devices: [{ id: 1 }], triggers: [{ type: "includeArea", vertices: [[-0.5, -0.5], [0.5, -0.5], [0.5, 0.5]] }], objectClassifications: [{ type: "vehicle" }] }] };
   let seq = 0;
+  let aoaReads = 0;
   const handlers: Record<string, (args: Record<string, unknown>) => Promise<{ content: Array<{ text: string }> }>> = {};
   const server = { tool(name: string, _description: string, _schema: unknown, handler: (args: Record<string, unknown>) => Promise<{ content: Array<{ text: string }> }>) { handlers[name] = handler; } };
   const parseParams = (body: string) => Object.fromEntries(body.trim().split(/\r?\n/).filter(Boolean).map((line) => {
@@ -58,7 +59,10 @@ function harness(options: { ptz?: boolean; aoa?: boolean; aoaInstalled?: boolean
       posts.push(structuredClone(body));
       const request = body as { method?: string; params?: typeof aoa };
       if (request.method === "getSupportedVersions") return options.aoaInstalled === false ? { ok: true, body: "not installed" } : { ok: true, body: JSON.stringify({ apiVersion: "1.0", method: request.method, data: { apiVersions: ["1.0"] } }) };
-      if (request.method === "getConfiguration") return { ok: true, body: JSON.stringify({ apiVersion: "1.0", method: request.method, data: aoa }) };
+      if (request.method === "getConfiguration") {
+        options.beforeAoaRead?.(++aoaReads);
+        return { ok: true, body: JSON.stringify({ apiVersion: "1.0", method: request.method, data: aoa }) };
+      }
       if (request.method === "setConfiguration") {
         aoa = structuredClone(request.params!);
         writes.push("AOA:setConfiguration");
@@ -237,6 +241,54 @@ describe("commission specs", () => {
     const second = JSON.parse((await h.handlers.commission_apply!({ camera: "cam", spec: "aoa", approve: true })).content[0]!.text);
     expect(second).toMatchObject({ passed: true, scenarios: [{ name: "lab-motion", id: 5, readback_diff: [] }], observation: { fired: { "lab-motion": { count: 1 } } } });
     expect(h.writes).toEqual(["AOA:setConfiguration"]);
+  });
+
+  for (const phase of ["apply", "rollback"] as const) {
+    test.each(["added", "removed", "changed"])(`refuses AOA ${phase} when an unmanaged scenario is %s`, async (change) => {
+      let concurrentConfig: unknown;
+      const h = harness({ beforeAoaRead: (read) => {
+        if (read !== (phase === "apply" ? 2 : 4)) return;
+        const scenarios = h.aoa().scenarios;
+        if (change === "added") scenarios.push({ ...structuredClone(scenarios[0]!), id: 9, name: "camera-ui" });
+        else if (change === "removed") scenarios.splice(0, 1);
+        else scenarios[0]!.objectClassifications = [{ type: "human" }];
+        concurrentConfig = structuredClone(h.aoa());
+      } });
+      writeFileSync(join(h.root, "specs", "aoa.yaml"), "spec: camspec/0.1\nname: aoa\nparams:\n  Image.I0.Appearance.Rotation: '180'\nscenarios:\n  - name: lab-motion\n    type: motion\n    objects: [human]\n    area: [[-0.9,-0.9],[0.9,-0.9],[0.9,0.9],[-0.9,0.9]]\nobserve: { seconds: 0 }\n");
+      if (phase === "rollback") process.env.COMMISSION_FAIL_PARAM = "Image.I0.Appearance.Rotation";
+      const out = JSON.parse((await h.handlers.commission_apply!({ camera: "cam", spec: "aoa", approve: true })).content[0]!.text);
+      const message = `AOA configuration changed underneath this run (${change === "added" ? "camera-ui" : "keep-me"})`;
+      expect(out.passed).toBeFalse();
+      expect(concurrentConfig).toBeDefined();
+      expect(h.aoa()).toEqual(concurrentConfig);
+      expect(h.posts.filter((post) => (post as { method: string }).method === "setConfiguration")).toHaveLength(phase === "apply" ? 0 : 1);
+      const handoff = JSON.parse(readFileSync(out.handoff, "utf8"));
+      if (phase === "apply") {
+        expect(out.failed).toContainEqual(expect.objectContaining({ param: "scenario:lab-motion", observed: message }));
+        expect(handoff.verify.failed).toEqual(out.failed);
+        expect(h.receipts).toContainEqual(expect.objectContaining({ detail: `scenario write FAILED lab-motion: ${message}`, evidence: "unknown" }));
+      } else {
+        expect(out).toMatchObject({ rolled_back: true, rollback_verified: false });
+        expect(handoff.rollback).toEqual({ performed: true, verified: false });
+        expect(h.receipts).toContainEqual(expect.objectContaining({ detail: `AOA rollback FAILED: ${message}`, evidence: "unknown" }));
+      }
+      expect(h.state["Image.I0.Appearance.Rotation"]).toBe("0");
+    });
+  }
+
+  test("AOA rollback restores the snapshot when unmanaged scenarios are unchanged", async () => {
+    const h = harness();
+    const snapshot = structuredClone(h.aoa());
+    writeFileSync(join(h.root, "specs", "aoa.yaml"), "spec: camspec/0.1\nname: aoa\nparams:\n  Image.I0.Appearance.Rotation: '180'\nscenarios:\n  - name: lab-motion\n    type: motion\n    objects: [human]\n    area: [[-0.9,-0.9],[0.9,-0.9],[0.9,0.9],[-0.9,0.9]]\nobserve: { seconds: 0 }\n");
+    process.env.COMMISSION_FAIL_PARAM = "Image.I0.Appearance.Rotation";
+    const out = JSON.parse((await h.handlers.commission_apply!({ camera: "cam", spec: "aoa", approve: true })).content[0]!.text);
+    expect(out).toMatchObject({ passed: false, rolled_back: true, rollback_verified: true });
+    expect(h.aoa()).toEqual(snapshot);
+    expect(h.posts.map((post) => (post as { method: string }).method)).toEqual([
+      "getSupportedVersions", "getConfiguration", "getConfiguration", "setConfiguration",
+      "getConfiguration", "getConfiguration", "setConfiguration",
+    ]);
+    expect(h.receipts).toContainEqual(expect.objectContaining({ detail: "restored prior AOA configuration", evidence: "device_acknowledged" }));
   });
 
   test("AOA absence fails verification with a warning and preset verification detects deletion", async () => {
