@@ -38,3 +38,6 @@ report.[0-9]_.[0-9]_.[0-9]_.[0-9]_.json
 .DS_Store
 handoff/*.html
 handoff/*.pdf
+
+# receipt-chain lock (a crashed server can leave one behind)
+receipts/*.lock
