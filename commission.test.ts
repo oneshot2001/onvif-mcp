@@ -139,6 +139,25 @@ describe("commission specs", () => {
     expect(h.writes).toEqual([]);
   });
 
+  test("production ignores the forced verify failure hook without rolling back", async () => {
+    const h = harness();
+    writeFileSync(join(h.root, "specs", "apply.yaml"), "spec: camspec/0.1\nname: apply\nparams:\n  Image.I0.Appearance.Rotation: \"180\"\n");
+    const previousNodeEnv = process.env.NODE_ENV;
+    try {
+      process.env.NODE_ENV = "production";
+      process.env.COMMISSION_FAIL_PARAM = "Image.I0.Appearance.Rotation";
+      const result = await h.handlers.commission_apply!({ camera: "cam", spec: "apply", approve: true });
+      const out = JSON.parse(result.content[0]!.text);
+      expect(out).toMatchObject({ passed: true, failed: [], rolled_back: false, rollback_verified: null });
+      expect(h.state["Image.I0.Appearance.Rotation"]).toBe("180");
+      expect(h.writes).toHaveLength(1);
+      expect(JSON.parse(readFileSync(out.handoff, "utf8")).rollback).toBeNull();
+    } finally {
+      if (previousNodeEnv === undefined) delete process.env.NODE_ENV;
+      else process.env.NODE_ENV = previousNodeEnv;
+    }
+  });
+
   test("forced verify failure rolls back and emits a verifiable signed handoff", async () => {
     const h = harness();
     writeFileSync(join(h.root, "specs", "apply.yaml"), "spec: camspec/0.1\nname: apply\nparams:\n  Image.I0.Appearance.Rotation: \"180\"\n");

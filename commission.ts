@@ -248,7 +248,7 @@ export function registerCommission(server: McpServer, d: CommissionDeps) {
     const failed: Failure[] = [];
     for (const [param, desired] of Object.entries(spec.params)) {
       const observed = live.ok ? live.params[param] ?? null : null;
-      if (!live.ok || observed !== desired || (force && process.env.COMMISSION_FAIL_PARAM === param)) failed.push({ param, desired, observed });
+      if (!live.ok || observed !== desired || (force && process.env.NODE_ENV === "test" && process.env.COMMISSION_FAIL_PARAM === param)) failed.push({ param, desired, observed });
     }
     return failed;
   };
