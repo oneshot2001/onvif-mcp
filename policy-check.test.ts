@@ -1,11 +1,31 @@
 import { describe, expect, test } from "bun:test";
-import { allowed, configDenied, ptzBound, type Policy } from "./policy-check";
+import { allowed, baselineDenied, configDenied, ptzBound, type Policy } from "./policy-check";
 
 const policy: Policy = {
   viewer: { tools: ["get_snapshot", "config_drift"], cameras: ["cam"] },
   auditor: { tools: ["config_drift", "config_remediate"], cameras: ["cam"], config: { groups: ["Image"] } },
   operator: { tools: ["list_cameras", "config_drift", "config_remediate"], cameras: ["cam"], config: { groups: ["Image"], remediate: true } },
 };
+
+describe("baseline policy", () => {
+  test("allows a first baseline without a rebaseline grant", () => {
+    expect(baselineDenied({ agent: "auditor" }, false)).toBeNull();
+  });
+
+  test("denies an existing baseline without a rebaseline grant", () => {
+    expect(baselineDenied({ agent: "auditor" }, true)).toBe("baseline exists; agent 'auditor' has no rebaseline grant");
+    expect(baselineDenied({ agent: "viewer", rebaseline: false }, true)).toBe("baseline exists; agent 'viewer' has no rebaseline grant");
+  });
+
+  test("allows an existing baseline with an explicit rebaseline grant", () => {
+    expect(baselineDenied({ agent: "operator", rebaseline: true }, true)).toBeNull();
+  });
+
+  test("a truthy non-boolean policy value is not a rebaseline grant", () => {
+    const config = JSON.parse('{"agent":"auditor","rebaseline":"true"}');
+    expect(baselineDenied(config, true)).toBe("baseline exists; agent 'auditor' has no rebaseline grant");
+  });
+});
 
 describe("PTZ bounds", () => {
   const ptz = { maxStep: 30, maxZoomStep: 25 };

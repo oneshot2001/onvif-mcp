@@ -17,7 +17,7 @@ import { curlRequest } from "./curl-args";
 import { keyModeProblem } from "./key-perms";
 import { missingPasswords } from "./creds-check";
 import { makeLimiter } from "./rate-limit";
-import { allowed as policyAllowed, configDenied as policyConfigDenied, ptzBound, type Policy } from "./policy-check";
+import { allowed as policyAllowed, baselineDenied, configDenied as policyConfigDenied, ptzBound, type Policy } from "./policy-check";
 
 const ROOT = import.meta.dir;
 const KEYDIR = join(ROOT, ".keys");
@@ -385,7 +385,9 @@ server.tool("ptz_move", "Relative PTZ move (degrees pan/tilt, zoom steps), bound
 server.tool("config_baseline", "Capture allowed VAPIX parameters as the camera config baseline",
   { camera: cameraId }, async ({ camera }) => {
   const params = { camera };
-  const deny = configDenied("config_baseline", camera);
+  const file = baselineFile(camera);
+  const config = { agent: AGENT, rebaseline: policy[AGENT]?.config?.rebaseline };
+  const deny = configDenied("config_baseline", camera) ?? baselineDenied(config, existsSync(file));
   if (deny) { receipt("config_baseline", params, "deny", deny); return { content: [{ type: "text", text: `DENIED: ${deny}` }] }; }
   const groups = policy[AGENT]!.config!.groups;
   const live = await configParams(camera, groups);
@@ -393,7 +395,15 @@ server.tool("config_baseline", "Capture allowed VAPIX parameters as the camera c
   const hash = sha256(live.params);
   const baseline: Baseline = { camera, captured: new Date().toISOString(), groups, params: live.params, sha256: hash };
   mkdirSync(BASELINES, { recursive: true });
-  writeFileSync(baselineFile(camera), JSON.stringify(baseline, null, 2) + "\n");
+  try {
+    // Exclusive creation also protects against another caller baselining during the fetch.
+    writeFileSync(file, JSON.stringify(baseline, null, 2) + "\n", { flag: config.rebaseline === true ? "w" : "wx" });
+  } catch (error) {
+    const deny = (error as NodeJS.ErrnoException).code === "EEXIST" ? baselineDenied(config, true) : null;
+    if (!deny) throw error;
+    receipt("config_baseline", params, "deny", deny);
+    return { content: [{ type: "text", text: `DENIED: ${deny}` }] };
+  }
   receipt("config_baseline", params, "allow", `baselined ${Object.keys(live.params).length} params`, hash);
   return { content: [{ type: "text", text: `baselined ${camera}: ${Object.keys(live.params).length} params sha256:${hash}` }] };
 });

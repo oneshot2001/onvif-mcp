@@ -1,4 +1,9 @@
-export type Policy = Record<string, { tools: string[]; cameras: string[]; ptz?: { maxStep: number; maxZoomStep?: number }; config?: { groups: string[]; remediate?: boolean; aoa?: boolean }; rate?: { actuationPerMin?: number; snapshotPerMin?: number } }>;
+export type Policy = Record<string, { tools: string[]; cameras: string[]; ptz?: { maxStep: number; maxZoomStep?: number }; config?: { groups: string[]; remediate?: boolean; aoa?: boolean; rebaseline?: boolean }; rate?: { actuationPerMin?: number; snapshotPerMin?: number } }>;
+
+export function baselineDenied(config: { agent: string; rebaseline?: boolean }, exists: boolean): string | null {
+  if (exists && config.rebaseline !== true) return `baseline exists; agent '${config.agent}' has no rebaseline grant`;
+  return null;
+}
 
 export function ptzBound(ptz: { maxStep: number; maxZoomStep?: number } | undefined, pan: number, tilt: number, zoom: number): string | null {
   if (!ptz) return "agent has no ptz grant";
