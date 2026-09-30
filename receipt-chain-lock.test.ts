@@ -1,11 +1,57 @@
 import { describe, expect, test } from "bun:test";
 import { generateKeyPairSync } from "node:crypto";
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { appendLocked, verifyChain } from "./receipt-chain";
 
 describe("receipt chain locking", () => {
+  for (const [contents, reason] of [["", "empty"], ["garbage", "invalid pid"]]) {
+    test(`reclaims a lock with ${reason} contents and appends`, async () => {
+      const root = mkdtempSync(join(tmpdir(), "receipt-chain-invalid-lock-"));
+      const log = join(root, "chain.jsonl");
+      let child: Bun.Subprocess<"ignore", "pipe", "pipe"> | undefined;
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      try {
+        writeFileSync(log + ".lock", contents!);
+        const worker = join(root, "writer.ts");
+        writeFileSync(worker, `
+          import { appendLocked } from ${JSON.stringify(join(import.meta.dir, "receipt-chain.ts"))};
+          appendLocked(process.argv[2], (prev) => JSON.stringify({ seq: prev.seq + 1, prev: prev.hash, hash: "test-hash" }));
+        `);
+        child = Bun.spawn([process.execPath, worker, log], {
+          cwd: root, stdin: "ignore", stdout: "pipe", stderr: "pipe",
+        });
+        timer = setTimeout(() => child!.kill(), 3000);
+        expect(await child.exited).toBe(0);
+        expect(await new Response(child.stderr).text()).toBe(`receipt lock reclaimed (${reason})\n`);
+        expect(readFileSync(log, "utf8")).toBe('{"seq":1,"prev":"genesis","hash":"test-hash"}\n');
+        expect(existsSync(log + ".lock")).toBe(false);
+        expect(readdirSync(root).filter((name) => name.endsWith(".tmp"))).toEqual([]);
+      } finally {
+        clearTimeout(timer);
+        if (child?.exitCode === null) child.kill();
+        if (child) await child.exited;
+        rmSync(root, { recursive: true, force: true });
+      }
+    });
+  }
+
+  test("publishes a PID-filled lock and leaves no temporary file after an append", () => {
+    const root = mkdtempSync(join(tmpdir(), "receipt-chain-tmp-lock-"));
+    const log = join(root, "chain.jsonl");
+    try {
+      appendLocked(log, () => {
+        expect(readFileSync(log + ".lock", "utf8")).toBe(String(process.pid));
+        expect(readdirSync(root)).toEqual(["chain.jsonl.lock"]);
+        return JSON.stringify({ seq: 1, hash: "test-hash" });
+      });
+      expect(readdirSync(root)).toEqual(["chain.jsonl"]);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   test("four processes append 100 signed receipts without forks or seq gaps", async () => {
     const root = mkdtempSync(join(tmpdir(), "receipt-chain-lock-"));
     const log = join(root, "chain.jsonl");
@@ -61,6 +107,7 @@ describe("receipt chain locking", () => {
       expect(result.bad.some(({ reason }) => reason.includes("seq gap"))).toBe(false);
       expect(new Set(lines.map((line) => JSON.parse(line).writer)).size).toBe(4);
       expect(existsSync(log + ".lock")).toBe(false);
+      expect(readdirSync(root).filter((name) => name.endsWith(".tmp"))).toEqual([]);
     } finally {
       for (const child of children) if (child.exitCode === null) child.kill();
       await Promise.all(children.map((child) => child.exited));

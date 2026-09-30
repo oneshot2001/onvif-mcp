@@ -1,5 +1,5 @@
 import { createHash, verify as edVerify } from "node:crypto";
-import { appendFileSync, closeSync, existsSync, fstatSync, openSync, readFileSync, statSync, unlinkSync, writeFileSync } from "node:fs";
+import { appendFileSync, closeSync, existsSync, fstatSync, linkSync, openSync, readFileSync, statSync, unlinkSync, writeFileSync } from "node:fs";
 
 export function selectReceipts(lines: string[], agent: string, n: number): string[] {
   if (n <= 0) return [];
@@ -14,28 +14,43 @@ export function selectReceipts(lines: string[], agent: string, n: number): strin
 
 export function appendLocked(logPath: string, build: (prev: { seq: number; hash: string }) => string): void {
   const lockPath = logPath + ".lock";
-  let lock: number;
+  const tmpPath = `${lockPath}.${process.pid}.tmp`;
   while (true) {
+    writeFileSync(tmpPath, String(process.pid));
     try {
-      lock = openSync(lockPath, "wx");
+      try {
+        // Publish the lock only after its PID has been written.
+        linkSync(tmpPath, lockPath);
+      } finally {
+        unlinkSync(tmpPath);
+      }
       break;
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
     }
-    // An empty lock may belong to a writer that has not written its PID yet.
     try {
       const fd = openSync(lockPath, "r");
       try {
         const owner = fstatSync(fd);
-        const pid = Number(readFileSync(fd, "utf8"));
+        const contents = readFileSync(fd, "utf8").trim();
+        const pid = Number(contents);
+        let reason: string | undefined;
         if (Number.isSafeInteger(pid) && pid > 0) {
           try {
             process.kill(pid, 0);
           } catch (error) {
             // EPERM does not mean the owner is dead.
             if ((error as NodeJS.ErrnoException).code !== "ESRCH") throw error;
-            const current = statSync(lockPath);
-            if (current.dev === owner.dev && current.ino === owner.ino) unlinkSync(lockPath);
+            reason = `dead owner ${pid}`;
+          }
+        } else {
+          reason = contents ? "invalid pid" : "empty";
+        }
+        if (reason) {
+          const current = statSync(lockPath);
+          if (current.dev === owner.dev && current.ino === owner.ino) {
+            unlinkSync(lockPath);
+            console.error(`receipt lock reclaimed (${reason})`);
           }
         }
       } finally {
@@ -47,11 +62,9 @@ export function appendLocked(logPath: string, build: (prev: { seq: number; hash:
     Bun.sleepSync(10);
   }
   try {
-    writeFileSync(lock, String(process.pid));
     const prev = lastReceiptFrom(existsSync(logPath) ? readFileSync(logPath, "utf8") : "");
     appendFileSync(logPath, build(prev) + "\n");
   } finally {
-    closeSync(lock);
     unlinkSync(lockPath);
   }
 }
