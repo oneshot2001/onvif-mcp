@@ -245,7 +245,7 @@ describe("commission specs", () => {
 
   for (const phase of ["apply", "rollback"] as const) {
     test.each(["added", "removed", "changed"])(`refuses AOA ${phase} when an unmanaged scenario is %s`, async (change) => {
-      let concurrentConfig: unknown;
+      let concurrentConfig: ReturnType<typeof h.aoa> | undefined;
       const h = harness({ beforeAoaRead: (read) => {
         if (read !== (phase === "apply" ? 2 : 4)) return;
         const scenarios = h.aoa().scenarios;
@@ -260,7 +260,7 @@ describe("commission specs", () => {
       const message = `AOA configuration changed underneath this run (${change === "added" ? "camera-ui" : "keep-me"})`;
       expect(out.passed).toBeFalse();
       expect(concurrentConfig).toBeDefined();
-      expect(h.aoa()).toEqual(concurrentConfig);
+      expect(h.aoa()).toEqual(concurrentConfig!);
       expect(h.posts.filter((post) => (post as { method: string }).method === "setConfiguration")).toHaveLength(phase === "apply" ? 0 : 1);
       const handoff = JSON.parse(readFileSync(out.handoff, "utf8"));
       if (phase === "apply") {
