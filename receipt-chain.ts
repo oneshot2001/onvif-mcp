@@ -1,6 +1,8 @@
 import { createHash, verify as edVerify } from "node:crypto";
 import { appendFileSync, closeSync, existsSync, fstatSync, linkSync, openSync, readFileSync, statSync, unlinkSync, writeFileSync } from "node:fs";
 
+export const STALE_LOCK_MS = 60_000;
+
 export function selectReceipts(lines: string[], agent: string, n: number): string[] {
   if (n <= 0) return [];
   return lines.filter((line) => {
@@ -34,8 +36,11 @@ export function appendLocked(logPath: string, build: (prev: { seq: number; hash:
         const owner = fstatSync(fd);
         const contents = readFileSync(fd, "utf8").trim();
         const pid = Number(contents);
+        const ageMs = Date.now() - owner.mtimeMs;
         let reason: string | undefined;
-        if (Number.isSafeInteger(pid) && pid > 0) {
+        if (ageMs > STALE_LOCK_MS) {
+          reason = `stale ${Math.floor(ageMs / 1000)}s`;
+        } else if (Number.isSafeInteger(pid) && pid > 0) {
           try {
             process.kill(pid, 0);
           } catch (error) {

@@ -1,11 +1,45 @@
 import { describe, expect, test } from "bun:test";
 import { generateKeyPairSync } from "node:crypto";
-import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { appendLocked, verifyChain } from "./receipt-chain";
+import { appendLocked, STALE_LOCK_MS, verifyChain } from "./receipt-chain";
 
 describe("receipt chain locking", () => {
+  test("reclaims a 61-second-old lock naming this test's live PID and appends", async () => {
+    const root = mkdtempSync(join(tmpdir(), "receipt-chain-stale-lock-"));
+    const log = join(root, "chain.jsonl");
+    let child: Bun.Subprocess<"ignore", "pipe", "pipe"> | undefined;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    try {
+      expect(STALE_LOCK_MS).toBe(60_000);
+      writeFileSync(log + ".lock", String(process.pid));
+      const staleTime = new Date(Date.now() - 61_000);
+      utimesSync(log + ".lock", staleTime, staleTime);
+      const worker = join(root, "writer.ts");
+      writeFileSync(worker, `
+        import { appendLocked } from ${JSON.stringify(join(import.meta.dir, "receipt-chain.ts"))};
+        appendLocked(process.argv[2], (prev) => JSON.stringify({ seq: prev.seq + 1, prev: prev.hash, hash: "test-hash" }));
+      `);
+      child = Bun.spawn([process.execPath, worker, log], {
+        cwd: root, stdin: "ignore", stdout: "pipe", stderr: "pipe",
+      });
+      timer = setTimeout(() => child!.kill(), 3000);
+      expect(await child.exited).toBe(0);
+      const stderr = await new Response(child.stderr).text();
+      expect(stderr).toMatch(/^receipt lock reclaimed \(stale \d+s\)\n$/);
+      expect(Number(stderr.match(/stale (\d+)s/)![1])).toBeGreaterThanOrEqual(61);
+      expect(readFileSync(log, "utf8")).toBe('{"seq":1,"prev":"genesis","hash":"test-hash"}\n');
+      expect(existsSync(log + ".lock")).toBe(false);
+      expect(readdirSync(root).filter((name) => name.endsWith(".tmp"))).toEqual([]);
+    } finally {
+      clearTimeout(timer);
+      if (child?.exitCode === null) child.kill();
+      if (child) await child.exited;
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   for (const [contents, reason] of [["", "empty"], ["garbage", "invalid pid"]]) {
     test(`reclaims a lock with ${reason} contents and appends`, async () => {
       const root = mkdtempSync(join(tmpdir(), "receipt-chain-invalid-lock-"));
