@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { createHash, generateKeyPairSync, sign } from "node:crypto";
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -77,6 +77,16 @@ function harness(options: { ptz?: boolean; aoa?: boolean; aoaInstalled?: boolean
 }
 
 describe("commission specs", () => {
+  let previousNodeEnv: string | undefined;
+  beforeEach(() => {
+    previousNodeEnv = process.env.NODE_ENV;
+    process.env.NODE_ENV = "test";
+  });
+  afterEach(() => {
+    if (previousNodeEnv === undefined) delete process.env.NODE_ENV;
+    else process.env.NODE_ENV = previousNodeEnv;
+  });
+
   test("approved apply shares the actuation budget and receipts rate denials; previews do not count", async () => {
     const limiter = makeLimiter(() => 0);
     const h = harness({ checkActuation: () => limiter.check("actuation", 6) });
