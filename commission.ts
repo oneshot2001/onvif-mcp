@@ -1,6 +1,7 @@
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import { cameraId, specRef } from "./schemas";
+import { deviceText } from "./device-text";
 import { sign as edSign, verify as edVerify } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, readdirSync, realpathSync, writeFileSync } from "node:fs";
 import { basename, join, resolve, sep } from "node:path";
@@ -352,8 +353,12 @@ export function registerCommission(server: McpServer, d: CommissionDeps) {
     const message = value instanceof Error ? value.message : String(value);
     const deny = message.startsWith("DENIED: ");
     d.receipt(tool, params, deny ? "deny" : "allow", deny ? message.slice(8) : `FAILED: ${message}`);
-    return { content: [{ type: "text" as const, text: message }], isError: !deny };
+    return { content: [{ type: "text" as const, text: message.startsWith("AOA ") ? deviceText(message) : message }], isError: !deny };
   };
+  // Display copies only: finish() and receipt hashes retain the raw evidence.
+  const scenarioOutput = (scenarios: ScenarioResult[]) => scenarios.map((scenario) => ({ ...scenario, readback_diff: scenario.readback_diff.map((detail) => detail.startsWith("AOA ") ? deviceText(detail) : detail) }));
+  const verifyOutput = (verify: { passed: boolean; failed: Failure[] }) => ({ ...verify, failed: verify.failed.map((failure) => failure.param.startsWith("scenario:") && failure.observed?.startsWith("AOA ") ? { ...failure, observed: deviceText(failure.observed) } : failure) });
+  const observationOutput = (observation: Observation | null) => observation && ({ ...observation, warnings: observation.warnings.map((warning) => /^(event stream error:|event observation failed:)/.test(warning) ? deviceText(warning) : warning) });
   const planOutput = (prepared: Awaited<ReturnType<typeof prepare>>) => ({ diff: prepared.plan, presets: prepared.presets, scenarios: prepared.aoa.plan, warnings: prepared.aoa.warning ? [prepared.aoa.warning] : [] });
 
   server.tool("commission_plan", "Plan a camspec against live VAPIX parameters without writes",
@@ -447,7 +452,7 @@ export function registerCommission(server: McpServer, d: CommissionDeps) {
         rollback = { performed: true, verified: rollbackWrites && (await checkParams(camera, rollbackSpec)).length === 0 };
       }
       const file = finish("commission_apply", params, started, firstSeq, p, applied, checked.verify, rollback, checked.scenarios, observation, notes);
-      const out = { ...checked.verify, rolled_back: rollback?.performed ?? false, rollback_verified: rollback?.verified ?? null, scenarios: checked.scenarios, observation, handoff: file };
+      const out = { ...verifyOutput(checked.verify), rolled_back: rollback?.performed ?? false, rollback_verified: rollback?.verified ?? null, scenarios: scenarioOutput(checked.scenarios), observation: observationOutput(observation), handoff: file };
       return { content: [{ type: "text", text: JSON.stringify(out, null, 2) }] };
     } catch (e) { return error("commission_apply", params, e); }
   });
@@ -463,7 +468,7 @@ export function registerCommission(server: McpServer, d: CommissionDeps) {
       const p = await prepare(camera, ref);
       const checked = await check(camera, p);
       const file = finish("commission_verify", params, started, firstSeq, p, [], checked.verify, null, checked.scenarios, null, notes);
-      return { content: [{ type: "text", text: JSON.stringify({ ...checked.verify, scenarios: checked.scenarios, observation: null, handoff: file }, null, 2) }] };
+      return { content: [{ type: "text", text: JSON.stringify({ ...verifyOutput(checked.verify), scenarios: scenarioOutput(checked.scenarios), observation: null, handoff: file }, null, 2) }] };
     } catch (e) { return error("commission_verify", params, e); }
   });
 }

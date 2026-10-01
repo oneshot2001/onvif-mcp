@@ -12,6 +12,7 @@ import { hardDenied, registerCommission, verifyHandoffs } from "./commission";
 import { snapshotContent } from "./snapshot-content";
 import { parseParams } from "./vapix-params";
 import { parseEventMessage } from "./event-parse";
+import { deviceText } from "./device-text";
 import { appendLocked, emptyChainConflict, lastReceiptFrom, missingHandoffHeads, selectReceipts, verifyChain } from "./receipt-chain";
 import { curlRequest } from "./curl-args";
 import { keyModeProblem } from "./key-perms";
@@ -219,10 +220,10 @@ async function deviceInfo(camera: string): Promise<string> {
   if (camOf(camera).protocol === "onvif") {
     const r = await soap(camera, '<tds:GetDeviceInformation xmlns:tds="http://www.onvif.org/ver10/device/wsdl"/>');
     const g = (tag: string) => r.body.match(new RegExp(`<tds:${tag}>([^<]+)`))?.[1] ?? "?";
-    return `Model=${g("Manufacturer")} ${g("Model")} | Firmware=${g("FirmwareVersion")} | protocol=onvif`;
+    return `Model=${deviceText(`${g("Manufacturer")} ${g("Model")}`)} | Firmware=${deviceText(g("FirmwareVersion"))} | protocol=onvif`;
   }
   const r = await vapix(camera, "/axis-cgi/param.cgi?action=list&group=Brand.ProdShortName,Properties.PTZ.PTZ");
-  return `${r.body.trim().replace(/\n/g, " | ")} | protocol=vapix`;
+  return `${deviceText(r.body.trim())} | protocol=vapix`;
 }
 
 async function snapshot(camera: string, outFile: string): Promise<boolean> {
@@ -428,9 +429,9 @@ server.tool("config_drift", "Compare live VAPIX parameters with the saved config
   }
   const summary = `drift: ${diff.changed.length} changed, ${diff.added.length} added, ${diff.removed.length} removed`;
   const lines = [
-    ...diff.changed.map((d) => `changed ${d.param}: ${d.baseline} → ${d.live}`),
-    ...diff.added.map((d) => `added ${d.param}: ${d.live}`),
-    ...diff.removed.map((d) => `removed ${d.param}: ${d.baseline}`), summary,
+    ...diff.changed.map((d) => `changed ${d.param}: ${deviceText(d.baseline)} → ${deviceText(d.live)}`),
+    ...diff.added.map((d) => `added ${d.param}: ${deviceText(d.live)}`),
+    ...diff.removed.map((d) => `removed ${d.param}: ${deviceText(d.baseline)}`), summary,
   ];
   receipt("config_drift", params, "allow", summary, sha256(diff));
   return { content: [{ type: "text", text: lines.join("\n") }] };
@@ -456,18 +457,19 @@ server.tool("config_remediate", "Restore one drifted VAPIX parameter to its base
   const target = baseline.params[param]!;
   if (before === target) { receipt("config_remediate", params, "allow", "no-op"); return { content: [{ type: "text", text: `no drift on ${param}` }] }; }
   const change = `${param}: ${before ?? "(missing)"} → ${target}`;
-  if (!approve) { receipt("config_remediate", params, "allow", `dry-run: would set ${change}`); return { content: [{ type: "text", text: `would set ${change}` }] }; }
+  const displayChange = `${param}: ${deviceText(before ?? "(missing)")} → ${deviceText(target)}`;
+  if (!approve) { receipt("config_remediate", params, "allow", `dry-run: would set ${change}`); return { content: [{ type: "text", text: `would set ${displayChange}` }] }; }
   const write = await vapix(camera, `/axis-cgi/param.cgi?action=update&${encodeURIComponent(param)}=${encodeURIComponent(target)}`);
   const after = await configParams(camera, [param]);
   if (after.ok && after.params[param] === target) {
     const hash = sha256(target);
     receipt("config_remediate", params, "allow", "remediated", hash);
-    return { content: [{ type: "text", text: `remediated ${change}` }] };
+    return { content: [{ type: "text", text: `remediated ${displayChange}` }] };
   }
   const value = after.ok ? after.params[param] ?? "(missing)" : "(read failed)";
   const detail = write.ok ? `write acked but postcondition FAILED (live=${value})` : `write FAILED (live=${value})`;
   receipt("config_remediate", params, "allow", detail, undefined, write.ok ? "device_acknowledged" : "unknown");
-  return { content: [{ type: "text", text: detail }] };
+  return { content: [{ type: "text", text: write.ok ? `write acked but postcondition FAILED (live=${deviceText(value)})` : `write FAILED (live=${deviceText(value)})` }] };
 });
 
 server.tool("get_receipts", "Return the caller's last N signed receipts from the chain",
