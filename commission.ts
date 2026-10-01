@@ -46,10 +46,10 @@ export type CommissionDeps = {
   policyBytes: Uint8Array;
   cameras: Record<string, Camera>;
   privateKey: string;
-  vapix: (camera: string, path: string) => Promise<{ ok: boolean; body: string }>;
-  vapixPost: (camera: string, path: string, body: unknown) => Promise<{ ok: boolean; body: string }>;
-  observeEvents: (camera: string, topics: string[], seconds: number) => Promise<{ events: EventNotification[]; warnings: string[] }>;
-  configParams: (camera: string, groups: string[]) => Promise<{ ok: boolean; params: Record<string, string> }>;
+  vapix: (tool: string, camera: string, path: string) => Promise<{ ok: boolean; body: string }>;
+  vapixPost: (tool: string, camera: string, path: string, body: unknown) => Promise<{ ok: boolean; body: string }>;
+  observeEvents: (tool: string, camera: string, topics: string[], seconds: number) => Promise<{ events: EventNotification[]; warnings: string[] }>;
+  configParams: (tool: string, camera: string, groups: string[]) => Promise<{ ok: boolean; params: Record<string, string> }>;
   parseParams: (body: string) => Record<string, string>;
   inGroup: (param: string, groups: string[]) => boolean;
   sha256: (value: unknown) => string;
@@ -164,15 +164,15 @@ export function registerCommission(server: McpServer, d: CommissionDeps) {
     }
     return rpc;
   };
-  const readAoaConfiguration = async (camera: string): Promise<AoaConfiguration> => {
-    const r = await d.vapixPost(camera, "/local/objectanalytics/control.cgi", { apiVersion: "1.0", method: "getConfiguration" });
+  const readAoaConfiguration = async (tool: string, camera: string): Promise<AoaConfiguration> => {
+    const r = await d.vapixPost(tool, camera, "/local/objectanalytics/control.cgi", { apiVersion: "1.0", method: "getConfiguration" });
     if (!r.ok) throw new Error("AOA getConfiguration transport failed");
     const data = parseRpc(r.body, "getConfiguration").data;
     if (!data || typeof data !== "object" || Array.isArray(data) || !Array.isArray((data as { scenarios?: unknown }).scenarios)) throw new Error("AOA getConfiguration returned an invalid configuration");
     return data as AoaConfiguration;
   };
-  const guardAoaConfiguration = async (camera: string, snapshot: AoaConfiguration, scenarios: Scenario[]) => {
-    const current = await readAoaConfiguration(camera);
+  const guardAoaConfiguration = async (tool: string, camera: string, snapshot: AoaConfiguration, scenarios: Scenario[]) => {
+    const current = await readAoaConfiguration(tool, camera);
     const managed = new Set(scenarios.map((scenario) => scenario.name));
     const byName = (config: AoaConfiguration) => new Map(config.scenarios.filter((scenario) => !managed.has(scenario.name)).map((scenario) => [scenario.name, JSON.stringify(scenario)]));
     const before = byName(snapshot), now = byName(current);
@@ -219,9 +219,9 @@ export function registerCommission(server: McpServer, d: CommissionDeps) {
     const plan = scenarios.flatMap((scenario, i) => scenarioDiff(scenario, existing.get(scenario.name)).length ? [{ name: scenario.name, id: desired[i]!.id, type: scenario.type, action: "deploy" as const }] : []);
     return { desired, plan, merged: { ...config, scenarios: mergedScenarios } };
   };
-  const loadAoa = async (camera: string, scenarios: Scenario[]): Promise<PreparedAoa> => {
+  const loadAoa = async (tool: string, camera: string, scenarios: Scenario[]): Promise<PreparedAoa> => {
     if (!scenarios.length) return { installed: false, config: null, merged: null, desired: [], plan: [] };
-    const versions = await d.vapixPost(camera, "/local/objectanalytics/control.cgi", { method: "getSupportedVersions" });
+    const versions = await d.vapixPost(tool, camera, "/local/objectanalytics/control.cgi", { method: "getSupportedVersions" });
     if (!versions.ok) return { installed: false, warning: "AOA application unavailable; scenarios skipped", config: null, merged: null, desired: [], plan: [] };
     let rpc: Record<string, unknown>;
     try { rpc = parseRpc(versions.body, "getSupportedVersions"); } catch {
@@ -229,31 +229,31 @@ export function registerCommission(server: McpServer, d: CommissionDeps) {
     }
     const apiVersions = rpc.data && typeof rpc.data === "object" && Array.isArray((rpc.data as { apiVersions?: unknown }).apiVersions) ? (rpc.data as { apiVersions: unknown[] }).apiVersions.map(String) : [];
     if (!apiVersions.includes("1.0")) return { installed: false, warning: "AOA API 1.0 unavailable; scenarios skipped", config: null, merged: null, desired: [], plan: [] };
-    const config = await readAoaConfiguration(camera);
+    const config = await readAoaConfiguration(tool, camera);
     return { installed: true, warning: undefined, config, ...buildAoa(config, scenarios) };
   };
-  const meta = async (camera: string) => {
-    const r = await d.vapix(camera, "/axis-cgi/param.cgi?action=list&group=Brand.ProdShortName,Brand.ProdFullName,Brand.ProdNbr,Properties.Firmware.Version,Properties.System.SerialNumber");
+  const meta = async (tool: string, camera: string) => {
+    const r = await d.vapix(tool, camera, "/axis-cgi/param.cgi?action=list&group=Brand.ProdShortName,Brand.ProdFullName,Brand.ProdNbr,Properties.Firmware.Version,Properties.System.SerialNumber");
     const p = d.parseParams(r.body);
     if (!r.ok) throw new Error("device metadata fetch failed");
     return { id: camera, model: p["Brand.ProdShortName"] ?? p["Brand.ProdFullName"] ?? (p["Brand.ProdNbr"] ? `AXIS ${p["Brand.ProdNbr"]}` : "unknown"), firmware: p["Properties.Firmware.Version"] ?? "unknown", serial: p["Properties.System.SerialNumber"] ?? "unknown" };
   };
-  const prepare = async (camera: string, ref: string) => {
+  const prepare = async (tool: string, camera: string, ref: string) => {
     const loaded = readCommissionSpec(d.root, ref);
     const reason = validateParams(loaded.spec);
     if (reason) throw new Error(`DENIED: ${reason}`);
-    const cameraMeta = await meta(camera);
+    const cameraMeta = await meta(tool, camera);
     if (loaded.spec.applies_to && !loaded.spec.applies_to.models.includes(cameraMeta.model)) throw new Error(`spec does not apply to model '${cameraMeta.model}'`);
     const groups = [...new Set(Object.keys(loaded.spec.params).map((param) => param.split(".")[0]!))];
-    const live = await d.configParams(camera, groups);
+    const live = await d.configParams(tool, camera, groups);
     if (!live.ok) throw new Error("live config fetch failed");
     const plan = Object.entries(loaded.spec.params).filter(([param, desired]) => live.params[param] !== desired).map(([param, desired]) => ({ param, current: live.params[param] ?? null, desired }));
-    const aoa = await loadAoa(camera, loaded.spec.scenarios);
+    const aoa = await loadAoa(tool, camera, loaded.spec.scenarios);
     return { ...loaded, cameraMeta, plan, presets: d.cameras[camera]!.ptz ? loaded.spec.presets : [], aoa };
   };
-  const checkParams = async (camera: string, spec: Spec, force = false): Promise<Failure[]> => {
+  const checkParams = async (tool: string, camera: string, spec: Spec, force = false): Promise<Failure[]> => {
     const groups = [...new Set(Object.keys(spec.params).map((param) => param.split(".")[0]!))];
-    const live = await d.configParams(camera, groups);
+    const live = await d.configParams(tool, camera, groups);
     const failed: Failure[] = [];
     for (const [param, desired] of Object.entries(spec.params)) {
       const observed = live.ok ? live.params[param] ?? null : null;
@@ -261,10 +261,10 @@ export function registerCommission(server: McpServer, d: CommissionDeps) {
     }
     return failed;
   };
-  const check = async (camera: string, prepared: Awaited<ReturnType<typeof prepare>>, force = false) => {
-    const failed = await checkParams(camera, prepared.spec, force);
+  const check = async (tool: string, camera: string, prepared: Awaited<ReturnType<typeof prepare>>, force = false) => {
+    const failed = await checkParams(tool, camera, prepared.spec, force);
     if (prepared.presets.length) {
-      const r = await d.vapix(camera, "/axis-cgi/com/ptz.cgi?query=presetposcam");
+      const r = await d.vapix(tool, camera, "/axis-cgi/com/ptz.cgi?query=presetposcam");
       const names = r.ok ? r.body.split(/\r?\n/).map((line) => line.slice(line.indexOf("=") + 1).trim()).filter(Boolean) : [];
       for (const preset of prepared.presets) if (!r.ok || !names.some((name) => name === preset.name || name.endsWith(`,${preset.name}`))) failed.push({ param: `preset:${preset.name}`, desired: preset.name, observed: null });
     }
@@ -276,7 +276,7 @@ export function registerCommission(server: McpServer, d: CommissionDeps) {
     }
     else {
       let config: AoaConfiguration;
-      try { config = await readAoaConfiguration(camera); } catch (e) {
+      try { config = await readAoaConfiguration(tool, camera); } catch (e) {
         for (const scenario of prepared.spec.scenarios) {
           const detail = e instanceof Error ? e.message : String(e);
           scenarios.push({ name: scenario.name, id: null, type: scenario.type, deployed: false, readback_diff: [detail] });
@@ -293,7 +293,7 @@ export function registerCommission(server: McpServer, d: CommissionDeps) {
     }
     return { verify: { passed: failed.length === 0, failed }, scenarios, warnings };
   };
-  const observe = async (camera: string, prepared: Awaited<ReturnType<typeof prepare>>, scenarios: ScenarioResult[], canObserve: boolean): Promise<Observation | null> => {
+  const observe = async (tool: string, camera: string, prepared: Awaited<ReturnType<typeof prepare>>, scenarios: ScenarioResult[], canObserve: boolean): Promise<Observation | null> => {
     if (!prepared.spec.scenarios.length) return null;
     const started = new Date().toISOString();
     const fired = Object.fromEntries(prepared.spec.scenarios.map((scenario) => [scenario.name, { count: 0, first: null as string | null, last: null as string | null }]));
@@ -304,7 +304,7 @@ export function registerCommission(server: McpServer, d: CommissionDeps) {
       const deployed = scenarios.filter((scenario): scenario is ScenarioResult & { id: number } => scenario.deployed && scenario.id !== null);
       const byTopic = new Map(deployed.map((scenario) => [`tnsaxis:CameraApplicationPlatform/ObjectAnalytics/Device1Scenario${scenario.id}`, scenario.name]));
       let sensed: Awaited<ReturnType<CommissionDeps["observeEvents"]>>;
-      try { sensed = await d.observeEvents(camera, [...byTopic.keys()], prepared.spec.observe.seconds); }
+      try { sensed = await d.observeEvents(tool, camera, [...byTopic.keys()], prepared.spec.observe.seconds); }
       catch (e) { sensed = { events: [], warnings: [`event observation failed: ${e instanceof Error ? e.message : String(e)}`] }; }
       warnings.push(...sensed.warnings);
       for (const event of sensed.events) {
@@ -367,7 +367,7 @@ export function registerCommission(server: McpServer, d: CommissionDeps) {
     const reason = denied("commission_plan", camera);
     if (reason) { d.receipt("commission_plan", params, "deny", reason); return { content: [{ type: "text", text: `DENIED: ${reason}` }] }; }
     try {
-      const p = await prepare(camera, ref);
+      const p = await prepare("commission_plan", camera, ref);
       const out = planOutput(p);
       d.receipt("commission_plan", params, "allow", `planned ${p.plan.length} params, ${p.presets.length} presets, and ${p.aoa.plan.length} scenarios`, d.sha256(out));
       return { content: [{ type: "text", text: JSON.stringify(out, null, 2) }] };
@@ -382,7 +382,7 @@ export function registerCommission(server: McpServer, d: CommissionDeps) {
     const started = new Date().toISOString();
     const firstSeq = d.lastReceipt().seq + 1;
     try {
-      const p = await prepare(camera, ref);
+      const p = await prepare("commission_apply", camera, ref);
       if (!approve) {
         const out = planOutput(p);
         d.receipt("commission_apply", params, "allow", `dry-run: planned ${p.plan.length} params, ${p.presets.length} presets, and ${p.aoa.plan.length} scenarios`, d.sha256(out));
@@ -392,18 +392,18 @@ export function registerCommission(server: McpServer, d: CommissionDeps) {
       let writeFailed: Failure | null = null;
       for (const item of p.plan) {
         if (item.current === null) { writeFailed = { param: item.param, desired: item.desired, observed: null }; break; }
-        const r = await d.vapix(camera, `/axis-cgi/param.cgi?action=update&${encodeURIComponent(item.param)}=${encodeURIComponent(item.desired)}`);
+        const r = await d.vapix("commission_apply", camera, `/axis-cgi/param.cgi?action=update&${encodeURIComponent(item.param)}=${encodeURIComponent(item.desired)}`);
         const ok = r.ok && !/^Error/m.test(r.body);
         d.receipt("commission_apply", { ...params, param: item.param }, "allow", ok ? `wrote ${item.param}` : `write FAILED ${item.param}`, undefined, ok ? "device_acknowledged" : "unknown");
         if (!ok) { writeFailed = { param: item.param, desired: item.desired, observed: item.current }; break; }
         applied.push({ param: item.param, previous: item.current, desired: item.desired });
       }
       if (!writeFailed) for (const preset of p.presets) {
-        const move = await d.vapix(camera, `/axis-cgi/com/ptz.cgi?pan=${preset.pan}&tilt=${preset.tilt}&zoom=${preset.zoom}`);
+        const move = await d.vapix("commission_apply", camera, `/axis-cgi/com/ptz.cgi?pan=${preset.pan}&tilt=${preset.tilt}&zoom=${preset.zoom}`);
         const moved = move.ok && !/^Error/m.test(move.body);
         d.receipt("commission_apply", { ...params, preset: preset.name, operation: "move" }, "allow", moved ? `moved for preset ${preset.name}` : `move FAILED for preset ${preset.name}`, undefined, moved ? "device_acknowledged" : "unknown");
         if (!moved) { writeFailed = { param: `preset:${preset.name}`, desired: JSON.stringify(preset), observed: null }; break; }
-        const set = await d.vapix(camera, `/axis-cgi/com/ptz.cgi?setserverpresetname=${encodeURIComponent(preset.name)}`);
+        const set = await d.vapix("commission_apply", camera, `/axis-cgi/com/ptz.cgi?setserverpresetname=${encodeURIComponent(preset.name)}`);
         const saved = set.ok && !/^Error/m.test(set.body);
         d.receipt("commission_apply", { ...params, preset: preset.name, operation: "save" }, "allow", saved ? `saved preset ${preset.name}` : `save FAILED for preset ${preset.name}`, undefined, saved ? "device_acknowledged" : "unknown");
         if (!saved) { writeFailed = { param: `preset:${preset.name}`, desired: JSON.stringify(preset), observed: null }; break; }
@@ -412,8 +412,8 @@ export function registerCommission(server: McpServer, d: CommissionDeps) {
       if (!writeFailed && p.aoa.installed && p.aoa.plan.length) {
         let ok = false, why = "";
         try {
-          await guardAoaConfiguration(camera, p.aoa.config!, p.spec.scenarios);
-          const r = await d.vapixPost(camera, "/local/objectanalytics/control.cgi", { apiVersion: "1.0", method: "setConfiguration", params: p.aoa.merged });
+          await guardAoaConfiguration("commission_apply", camera, p.aoa.config!, p.spec.scenarios);
+          const r = await d.vapixPost("commission_apply", camera, "/local/objectanalytics/control.cgi", { apiVersion: "1.0", method: "setConfiguration", params: p.aoa.merged });
           ok = r.ok; why = r.ok ? "" : "transport failed";
           if (ok) parseRpc(r.body, "setConfiguration");
         } catch (e) { ok = false; why = e instanceof Error ? e.message : String(e); }
@@ -421,18 +421,18 @@ export function registerCommission(server: McpServer, d: CommissionDeps) {
         if (!ok) writeFailed = { param: `scenario:${p.aoa.plan[0]!.name}`, desired: JSON.stringify(viewDesired(p.spec.scenarios.find((scenario) => scenario.name === p.aoa.plan[0]!.name)!)), observed: why };
         else for (const scenario of p.aoa.plan) applied.push({ scenario: scenario.name, id: scenario.id, type: scenario.type });
       }
-      const checked = await check(camera, p, true);
+      const checked = await check("commission_apply", camera, p, true);
       if (writeFailed) {
         checked.verify.failed = checked.verify.failed.filter((failure) => failure.param !== writeFailed!.param);
         checked.verify.failed.unshift(writeFailed);
       }
       checked.verify.passed = checked.verify.failed.length === 0;
-      const observation = await observe(camera, p, checked.scenarios, checked.verify.passed);
+      const observation = await observe("commission_apply", camera, p, checked.scenarios, checked.verify.passed);
       let rollback: Handoff["rollback"] = null;
       if (!checked.verify.passed) {
         let rollbackWrites = true;
         for (const item of applied.filter((a): a is Extract<Applied, { param: string }> => "param" in a).reverse()) {
-          const r = await d.vapix(camera, `/axis-cgi/param.cgi?action=update&${encodeURIComponent(item.param)}=${encodeURIComponent(item.previous)}`);
+          const r = await d.vapix("commission_apply", camera, `/axis-cgi/param.cgi?action=update&${encodeURIComponent(item.param)}=${encodeURIComponent(item.previous)}`);
           const ok = r.ok && !/^Error/m.test(r.body);
           rollbackWrites &&= ok;
           d.receipt("commission_apply", { ...params, rollback: item.param }, "allow", ok ? `rolled back ${item.param}` : `rollback FAILED ${item.param}`, undefined, ok ? "device_acknowledged" : "unknown");
@@ -441,15 +441,15 @@ export function registerCommission(server: McpServer, d: CommissionDeps) {
         if (applied.some((a) => "scenario" in a) && p.aoa.config) {
           let ok = false, why = "";
           try {
-            await guardAoaConfiguration(camera, p.aoa.config, p.spec.scenarios);
-            const r = await d.vapixPost(camera, "/local/objectanalytics/control.cgi", { apiVersion: "1.0", method: "setConfiguration", params: p.aoa.config });
+            await guardAoaConfiguration("commission_apply", camera, p.aoa.config, p.spec.scenarios);
+            const r = await d.vapixPost("commission_apply", camera, "/local/objectanalytics/control.cgi", { apiVersion: "1.0", method: "setConfiguration", params: p.aoa.config });
             ok = r.ok;
             if (ok) parseRpc(r.body, "setConfiguration");
           } catch (e) { ok = false; why = e instanceof Error ? e.message : String(e); }
           rollbackWrites &&= ok;
           d.receipt("commission_apply", { ...params, rollback: "aoa-configuration" }, "allow", ok ? "restored prior AOA configuration" : `AOA rollback FAILED${why ? `: ${why}` : ""}`, undefined, ok ? "device_acknowledged" : "unknown");
         }
-        rollback = { performed: true, verified: rollbackWrites && (await checkParams(camera, rollbackSpec)).length === 0 };
+        rollback = { performed: true, verified: rollbackWrites && (await checkParams("commission_apply", camera, rollbackSpec)).length === 0 };
       }
       const file = finish("commission_apply", params, started, firstSeq, p, applied, checked.verify, rollback, checked.scenarios, observation, notes);
       const out = { ...verifyOutput(checked.verify), rolled_back: rollback?.performed ?? false, rollback_verified: rollback?.verified ?? null, scenarios: scenarioOutput(checked.scenarios), observation: observationOutput(observation), handoff: file };
@@ -465,8 +465,8 @@ export function registerCommission(server: McpServer, d: CommissionDeps) {
     const started = new Date().toISOString();
     const firstSeq = d.lastReceipt().seq + 1;
     try {
-      const p = await prepare(camera, ref);
-      const checked = await check(camera, p);
+      const p = await prepare("commission_verify", camera, ref);
+      const checked = await check("commission_verify", camera, p);
       const file = finish("commission_verify", params, started, firstSeq, p, [], checked.verify, null, checked.scenarios, null, notes);
       return { content: [{ type: "text", text: JSON.stringify({ ...verifyOutput(checked.verify), scenarios: scenarioOutput(checked.scenarios), observation: null, handoff: file }, null, 2) }] };
     } catch (e) { return error("commission_verify", params, e); }

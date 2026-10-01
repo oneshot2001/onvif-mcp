@@ -15,6 +15,7 @@ import { parseEventMessage } from "./event-parse";
 import { deviceText } from "./device-text";
 import { appendLocked, emptyChainConflict, lastReceiptFrom, missingHandoffHeads, selectReceipts, verifyChain } from "./receipt-chain";
 import { curlRequest } from "./curl-args";
+import { accountFor, type CameraAccounts } from "./account-for";
 import { keyModeProblem } from "./key-perms";
 import { missingPasswords } from "./creds-check";
 import { makeLimiter } from "./rate-limit";
@@ -56,7 +57,7 @@ if (process.argv.includes("--verify")) {
 }
 
 const AGENT = process.env.AGENT_ID ?? "unknown";
-const cameras: Record<string, { base: string; user: string; credKey: string; ptz: boolean; protocol: "vapix" | "onvif"; profile?: string }> =
+const cameras: Record<string, CameraAccounts & { base: string; ptz: boolean; protocol: "vapix" | "onvif"; profile?: string }> =
   JSON.parse(readFileSync(join(ROOT, "cameras.json"), "utf8"));
 // Raw bytes kept: the AAR producer signs the digest of the EXACT policy the
 // server evaluates (parsed once here) — never a fresh disk read (TOCTOU).
@@ -70,14 +71,16 @@ function rateDenied(key: "actuation" | "snapshot"): string | null {
 }
 
 // --- credentials: fetched from the cred store at startup, never persisted ---
-const passwords: Record<string, string> = {};
-for (const [id, cam] of Object.entries(cameras)) {
-  const p = Bun.spawnSync([`${process.env.HOME}/.claude/bin/cred`, "get", cam.credKey]);
-  passwords[id] = p.stdout.toString().trim();
+const credentials = Object.entries(cameras).flatMap(([id, cam]) =>
+  [cam, ...Object.values(cam.accounts ?? {})].map(({ credKey }) => ({ id, credKey })));
+const passwords: Record<string, string> = Object.create(null);
+for (const credKey of new Set(credentials.map((account) => account.credKey))) {
+  const p = Bun.spawnSync([`${process.env.HOME}/.claude/bin/cred`, "get", credKey]);
+  passwords[credKey] = p.stdout.toString().trim();
 }
 const missing = missingPasswords(passwords);
 if (missing.length > 0) {
-  console.error(`Missing camera passwords: ${missing.map((id) => `${id} (credKey: ${cameras[id]!.credKey})`).join(", ")}`);
+  console.error(`Missing camera passwords: ${credentials.filter(({ credKey }) => missing.includes(credKey)).map(({ id, credKey }) => `${id} (credKey: ${credKey})`).join(", ")}`);
   process.exit(1);
 }
 
@@ -136,22 +139,25 @@ function camOf(id: string) {
 }
 
 // Digest auth via curl — it does the digest dance; native fetch can't.
-async function vapix(camera: string, path: string, outFile?: string): Promise<{ ok: boolean; body: string }> {
+async function vapix(tool: string, camera: string, path: string, outFile?: string): Promise<{ ok: boolean; body: string }> {
   const cam = camOf(camera);
-  const { args, stdin } = curlRequest(cam, passwords[camera]!, path, { outFile });
+  const account = accountFor(tool, cam);
+  const { args, stdin } = curlRequest({ ...cam, user: account.user }, passwords[account.credKey]!, path, { outFile });
   const p = Bun.spawnSync(args, { stdin: Buffer.from(stdin) });
   return { ok: p.exitCode === 0, body: p.stdout.toString() };
 }
 
-async function vapixPost(camera: string, path: string, body: unknown): Promise<{ ok: boolean; body: string }> {
+async function vapixPost(tool: string, camera: string, path: string, body: unknown): Promise<{ ok: boolean; body: string }> {
   const cam = camOf(camera);
-  const { args, stdin } = curlRequest(cam, passwords[camera]!, path, { jsonBody: body, maxTime: 15 });
+  const account = accountFor(tool, cam);
+  const { args, stdin } = curlRequest({ ...cam, user: account.user }, passwords[account.credKey]!, path, { jsonBody: body, maxTime: 15 });
   const p = Bun.spawnSync(args, { stdin: Buffer.from(stdin) });
   return { ok: p.exitCode === 0, body: p.stdout.toString() };
 }
 
-async function observeEvents(camera: string, topics: string[], seconds: number): Promise<{ events: Array<{ topic: string; timestamp?: string | number; message?: { data?: Record<string, unknown> } }>; warnings: string[] }> {
+async function observeEvents(tool: string, camera: string, topics: string[], seconds: number): Promise<{ events: Array<{ topic: string; timestamp?: string | number; message?: { data?: Record<string, unknown> } }>; warnings: string[] }> {
   const cam = camOf(camera);
+  const account = accountFor(tool, cam);
   const host = new URL(cam.base).host;
   const events: Array<{ topic: string; timestamp?: string | number; message?: { data?: Record<string, unknown> } }> = [];
   const warnings: string[] = [];
@@ -168,7 +174,7 @@ async function observeEvents(camera: string, topics: string[], seconds: number):
       resolve({ events, warnings });
     };
     const ws = new WebSocket(`wss://${host}/vapix/ws-data-stream?sources=events`, {
-      headers: { Authorization: `Basic ${Buffer.from(`${cam.user}:${passwords[camera]}`).toString("base64")}` },
+      headers: { Authorization: `Basic ${Buffer.from(`${account.user}:${passwords[account.credKey]}`).toString("base64")}` },
       tls: { rejectUnauthorized: false },
     });
     const openTimer = setTimeout(() => finish("event WebSocket connection timed out"), 10_000);
@@ -198,16 +204,17 @@ function configDenied(tool: string, camera: string, approve = false): string | n
   return policyConfigDenied(policy, AGENT, tool, camera, approve);
 }
 
-async function configParams(camera: string, groups: string[]): Promise<{ ok: boolean; params: Record<string, string> }> {
+async function configParams(tool: string, camera: string, groups: string[]): Promise<{ ok: boolean; params: Record<string, string> }> {
   if (!groups.length) return { ok: true, params: {} };
-  const r = await vapix(camera, `/axis-cgi/param.cgi?action=list&group=${groups.map(encodeURIComponent).join(",")}`);
+  const r = await vapix(tool, camera, `/axis-cgi/param.cgi?action=list&group=${groups.map(encodeURIComponent).join(",")}`);
   return { ok: r.ok, params: parseParams(r.body) };
 }
 
 // ONVIF SOAP call. AXIS serves every ONVIF service at /onvif/services (per GetServices).
-async function soap(camera: string, body: string): Promise<{ ok: boolean; body: string }> {
+async function soap(tool: string, camera: string, body: string): Promise<{ ok: boolean; body: string }> {
   const cam = camOf(camera);
-  const { args, stdin } = curlRequest(cam, passwords[camera]!, "/onvif/services", {
+  const account = accountFor(tool, cam);
+  const { args, stdin } = curlRequest({ ...cam, user: account.user }, passwords[account.credKey]!, "/onvif/services", {
     soapBody: `<?xml version="1.0"?><s:Envelope xmlns:s="http://www.w3.org/2003/05/soap-envelope"><s:Body>${body}</s:Body></s:Envelope>`,
   });
   const p = Bun.spawnSync(args, { stdin: Buffer.from(stdin) });
@@ -216,47 +223,47 @@ async function soap(camera: string, body: string): Promise<{ ok: boolean; body: 
 }
 
 // Transport dispatch: same tool contract (degrees, jpeg) over either protocol.
-async function deviceInfo(camera: string): Promise<string> {
+async function deviceInfo(tool: string, camera: string): Promise<string> {
   if (camOf(camera).protocol === "onvif") {
-    const r = await soap(camera, '<tds:GetDeviceInformation xmlns:tds="http://www.onvif.org/ver10/device/wsdl"/>');
+    const r = await soap(tool, camera, '<tds:GetDeviceInformation xmlns:tds="http://www.onvif.org/ver10/device/wsdl"/>');
     const g = (tag: string) => r.body.match(new RegExp(`<tds:${tag}>([^<]+)`))?.[1] ?? "?";
     return `Model=${deviceText(`${g("Manufacturer")} ${g("Model")}`)} | Firmware=${deviceText(g("FirmwareVersion"))} | protocol=onvif`;
   }
-  const r = await vapix(camera, "/axis-cgi/param.cgi?action=list&group=Brand.ProdShortName,Properties.PTZ.PTZ");
+  const r = await vapix(tool, camera, "/axis-cgi/param.cgi?action=list&group=Brand.ProdShortName,Properties.PTZ.PTZ");
   return `${deviceText(r.body.trim())} | protocol=vapix`;
 }
 
-async function snapshot(camera: string, outFile: string): Promise<boolean> {
+async function snapshot(tool: string, camera: string, outFile: string): Promise<boolean> {
   if (camOf(camera).protocol === "onvif") {
     const cam = camOf(camera);
-    const r = await soap(camera, `<trt:GetSnapshotUri xmlns:trt="http://www.onvif.org/ver10/media/wsdl"><trt:ProfileToken>${cam.profile ?? "profile_1_jpeg"}</trt:ProfileToken></trt:GetSnapshotUri>`);
+    const r = await soap(tool, camera, `<trt:GetSnapshotUri xmlns:trt="http://www.onvif.org/ver10/media/wsdl"><trt:ProfileToken>${cam.profile ?? "profile_1_jpeg"}</trt:ProfileToken></trt:GetSnapshotUri>`);
     const uri = r.body.match(/<tt:Uri>([^<]+)/)?.[1]?.replace(/&amp;/g, "&");
     if (!uri) return false;
     const path = uri.replace(/^https?:\/\/[^/]+/, "");
-    return (await vapix(camera, path, outFile)).ok;
+    return (await vapix(tool, camera, path, outFile)).ok;
   }
-  return (await vapix(camera, "/axis-cgi/jpg/image.cgi", outFile)).ok;
+  return (await vapix(tool, camera, "/axis-cgi/jpg/image.cgi", outFile)).ok;
 }
 
-async function ptzMove(camera: string, pan: number, tilt: number, zoom: number): Promise<boolean> {
+async function ptzMove(tool: string, camera: string, pan: number, tilt: number, zoom: number): Promise<boolean> {
   if (camOf(camera).protocol === "onvif") {
     // Generic translation space is -1..1 over the mechanical range; pan spans 360°.
     // Tilt/zoom use the same linear mapping — approximate, noted in README.
     const cam = camOf(camera);
-    const r = await soap(camera, `<tptz:RelativeMove xmlns:tptz="http://www.onvif.org/ver20/ptz/wsdl" xmlns:tt="http://www.onvif.org/ver10/schema"><tptz:ProfileToken>${cam.profile ?? "profile_1_jpeg"}</tptz:ProfileToken><tptz:Translation><tt:PanTilt x="${pan / 360}" y="${tilt / 360}"/><tt:Zoom x="${zoom / 100}"/></tptz:Translation></tptz:RelativeMove>`);
+    const r = await soap(tool, camera, `<tptz:RelativeMove xmlns:tptz="http://www.onvif.org/ver20/ptz/wsdl" xmlns:tt="http://www.onvif.org/ver10/schema"><tptz:ProfileToken>${cam.profile ?? "profile_1_jpeg"}</tptz:ProfileToken><tptz:Translation><tt:PanTilt x="${pan / 360}" y="${tilt / 360}"/><tt:Zoom x="${zoom / 100}"/></tptz:Translation></tptz:RelativeMove>`);
     return r.ok && r.body.includes("RelativeMoveResponse");
   }
-  return (await vapix(camera, `/axis-cgi/com/ptz.cgi?rpan=${pan}&rtilt=${tilt}&rzoom=${zoom * 100}`)).ok;
+  return (await vapix(tool, camera, `/axis-cgi/com/ptz.cgi?rpan=${pan}&rtilt=${tilt}&rzoom=${zoom * 100}`)).ok;
 }
 
 // AXIS firmware version + product number for AAR source-device metadata.
-async function deviceMeta(camera: string): Promise<{ manufacturer: string; model: string; firmware: string }> {
+async function deviceMeta(tool: string, camera: string): Promise<{ manufacturer: string; model: string; firmware: string }> {
   if (camOf(camera).protocol === "onvif") {
-    const r = await soap(camera, '<tds:GetDeviceInformation xmlns:tds="http://www.onvif.org/ver10/device/wsdl"/>');
+    const r = await soap(tool, camera, '<tds:GetDeviceInformation xmlns:tds="http://www.onvif.org/ver10/device/wsdl"/>');
     const g = (tag: string) => r.body.match(new RegExp(`<tds:${tag}>([^<]+)`))?.[1] ?? "unknown";
     return { manufacturer: g("Manufacturer"), model: g("Model"), firmware: g("FirmwareVersion") };
   }
-  const r = await vapix(camera, "/axis-cgi/param.cgi?action=list&group=Brand.ProdNbr,Properties.Firmware.Version");
+  const r = await vapix(tool, camera, "/axis-cgi/param.cgi?action=list&group=Brand.ProdNbr,Properties.Firmware.Version");
   const p = parseParams(r.body);
   return { manufacturer: "AXIS", model: p["Brand.ProdNbr"] ?? camera, firmware: p["Properties.Firmware.Version"] ?? "unknown" };
 }
@@ -266,7 +273,7 @@ async function deviceMeta(camera: string): Promise<{ manufacturer: string; model
 // Failures surface in the tool response — never silently dropped — but don't
 // fail the camera op. Denials never contact the device (metadata not-queried).
 const aarProducer = new AarWireProducer(ROOT, AGENT, policyBytes);
-async function emitAar(camera: string, actionName: "camera.stream.view" | "camera.ptz.preset",
+async function emitAar(tool: string, camera: string, actionName: "camera.stream.view" | "camera.ptz.preset",
   parameters: Record<string, string | number | boolean>, startedAt: number,
   outcome: { dispatch: WireDispatch } | { refusal: string }): Promise<string> {
   try {
@@ -275,7 +282,7 @@ async function emitAar(camera: string, actionName: "camera.stream.view" | "camer
       agentId: AGENT, camera, cameraPtz: cam?.ptz ?? false, protocol: cam?.protocol ?? "vapix",
       deviceMetadata: "refusal" in outcome
         ? { manufacturer: "not-queried", model: cam ? camera : `unknown:${camera}`, firmware: "not-queried" }
-        : await deviceMeta(camera),
+        : await deviceMeta(tool, camera),
       actionName, parameters, startedAt, ...outcome,
     });
     return `\naar-bundle: ${dir}`;
@@ -295,7 +302,7 @@ server.tool("list_cameras", "List cameras this agent may access, with live devic
   if (deny) { receipt("list_cameras", {}, "deny", deny); return { content: [{ type: "text", text: `DENIED: ${deny}` }] }; }
   const visible = policy[AGENT]!.cameras;
   const out: string[] = [];
-  for (const id of visible) out.push(`${id}: ${await deviceInfo(id)}`);
+  for (const id of visible) out.push(`${id}: ${await deviceInfo("list_cameras", id)}`);
   receipt("list_cameras", {}, "allow", `returned ${visible.length} cameras`);
   return { content: [{ type: "text", text: out.join("\n") }] };
 });
@@ -306,11 +313,11 @@ server.tool("get_snapshot", "Capture a JPEG snapshot from a camera; returns the 
   const deny = allowed("get_snapshot", camera) ?? rateDenied("snapshot");
   if (deny) {
     receipt("get_snapshot", { camera }, "deny", deny);
-    const aar = await emitAar(camera, "camera.stream.view", {}, startedAt, { refusal: deny });
+    const aar = await emitAar("get_snapshot", camera, "camera.stream.view", {}, startedAt, { refusal: deny });
     return { content: [{ type: "text", text: `DENIED: ${deny}${aar}` }] };
   }
   const file = join(ROOT, "receipts", `snap-${camera}-${Date.now()}.jpg`);
-  const ok = await snapshot(camera, file);
+  const ok = await snapshot("get_snapshot", camera, file);
   if (!ok || !existsSync(file)) { receipt("get_snapshot", { camera }, "allow", "capture FAILED"); return { content: [{ type: "text", text: "capture failed" }] }; }
   const jpeg = readFileSync(file);
   const h = createHash("sha256").update(jpeg).digest("hex");
@@ -319,7 +326,7 @@ server.tool("get_snapshot", "Capture a JPEG snapshot from a camera; returns the 
   // same bytes as the response body — one capture, no independent second read.
   // "consistent" is claimed only when the payload validates as a JPEG.
   const jpegValid = jpeg.length > 2 && jpeg[0] === 0xff && jpeg[1] === 0xd8;
-  const aar = await emitAar(camera, "camera.stream.view", { file: file.split("/").pop()! }, startedAt, { dispatch: {
+  const aar = await emitAar("get_snapshot", camera, "camera.stream.view", { file: file.split("/").pop()! }, startedAt, { dispatch: {
     status: 200, responseBody: jpeg,
     outcomeLevel: jpegValid ? "device_acknowledged" : "unknown",
     outcomeState: jpegValid ? "consistent" : "unknown",
@@ -339,10 +346,10 @@ server.tool("ptz_preset", "Send a PTZ camera to a named preset (VAPIX cameras on
   const reason = deny ?? bound ?? rateDenied("actuation");
   if (reason) {
     receipt("ptz_preset", { camera, preset }, "deny", reason);
-    const aar = await emitAar(camera, "camera.ptz.preset", { preset }, startedAt, { refusal: reason });
+    const aar = await emitAar("ptz_preset", camera, "camera.ptz.preset", { preset }, startedAt, { refusal: reason });
     return { content: [{ type: "text", text: `DENIED: ${reason}${aar}` }] };
   }
-  const r = await vapix(camera, `/axis-cgi/com/ptz.cgi?gotoserverpresetname=${encodeURIComponent(preset)}`);
+  const r = await vapix("ptz_preset", camera, `/axis-cgi/com/ptz.cgi?gotoserverpresetname=${encodeURIComponent(preset)}`);
   const ok = r.ok && !/^Error/m.test(r.body);
   // Post-move readback: poll position until two consecutive reads match (dome
   // settled) or ~8s timeout. The preset's target position is unknown to this
@@ -353,14 +360,14 @@ server.tool("ptz_preset", "Send a PTZ camera to a named preset (VAPIX cameras on
   if (ok) {
     let prev = "";
     for (let i = 0; i < 8; i++) {
-      pos = await vapix(camera, "/axis-cgi/com/ptz.cgi?query=position");
+      pos = await vapix("ptz_preset", camera, "/axis-cgi/com/ptz.cgi?query=position");
       if (pos.ok && prev && pos.body.trim() === prev) break;
       prev = pos.ok ? pos.body.trim() : "";
       await new Promise((resolve) => setTimeout(resolve, 1000));
     }
   }
   receipt("ptz_preset", { camera, preset }, "allow", ok ? "preset recalled (vapix)" : "transport error", undefined, ok ? "device_acknowledged" : "unknown");
-  const aar = await emitAar(camera, "camera.ptz.preset", { preset }, startedAt, { dispatch: {
+  const aar = await emitAar("ptz_preset", camera, "camera.ptz.preset", { preset }, startedAt, { dispatch: {
     status: ok ? 200 : 0, responseBody: jsonBytes({ body: r.body }),
     outcomeLevel: ok && pos.ok ? "device_acknowledged" : "unknown",
     outcomeState: "unknown",
@@ -378,7 +385,7 @@ server.tool("ptz_move", "Relative PTZ move (degrees pan/tilt, zoom steps), bound
     ptzBound(policy[AGENT]?.ptz, pan, tilt, zoom));
   const reason = deny ?? bound ?? rateDenied("actuation");
   if (reason) { receipt("ptz_move", { camera, pan, tilt, zoom }, "deny", reason); return { content: [{ type: "text", text: `DENIED: ${reason}` }] }; }
-  const ok = await ptzMove(camera, pan, tilt, zoom);
+  const ok = await ptzMove("ptz_move", camera, pan, tilt, zoom);
   receipt("ptz_move", { camera, pan, tilt, zoom }, "allow", ok ? `moved via ${camOf(camera).protocol}` : "transport error");
   return { content: [{ type: "text", text: ok ? `moved ${camera} pan=${pan}° tilt=${tilt}° zoom=${zoom} (${camOf(camera).protocol})` : "move failed" }] };
 });
@@ -391,7 +398,7 @@ server.tool("config_baseline", "Capture allowed VAPIX parameters as the camera c
   const deny = configDenied("config_baseline", camera) ?? baselineDenied(config, existsSync(file));
   if (deny) { receipt("config_baseline", params, "deny", deny); return { content: [{ type: "text", text: `DENIED: ${deny}` }] }; }
   const groups = policy[AGENT]!.config!.groups;
-  const live = await configParams(camera, groups);
+  const live = await configParams("config_baseline", camera, groups);
   if (!live.ok) { receipt("config_baseline", params, "allow", "fetch FAILED"); return { content: [{ type: "text", text: "baseline fetch failed" }] }; }
   const hash = sha256(live.params);
   const baseline: Baseline = { camera, captured: new Date().toISOString(), groups, params: live.params, sha256: hash };
@@ -419,7 +426,7 @@ server.tool("config_drift", "Compare live VAPIX parameters with the saved config
   const baseline: Baseline = JSON.parse(readFileSync(file, "utf8"));
   const groups = baseline.groups.filter((g) => policy[AGENT]!.config!.groups.includes(g));
   const base = Object.fromEntries(Object.entries(baseline.params).filter(([param]) => inGroup(param, groups)));
-  const live = await configParams(camera, groups);
+  const live = await configParams("config_drift", camera, groups);
   if (!live.ok) { receipt("config_drift", params, "allow", "fetch FAILED"); return { content: [{ type: "text", text: "drift fetch failed" }] }; }
   const diff: { changed: Array<{ param: string; baseline: string; live: string }>; added: Array<{ param: string; live: string }>; removed: Array<{ param: string; baseline: string }> } = { changed: [], added: [], removed: [] };
   for (const param of [...new Set([...Object.keys(base), ...Object.keys(live.params)])].sort()) {
@@ -451,7 +458,7 @@ server.tool("config_remediate", "Restore one drifted VAPIX parameter to its base
   if (!existsSync(file)) { const reason = "no baseline"; receipt("config_remediate", params, "deny", reason); return { content: [{ type: "text", text: `DENIED: ${reason}` }] }; }
   const baseline: Baseline = JSON.parse(readFileSync(file, "utf8"));
   if (!(param in baseline.params)) { const reason = `param '${param}' not in baseline`; receipt("config_remediate", params, "deny", reason); return { content: [{ type: "text", text: `DENIED: ${reason}` }] }; }
-  const live = await configParams(camera, [param]);
+  const live = await configParams("config_remediate", camera, [param]);
   if (!live.ok) { receipt("config_remediate", params, "allow", "read FAILED"); return { content: [{ type: "text", text: "live config read failed" }] }; }
   const before = live.params[param];
   const target = baseline.params[param]!;
@@ -459,8 +466,8 @@ server.tool("config_remediate", "Restore one drifted VAPIX parameter to its base
   const change = `${param}: ${before ?? "(missing)"} → ${target}`;
   const displayChange = `${param}: ${deviceText(before ?? "(missing)")} → ${deviceText(target)}`;
   if (!approve) { receipt("config_remediate", params, "allow", `dry-run: would set ${change}`); return { content: [{ type: "text", text: `would set ${displayChange}` }] }; }
-  const write = await vapix(camera, `/axis-cgi/param.cgi?action=update&${encodeURIComponent(param)}=${encodeURIComponent(target)}`);
-  const after = await configParams(camera, [param]);
+  const write = await vapix("config_remediate", camera, `/axis-cgi/param.cgi?action=update&${encodeURIComponent(param)}=${encodeURIComponent(target)}`);
+  const after = await configParams("config_remediate", camera, [param]);
   if (after.ok && after.params[param] === target) {
     const hash = sha256(target);
     receipt("config_remediate", params, "allow", "remediated", hash);

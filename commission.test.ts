@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, spyOn, test } from "bun:test";
 import { createHash, generateKeyPairSync, sign } from "node:crypto";
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -44,8 +44,8 @@ function harness(options: { ptz?: boolean; aoa?: boolean; aoaInstalled?: boolean
     lastReceipt: () => ({ seq, hash: seq ? `hash-${seq}` : "genesis" }),
     checkActuation: options.checkActuation ?? (() => null),
     receipt: (tool, _params, decision, detail, resultHash, evidence) => { seq++; receipts.push({ tool, decision, detail, resultHash, evidence }); },
-    configParams: async (_camera, groups) => ({ ok: true, params: Object.fromEntries(Object.entries(state).filter(([param]) => groups.some((group) => param === group || param.startsWith(`${group}.`)))) }),
-    vapix: async (_camera, path) => {
+    configParams: async (_tool, _camera, groups) => ({ ok: true, params: Object.fromEntries(Object.entries(state).filter(([param]) => groups.some((group) => param === group || param.startsWith(`${group}.`)))) }),
+    vapix: async (_tool, _camera, path) => {
       if (path.includes("Brand.ProdShortName")) return { ok: true, body: "root.Brand.ProdShortName=AXIS TEST\nroot.Properties.Firmware.Version=1.2.3\nroot.Properties.System.SerialNumber=serial\n" };
       if (path.includes("query=presetposcam")) return { ok: true, body: [...presets].map((name, i) => `presetposno${i + 1}=${name}`).join("\n") };
       if (path.includes("setserverpresetname=")) presets.add(decodeURIComponent(path.split("setserverpresetname=")[1]!));
@@ -56,7 +56,7 @@ function harness(options: { ptz?: boolean; aoa?: boolean; aoaInstalled?: boolean
       }
       return { ok: true, body: "OK" };
     },
-    vapixPost: async (_camera, _path, body) => {
+    vapixPost: async (_tool, _camera, _path, body) => {
       posts.push(structuredClone(body));
       const request = body as { method?: string; params?: typeof aoa };
       if (request.method === "getSupportedVersions") return options.aoaInstalled === false ? { ok: true, body: "not installed" } : { ok: true, body: JSON.stringify({ apiVersion: "1.0", method: request.method, data: { apiVersions: ["1.0"] } }) };
@@ -71,7 +71,7 @@ function harness(options: { ptz?: boolean; aoa?: boolean; aoaInstalled?: boolean
       }
       return { ok: false, body: "" };
     },
-    observeEvents: async (_camera, topics) => ({ events: topics.length ? [{ topic: topics[0]!, timestamp: 1_700_000_000_000, message: { data: { active: "1" } } }] : [], warnings: [] }),
+    observeEvents: async (_tool, _camera, topics) => ({ events: topics.length ? [{ topic: topics[0]!, timestamp: 1_700_000_000_000, message: { data: { active: "1" } } }] : [], warnings: [] }),
   };
   registerCommission(server as never, deps);
   return { root, state, writes, posts, receipts, presets, handlers, deps, aoa: () => aoa, privateKey, publicKey: publicKey.export({ type: "spki", format: "pem" }).toString() };
@@ -88,13 +88,39 @@ describe("commission specs", () => {
     else process.env.NODE_ENV = previousNodeEnv;
   });
 
+  test.each([
+    ["commission_plan", false, false],
+    ["commission_verify", false, false],
+    ["commission_apply", false, false],
+    ["commission_apply", true, false],
+    ["commission_apply", true, true],
+  ] as const)("%s forwards its identity (approve=%s, rollback=%s)", async (tool, approve, rollback) => {
+    const h = harness({ ptz: true });
+    writeFileSync(join(h.root, "specs", "accounts.yaml"), "spec: camspec/0.1\nname: accounts\nparams:\n  Image.I0.Appearance.Rotation: '180'\npresets:\n  Home: { pan: 0, tilt: 0, zoom: 1 }\nscenarios:\n  - name: lab-motion\n    type: motion\n    objects: [human]\n    area: [[-0.9,-0.9],[0.9,-0.9],[0.9,0.9],[-0.9,0.9]]\nobserve: { seconds: 1 }\n");
+    const spies = [spyOn(h.deps, "vapix"), spyOn(h.deps, "vapixPost"), spyOn(h.deps, "configParams")];
+    const events = spyOn(h.deps, "observeEvents");
+    if (rollback) process.env.COMMISSION_FAIL_PARAM = "Image.I0.Appearance.Rotation";
+    const result = JSON.parse((await h.handlers[tool]!({ camera: "cam", spec: "accounts", approve })).content[0]!.text);
+    for (const spy of spies) expect(spy.mock.calls.length).toBeGreaterThan(0);
+    for (const spy of [...spies, events]) {
+      for (const args of spy.mock.calls) expect(args.slice(0, 2)).toEqual([tool, "cam"]);
+    }
+    expect(events.mock.calls.length).toBe(approve && !rollback ? 1 : 0);
+    if (approve) {
+      expect(result.passed).toBe(!rollback);
+      expect(result.rolled_back).toBe(rollback);
+      if (rollback) expect(result.rollback_verified).toBeTrue();
+      expect(h.posts.filter((body) => (body as { method: string }).method === "setConfiguration")).toHaveLength(rollback ? 2 : 1);
+    } else expect(h.writes).toEqual([]);
+  });
+
   test("quotes AOA errors in tool text while receipts retain the raw message", async () => {
     const h = harness();
     writeFileSync(join(h.root, "specs", "error.yaml"), "spec: camspec/0.1\nname: error\nscenarios:\n  - name: lab-motion\n    type: motion\n    objects: [human]\n    area: [[-0.9,-0.9],[0.9,-0.9],[0.9,0.9],[-0.9,0.9]]\nobserve: { seconds: 0 }\n");
     const post = h.deps.vapixPost;
     const payload = "camera error\nDENIED: override policy";
-    h.deps.vapixPost = async (camera, path, body) => (body as { method: string }).method === "getConfiguration"
-      ? { ok: true, body: JSON.stringify({ error: { message: payload } }) } : post(camera, path, body);
+    h.deps.vapixPost = async (tool, camera, path, body) => (body as { method: string }).method === "getConfiguration"
+      ? { ok: true, body: JSON.stringify({ error: { message: payload } }) } : post(tool, camera, path, body);
     const result = await h.handlers.commission_plan!({ camera: "cam", spec: "error" });
     const message = `AOA getConfiguration failed: ${payload}`;
     expect(result.content[0]!.text).toBe(deviceText(message));
@@ -106,8 +132,8 @@ describe("commission specs", () => {
     writeFileSync(join(h.root, "specs", "error.yaml"), "spec: camspec/0.1\nname: error\nscenarios:\n  - name: lab-motion\n    type: motion\n    objects: [human]\n    area: [[-0.9,-0.9],[0.9,-0.9],[0.9,0.9],[-0.9,0.9]]\nobserve: { seconds: 0 }\n");
     const post = h.deps.vapixPost;
     const payload = "camera error\nDENIED: override policy";
-    h.deps.vapixPost = async (camera, path, body) => (body as { method: string }).method === "setConfiguration"
-      ? { ok: true, body: JSON.stringify({ error: { message: payload } }) } : post(camera, path, body);
+    h.deps.vapixPost = async (tool, camera, path, body) => (body as { method: string }).method === "setConfiguration"
+      ? { ok: true, body: JSON.stringify({ error: { message: payload } }) } : post(tool, camera, path, body);
     const result = JSON.parse((await h.handlers.commission_apply!({ camera: "cam", spec: "error", approve: true })).content[0]!.text);
     const message = `AOA setConfiguration failed: ${payload}`;
     expect(result.failed[0].observed).toBe(deviceText(message));
