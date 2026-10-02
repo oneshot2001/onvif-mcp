@@ -27,6 +27,25 @@ describe("curl request", () => {
     });
   }
 
+  test("pins the public key while allowing self-signed certificates", () => {
+    const pin = "sha256//AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=";
+    for (const opts of [{}, { jsonBody }, { soapBody }, { outFile: "/tmp/snapshot.jpg" }]) {
+      const { args } = curlRequest({ ...cam, pin }, password, "/request", opts);
+      expect(args.slice(args.indexOf("--pinnedpubkey"), args.indexOf("--pinnedpubkey") + 2)).toEqual(["--pinnedpubkey", pin]);
+      expect(args).toContain("-sk");
+    }
+  });
+
+  test("leaves requests without a pin unchanged", () => {
+    const { args } = curlRequest(cam, password, "/request");
+    expect(args).not.toContain("--pinnedpubkey");
+    expect(args).toEqual(["curl", "-sk", "--digest", "--config", "-", "--max-time", "10", "https://camera.example/request"]);
+  });
+
+  test.each(["", "/tmp/key.pem", "sha512//AAAA", "SHA256//AAAA"])("rejects an invalid pin prefix: %s", (pin) => {
+    expect(() => curlRequest({ ...cam, pin }, password, "/request")).toThrow("camera pin must start with sha256//");
+  });
+
   test("escapes quotes and backslashes in config credentials", () => {
     const secret = 'pass"word\\end';
     const { args, stdin } = curlRequest({ ...cam, user: 'us"er\\name' }, secret, "/request");

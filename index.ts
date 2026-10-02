@@ -57,7 +57,7 @@ if (process.argv.includes("--verify")) {
 }
 
 const AGENT = process.env.AGENT_ID ?? "unknown";
-const cameras: Record<string, CameraAccounts & { base: string; ptz: boolean; protocol: "vapix" | "onvif"; profile?: string }> =
+const cameras: Record<string, CameraAccounts & { base: string; pin?: string; ptz: boolean; protocol: "vapix" | "onvif"; profile?: string }> =
   JSON.parse(readFileSync(join(ROOT, "cameras.json"), "utf8"));
 // Raw bytes kept: the AAR producer signs the digest of the EXACT policy the
 // server evaluates (parsed once here) — never a fresh disk read (TOCTOU).
