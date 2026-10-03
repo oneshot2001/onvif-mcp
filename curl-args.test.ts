@@ -1,10 +1,28 @@
 import { describe, expect, test } from "bun:test";
-import { curlRequest } from "./curl-args";
+import { curlRequest, validatePin } from "./curl-args";
 
 const cam = { base: "https://camera.example", user: "root" };
 const password = "camera-secret-password";
 const jsonBody = { method: "getConfiguration" };
 const soapBody = '<?xml version="1.0"?><s:Envelope><s:Body/></s:Envelope>';
+
+describe("camera pin validation", () => {
+  test("accepts a sha256 pin", () => {
+    expect(() => validatePin("sha256//AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=")).not.toThrow();
+  });
+
+  test("accepts an omitted pin", () => {
+    expect(() => validatePin(undefined)).not.toThrow();
+  });
+
+  test.each(["", "/tmp/key.pem", "sha512//AAAA", "SHA256//AAAA", null, 123])("rejects an invalid pin: %s", (pin) => {
+    expect(() => validatePin(pin)).toThrow("camera pin must start with sha256//");
+  });
+
+  test("rejects an empty hash after the prefix", () => {
+    expect(() => validatePin("sha256//")).toThrow("camera pin must include a hash after sha256//");
+  });
+});
 
 describe("curl request", () => {
   for (const [name, opts] of [
@@ -62,6 +80,11 @@ describe("curl request", () => {
 
   test.each(["", "/tmp/key.pem", "sha512//AAAA", "SHA256//AAAA"])("rejects an invalid pin prefix: %s", (pin) => {
     expect(() => curlRequest({ ...cam, pin }, password, "/request")).toThrow("camera pin must start with sha256//");
+  });
+
+  test("rejects an empty pin hash", () => {
+    expect(() => curlRequest({ ...cam, pin: "sha256//" }, password, "/request"))
+      .toThrow("camera pin must include a hash after sha256//");
   });
 
   test("escapes quotes and backslashes in config credentials", () => {
