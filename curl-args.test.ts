@@ -42,6 +42,24 @@ describe("curl request", () => {
     expect(args).toEqual(["curl", "-sk", "--digest", "--config", "-", "--max-time", "10", "https://camera.example/request"]);
   });
 
+  test("rejects a pin with an HTTP base", () => {
+    const pin = "sha256//AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=";
+    expect(() => curlRequest({ ...cam, base: "http://camera.example", pin }, password, "/request"))
+      .toThrow("camera pin requires an https:// URL");
+  });
+
+  test("keeps the pin with an HTTPS base", () => {
+    const pin = "sha256//AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=";
+    const { args } = curlRequest({ ...cam, pin }, password, "/request");
+    expect(args.slice(-3)).toEqual(["--pinnedpubkey", pin, "https://camera.example/request"]);
+  });
+
+  test("leaves HTTP requests without a pin unchanged", () => {
+    const { args, stdin } = curlRequest({ ...cam, base: "http://camera.example" }, password, "/request");
+    expect(args).toEqual(["curl", "-sk", "--digest", "--config", "-", "--max-time", "10", "http://camera.example/request"]);
+    expect(stdin).toBe(`user = "root:${password}"\n`);
+  });
+
   test.each(["", "/tmp/key.pem", "sha512//AAAA", "SHA256//AAAA"])("rejects an invalid pin prefix: %s", (pin) => {
     expect(() => curlRequest({ ...cam, pin }, password, "/request")).toThrow("camera pin must start with sha256//");
   });
