@@ -12,6 +12,7 @@ import { hardDenied, registerCommission, verifyHandoffs } from "./commission";
 import { snapshotContent } from "./snapshot-content";
 import { parseParams } from "./vapix-params";
 import { parseEventMessage } from "./event-parse";
+import { openEventWebSocket } from "./event-websocket";
 import { deviceText } from "./device-text";
 import { appendLocked, emptyChainConflict, lastReceiptFrom, missingHandoffHeads, selectReceipts, verifyChain } from "./receipt-chain";
 import { curlRequest } from "./curl-args";
@@ -157,8 +158,6 @@ async function vapixPost(tool: string, camera: string, path: string, body: unkno
 
 async function observeEvents(tool: string, camera: string, topics: string[], seconds: number): Promise<{ events: Array<{ topic: string; timestamp?: string | number; message?: { data?: Record<string, unknown> } }>; warnings: string[] }> {
   const cam = camOf(camera);
-  const account = accountFor(tool, cam);
-  const host = new URL(cam.base).host;
   const events: Array<{ topic: string; timestamp?: string | number; message?: { data?: Record<string, unknown> } }> = [];
   const warnings: string[] = [];
   return await new Promise((resolve) => {
@@ -173,9 +172,9 @@ async function observeEvents(tool: string, camera: string, topics: string[], sec
       if (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING) ws.close();
       resolve({ events, warnings });
     };
-    const ws = new WebSocket(`wss://${host}/vapix/ws-data-stream?sources=events`, {
-      headers: { Authorization: `Basic ${Buffer.from(`${account.user}:${passwords[account.credKey]}`).toString("base64")}` },
-      tls: { rejectUnauthorized: false },
+    const ws = openEventWebSocket(cam, () => {
+      const account = accountFor(tool, cam);
+      return { user: account.user, password: passwords[account.credKey]! };
     });
     const openTimer = setTimeout(() => finish("event WebSocket connection timed out"), 10_000);
     ws.addEventListener("open", () => {
