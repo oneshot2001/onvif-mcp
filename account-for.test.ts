@@ -16,7 +16,6 @@ const roles = [
   ["ptz_preset", operator],
   ["config_remediate", admin],
   ["commission_apply", admin],
-  ["get_receipts", admin],
 ] as const;
 
 describe("camera account selection", () => {
@@ -36,8 +35,9 @@ describe("camera account selection", () => {
     expect(accountFor(tool, partial)).toEqual(admin);
   });
 
-  test.each(["unknown_tool", "", "constructor", "__proto__"])("unknown tool %s falls back to top-level", (tool) => {
-    expect(accountFor(tool, cam)).toEqual(admin);
+  test.each(["unknown_tool", "", "constructor", "__proto__", "toString", "LIST_CAMERAS"])("unknown tool %s throws", (tool) => {
+    expect(() => accountFor(tool, cam)).toThrow(new Error(`no account mapping for tool '${tool}'`));
+    expect(() => accountFor(tool, admin)).toThrow(new Error(`no account mapping for tool '${tool}'`));
   });
 
   test("selection leaves the camera configuration unchanged", () => {

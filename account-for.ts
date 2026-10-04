@@ -16,6 +16,11 @@ export function accountFor(tool: string, cam: CameraAccounts): Account {
     case "ptz_preset":
       account = cam.accounts?.operator;
       break;
+    case "config_remediate":
+    case "commission_apply":
+      break;
+    default:
+      throw new Error(`no account mapping for tool '${tool}'`);
   }
   const { user, credKey } = account ?? cam;
   return { user, credKey };
