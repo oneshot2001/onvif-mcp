@@ -14,6 +14,7 @@ import { parseParams } from "./vapix-params";
 import { parseEventMessage } from "./event-parse";
 import { openEventWebSocket } from "./event-websocket";
 import { deviceText } from "./device-text";
+import { formatPresetRecall } from "./ptz-output";
 import { formatDriftLines, type ConfigDiff } from "./config-drift";
 import { appendLocked, emptyChainConflict, lastReceiptFrom, missingHandoffHeads, selectReceipts, verifyChain } from "./receipt-chain";
 import { curlRequest, validatePin } from "./curl-args";
@@ -381,7 +382,7 @@ server.tool("ptz_preset", "Send a PTZ camera to a named preset (VAPIX cameras on
     outcomeState: "unknown",
     observation: jsonBytes({ settled_position: pos.body.trim() }),
   } });
-  return { content: [{ type: "text", text: (ok ? `${camera} → preset '${preset}'\nsettled position: ${pos.body.trim().replace(/\n/g, " ")}` : "preset recall failed") + aar }] };
+  return { content: [{ type: "text", text: (ok ? formatPresetRecall(camera, preset, pos) : "preset recall failed") + aar }] };
 });
 
 server.tool("ptz_move", "Relative PTZ move (degrees pan/tilt, zoom steps), bounded by policy",
