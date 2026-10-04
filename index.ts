@@ -14,6 +14,7 @@ import { parseParams } from "./vapix-params";
 import { parseEventMessage } from "./event-parse";
 import { openEventWebSocket } from "./event-websocket";
 import { deviceText } from "./device-text";
+import { formatDriftLines, type ConfigDiff } from "./config-drift";
 import { appendLocked, emptyChainConflict, lastReceiptFrom, missingHandoffHeads, selectReceipts, verifyChain } from "./receipt-chain";
 import { curlRequest, validatePin } from "./curl-args";
 import { accountFor, type CameraAccounts } from "./account-for";
@@ -435,18 +436,14 @@ server.tool("config_drift", "Compare live VAPIX parameters with the saved config
   const base = Object.fromEntries(Object.entries(baseline.params).filter(([param]) => inGroup(param, groups)));
   const live = await configParams("config_drift", camera, groups);
   if (!live.ok) { receipt("config_drift", params, "allow", "fetch FAILED"); return { content: [{ type: "text", text: "drift fetch failed" }] }; }
-  const diff: { changed: Array<{ param: string; baseline: string; live: string }>; added: Array<{ param: string; live: string }>; removed: Array<{ param: string; baseline: string }> } = { changed: [], added: [], removed: [] };
+  const diff: ConfigDiff = { changed: [], added: [], removed: [] };
   for (const param of [...new Set([...Object.keys(base), ...Object.keys(live.params)])].sort()) {
     if (!(param in base)) diff.added.push({ param, live: live.params[param]! });
     else if (!(param in live.params)) diff.removed.push({ param, baseline: base[param]! });
     else if (base[param] !== live.params[param]) diff.changed.push({ param, baseline: base[param]!, live: live.params[param]! });
   }
   const summary = `drift: ${diff.changed.length} changed, ${diff.added.length} added, ${diff.removed.length} removed`;
-  const lines = [
-    ...diff.changed.map((d) => `changed ${d.param}: ${deviceText(d.baseline)} → ${deviceText(d.live)}`),
-    ...diff.added.map((d) => `added ${d.param}: ${deviceText(d.live)}`),
-    ...diff.removed.map((d) => `removed ${d.param}: ${deviceText(d.baseline)}`), summary,
-  ];
+  const lines = [...formatDriftLines(diff), summary];
   receipt("config_drift", params, "allow", summary, sha256(diff));
   return { content: [{ type: "text", text: lines.join("\n") }] };
 });
