@@ -243,7 +243,7 @@ export function registerCommission(server: McpServer, d: CommissionDeps) {
     const reason = validateParams(loaded.spec);
     if (reason) throw new Error(`DENIED: ${reason}`);
     const cameraMeta = await meta(tool, camera);
-    if (loaded.spec.applies_to && !loaded.spec.applies_to.models.includes(cameraMeta.model)) throw new Error(`spec does not apply to model '${cameraMeta.model}'`);
+    if (loaded.spec.applies_to && !loaded.spec.applies_to.models.includes(cameraMeta.model)) throw new Error(`spec does not apply to model ${deviceText(cameraMeta.model)}`);
     const groups = [...new Set(Object.keys(loaded.spec.params).map((param) => param.split(".")[0]!))];
     const live = await d.configParams(tool, camera, groups);
     if (!live.ok) throw new Error("live config fetch failed");
@@ -356,6 +356,7 @@ export function registerCommission(server: McpServer, d: CommissionDeps) {
     return { content: [{ type: "text" as const, text: message.startsWith("AOA ") ? deviceText(message) : message }], isError: !deny };
   };
   // Display copies only: finish() and receipt hashes retain the raw evidence.
+  const jsonOutput = (value: unknown) => JSON.stringify(value, null, 2).replace(/\u2028/g, "\\u2028").replace(/\u2029/g, "\\u2029");
   const scenarioOutput = (scenarios: ScenarioResult[]) => scenarios.map((scenario) => ({ ...scenario, readback_diff: scenario.readback_diff.map((detail) => detail.startsWith("AOA ") ? deviceText(detail) : detail) }));
   const verifyOutput = (verify: { passed: boolean; failed: Failure[] }) => ({ ...verify, failed: verify.failed.map((failure) => failure.param.startsWith("scenario:") && failure.observed?.startsWith("AOA ") ? { ...failure, observed: deviceText(failure.observed) } : failure) });
   const observationOutput = (observation: Observation | null) => observation && ({ ...observation, warnings: observation.warnings.map((warning) => /^(event stream error:|event observation failed:)/.test(warning) ? deviceText(warning) : warning) });
@@ -370,7 +371,7 @@ export function registerCommission(server: McpServer, d: CommissionDeps) {
       const p = await prepare("commission_plan", camera, ref);
       const out = planOutput(p);
       d.receipt("commission_plan", params, "allow", `planned ${p.plan.length} params, ${p.presets.length} presets, and ${p.aoa.plan.length} scenarios`, d.sha256(out));
-      return { content: [{ type: "text", text: JSON.stringify(out, null, 2) }] };
+      return { content: [{ type: "text", text: jsonOutput(out) }] };
     } catch (e) { return error("commission_plan", params, e); }
   });
 
@@ -386,7 +387,7 @@ export function registerCommission(server: McpServer, d: CommissionDeps) {
       if (!approve) {
         const out = planOutput(p);
         d.receipt("commission_apply", params, "allow", `dry-run: planned ${p.plan.length} params, ${p.presets.length} presets, and ${p.aoa.plan.length} scenarios`, d.sha256(out));
-        return { content: [{ type: "text", text: JSON.stringify(out, null, 2) }] };
+        return { content: [{ type: "text", text: jsonOutput(out) }] };
       }
       const applied: Applied[] = [];
       let writeFailed: Failure | null = null;
@@ -453,7 +454,7 @@ export function registerCommission(server: McpServer, d: CommissionDeps) {
       }
       const file = finish("commission_apply", params, started, firstSeq, p, applied, checked.verify, rollback, checked.scenarios, observation, notes);
       const out = { ...verifyOutput(checked.verify), rolled_back: rollback?.performed ?? false, rollback_verified: rollback?.verified ?? null, scenarios: scenarioOutput(checked.scenarios), observation: observationOutput(observation), handoff: file };
-      return { content: [{ type: "text", text: JSON.stringify(out, null, 2) }] };
+      return { content: [{ type: "text", text: jsonOutput(out) }] };
     } catch (e) { return error("commission_apply", params, e); }
   });
 
@@ -468,7 +469,7 @@ export function registerCommission(server: McpServer, d: CommissionDeps) {
       const p = await prepare("commission_verify", camera, ref);
       const checked = await check("commission_verify", camera, p);
       const file = finish("commission_verify", params, started, firstSeq, p, [], checked.verify, null, checked.scenarios, null, notes);
-      return { content: [{ type: "text", text: JSON.stringify({ ...verifyOutput(checked.verify), scenarios: scenarioOutput(checked.scenarios), observation: null, handoff: file }, null, 2) }] };
+      return { content: [{ type: "text", text: jsonOutput({ ...verifyOutput(checked.verify), scenarios: scenarioOutput(checked.scenarios), observation: null, handoff: file }) }] };
     } catch (e) { return error("commission_verify", params, e); }
   });
 }
