@@ -62,6 +62,12 @@ const TOP_KEYS = ["spec", "name", "applies_to", "params", "presets", "scenarios"
 const HARD_DENY = ["Network", "System.BoxRebootAction", "RemoteService", "Time"];
 export const hardDenied = (param: string, inGroup: (param: string, groups: string[]) => boolean) => HARD_DENY.some((group) => inGroup(param, [group])) || /password|user|root/i.test(param);
 
+class ModelMismatchError extends Error {
+  constructor(readonly model: string) {
+    super(`spec does not apply to model '${model}'`);
+  }
+}
+
 export function readCommissionSpec(root: string, ref: string): { spec: Spec; sha256: string } {
   const dir = resolve(root, "specs");
   const file = resolve(dir, /\.ya?ml$/.test(ref) ? ref : `${ref}.yaml`);
@@ -243,7 +249,7 @@ export function registerCommission(server: McpServer, d: CommissionDeps) {
     const reason = validateParams(loaded.spec);
     if (reason) throw new Error(`DENIED: ${reason}`);
     const cameraMeta = await meta(tool, camera);
-    if (loaded.spec.applies_to && !loaded.spec.applies_to.models.includes(cameraMeta.model)) throw new Error(`spec does not apply to model ${deviceText(cameraMeta.model)}`);
+    if (loaded.spec.applies_to && !loaded.spec.applies_to.models.includes(cameraMeta.model)) throw new ModelMismatchError(cameraMeta.model);
     const groups = [...new Set(Object.keys(loaded.spec.params).map((param) => param.split(".")[0]!))];
     const live = await d.configParams(tool, camera, groups);
     if (!live.ok) throw new Error("live config fetch failed");
@@ -353,7 +359,8 @@ export function registerCommission(server: McpServer, d: CommissionDeps) {
     const message = value instanceof Error ? value.message : String(value);
     const deny = message.startsWith("DENIED: ");
     d.receipt(tool, params, deny ? "deny" : "allow", deny ? message.slice(8) : `FAILED: ${message}`);
-    return { content: [{ type: "text" as const, text: message.startsWith("AOA ") ? deviceText(message) : message }], isError: !deny };
+    const text = value instanceof ModelMismatchError ? `spec does not apply to model ${deviceText(value.model)}` : message.startsWith("AOA ") ? deviceText(message) : message;
+    return { content: [{ type: "text" as const, text }], isError: !deny };
   };
   // Display copies only: finish() and receipt hashes retain the raw evidence.
   const jsonOutput = (value: unknown) => JSON.stringify(value, null, 2).replace(/\u2028/g, "\\u2028").replace(/\u2029/g, "\\u2029");

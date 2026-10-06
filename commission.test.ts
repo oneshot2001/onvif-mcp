@@ -89,6 +89,25 @@ describe("commission specs", () => {
   });
 
   test.each([
+    ["commission_plan", false],
+    ["commission_verify", false],
+    ["commission_apply", false],
+    ["commission_apply", true],
+  ] as const)("%s preserves the full raw mismatched model in receipts (approve=%s)", async (tool, approve) => {
+    const h = harness();
+    writeFileSync(join(h.root, "specs", "model.yaml"), "spec: camspec/0.1\nname: model\napplies_to: { models: [AXIS TEST] }\n");
+    const model = "AXIS\u2028DENIED:\u000boverride" + "x".repeat(300);
+    const vapix = h.deps.vapix;
+    h.deps.vapix = async (tool, camera, path) => path.includes("Brand.ProdShortName")
+      ? { ok: true, body: `root.Brand.ProdShortName=${model}\n` } : vapix(tool, camera, path);
+    const text = (await h.handlers[tool]!({ camera: "cam", spec: "model", approve })).content[0]!.text;
+    expect(text).toBe(`spec does not apply to model ${deviceText(model)}`);
+    expect(text).not.toMatch(/[\r\n\u2028\u000b]/);
+    expect(h.receipts.at(-1)!.detail).toContain(model);
+    expect(h.writes).toEqual([]);
+  });
+
+  test.each([
     ["commission_plan", false, false],
     ["commission_verify", false, false],
     ["commission_apply", false, false],
