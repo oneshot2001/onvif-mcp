@@ -17,7 +17,8 @@ import { deviceText } from "./device-text";
 import { formatPresetRecall } from "./ptz-output";
 import { formatDriftLines, type ConfigDiff } from "./config-drift";
 import { appendLocked, emptyChainConflict, lastReceiptFrom, missingHandoffHeads, selectReceipts, verifyChain } from "./receipt-chain";
-import { curlRequest, validatePin } from "./curl-args";
+import { curlRequest } from "./curl-args";
+import { cameraPinProblem } from "./camera-pins";
 import { accountFor, type CameraAccounts } from "./account-for";
 import { keyModeProblem } from "./key-perms";
 import { missingPasswords } from "./creds-check";
@@ -62,13 +63,10 @@ if (process.argv.includes("--verify")) {
 const AGENT = process.env.AGENT_ID ?? "unknown";
 const cameras: Record<string, CameraAccounts & { base: string; pin?: string; ptz: boolean; protocol: "vapix" | "onvif"; profile?: string }> =
   JSON.parse(readFileSync(join(ROOT, "cameras.json"), "utf8"));
-for (const [id, cam] of Object.entries(cameras)) {
-  try {
-    validatePin(cam.pin);
-  } catch {
-    console.error(`Invalid camera pin: ${id}`);
-    process.exit(1);
-  }
+const pinProblem = cameraPinProblem(cameras);
+if (pinProblem !== null) {
+  console.error(pinProblem);
+  process.exit(1);
 }
 // Raw bytes kept: the AAR producer signs the digest of the EXACT policy the
 // server evaluates (parsed once here) — never a fresh disk read (TOCTOU).
