@@ -1,0 +1,11 @@
+spec: camspec/0.1
+name: lab-rollback
+applies_to: { models: ["AXIS Q6358-LE"] }
+params:
+  Image.I0.Appearance.Compression: "31"
+scenarios:
+  - name: lab-rollback
+    type: motion
+    objects: [human]
+    area: [[-0.5, -0.5], [0.5, -0.5], [0.5, 0.5], [-0.5, 0.5]]
+observe: { seconds: 30 }
