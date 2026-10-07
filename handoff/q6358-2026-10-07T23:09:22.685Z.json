@@ -1,0 +1,84 @@
+{
+  "artifact": "camspec-handoff/0.1",
+  "spec": {
+    "name": "lab-rollback",
+    "sha256": "c9b29e4a33018c065144eb879709d8831335600472790410208a0652babf7da9"
+  },
+  "camera": {
+    "id": "q6358",
+    "model": "AXIS Q6358-LE",
+    "firmware": "12.9.57",
+    "serial": "E82725146996"
+  },
+  "agent": "claude-main",
+  "policy_sha256": "1565445a41983112be716a05141c242f25f6f0e5bf03e2eebc117a02d033613b",
+  "run": {
+    "started": "2026-10-07T23:09:21.654Z",
+    "finished": "2026-10-07T23:09:22.685Z"
+  },
+  "plan": [
+    {
+      "param": "Image.I0.Appearance.Compression",
+      "current": "30",
+      "desired": "31"
+    }
+  ],
+  "applied": [
+    {
+      "param": "Image.I0.Appearance.Compression",
+      "previous": "30",
+      "desired": "31"
+    },
+    {
+      "scenario": "lab-rollback",
+      "id": 6,
+      "type": "motion"
+    }
+  ],
+  "verify": {
+    "passed": false,
+    "failed": [
+      {
+        "param": "Image.I0.Appearance.Compression",
+        "desired": "31",
+        "observed": "31"
+      }
+    ]
+  },
+  "rollback": {
+    "performed": true,
+    "verified": true
+  },
+  "scenarios": [
+    {
+      "name": "lab-rollback",
+      "id": 6,
+      "type": "motion",
+      "deployed": true,
+      "readback_diff": []
+    }
+  ],
+  "observation": {
+    "window_seconds": 30,
+    "started": "2026-10-07T23:09:22.327Z",
+    "finished": "2026-10-07T23:09:22.327Z",
+    "fired": {
+      "lab-rollback": {
+        "count": 0,
+        "first": null,
+        "last": null
+      }
+    },
+    "warnings": [
+      "observation skipped because scenarios were not deployed and verified",
+      "lab-rollback: 0 events in window"
+    ]
+  },
+  "notes": null,
+  "receipts": {
+    "first_seq": 270,
+    "last_seq": 274,
+    "chain_head_hash": "ac3f973ded4fbdc9765ef4076e6989017cf0151aacfd393a2f445ff4ccc55f92"
+  },
+  "sig": "EGYtIv1Doux1h35tm0aGs8xo3iSV79oq6EC/POFoiBMGa/D51HsLS4vKAQ6PME20IGe4tx7hwKBzyVpBqPxbDA=="
+}
