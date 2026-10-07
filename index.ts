@@ -16,7 +16,7 @@ import { openEventWebSocket } from "./event-websocket";
 import { deviceText } from "./device-text";
 import { formatPresetRecall } from "./ptz-output";
 import { formatDriftLines, type ConfigDiff } from "./config-drift";
-import { appendLocked, emptyChainConflict, lastReceiptFrom, missingHandoffHeads, selectReceipts, verifyChain } from "./receipt-chain";
+import { appendLocked, emptyChainConflict, formatReceiptsText, lastReceiptFrom, missingHandoffHeads, selectReceipts, verifyChain } from "./receipt-chain";
 import { curlRequest } from "./curl-args";
 import { cameraPinProblem } from "./camera-pins";
 import { accountFor, type CameraAccounts } from "./account-for";
@@ -488,7 +488,7 @@ server.tool("get_receipts", "Return the caller's last N signed receipts from the
   if (deny) { receipt("get_receipts", { n }, "deny", deny); return { content: [{ type: "text", text: `DENIED: ${deny}` }] }; }
   const lines = existsSync(LOG) ? selectReceipts(readFileSync(LOG, "utf8").trim().split("\n"), AGENT, n) : [];
   receipt("get_receipts", { n }, "allow", `returned ${lines.length}`);
-  return { content: [{ type: "text", text: lines.join("\n") || "(empty chain)" }] };
+  return { content: [{ type: "text", text: formatReceiptsText(lines) }] };
 });
 
 // --verify-aar [dir]: offline pyref verification of emitted AAR wire bundles

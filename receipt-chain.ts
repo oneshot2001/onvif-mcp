@@ -3,6 +3,11 @@ import { appendFileSync, closeSync, existsSync, fstatSync, linkSync, openSync, r
 
 export const STALE_LOCK_MS = 60_000;
 
+export function formatReceiptsText(lines: string[]): string {
+  // Escape display text only; stored receipt bytes remain unchanged.
+  return lines.join("\n").replace(/\u2028/g, "\\u2028").replace(/\u2029/g, "\\u2029") || "(empty chain)";
+}
+
 export function selectReceipts(lines: string[], agent: string, n: number): string[] {
   if (n <= 0) return [];
   return lines.filter((line) => {

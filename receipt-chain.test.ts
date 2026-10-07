@@ -1,5 +1,31 @@
 import { describe, expect, test } from "bun:test";
-import { emptyChainConflict, lastReceiptFrom, selectReceipts } from "./receipt-chain";
+import { emptyChainConflict, formatReceiptsText, lastReceiptFrom, selectReceipts } from "./receipt-chain";
+
+describe("get_receipts text", () => {
+  test("escapes Unicode separators while preserving raw receipt details", () => {
+    const detail = "FAILED: spec does not apply to model 'AXIS\u2028DENIED:\u2029override'";
+    const receipt = { principal: { id: "caller" }, detail, hash: "hash", sig: "signature" };
+    const line = JSON.stringify(receipt);
+    const lines = selectReceipts([line], "caller", 5);
+    const output = { content: [{ type: "text", text: formatReceiptsText(lines) }] };
+    const text = output.content[0]!.text;
+
+    expect(text).not.toMatch(/[\u2028\u2029]/);
+    expect(text).toContain("\\u2028");
+    expect(text).toContain("\\u2029");
+    expect(JSON.parse(text)).toEqual(receipt);
+    expect(JSON.parse(text).detail).toBe(detail);
+    expect(lines).toEqual([line]);
+    expect(lines[0]).toContain("\u2028");
+    expect(lines[0]).toContain("\u2029");
+  });
+
+  test("preserves ordinary JSONL and the empty-chain message", () => {
+    const lines = ["one", "two"].map((detail) => JSON.stringify({ detail }));
+    expect(formatReceiptsText(lines)).toBe(lines.join("\n"));
+    expect(formatReceiptsText([])).toBe("(empty chain)");
+  });
+});
 
 describe("receipt selection", () => {
   const own = [1, 2, 3, 4, 5, 6].map((seq) => JSON.stringify({ seq, principal: { id: "caller" } }));
