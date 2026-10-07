@@ -16,6 +16,14 @@ describe("startup camera pin validation", () => {
     expect(cameraPinProblem({ secure: { base: "https://camera.example", pin } })).toBeNull();
   });
 
+  test("rejects a pinned camera with no base naming only its id", () => {
+    expect(cameraPinProblem({ missing: { pin } })).toBe("Invalid camera pin: missing");
+  });
+
+  test("rejects a pinned camera with a numeric base naming only its id", () => {
+    expect(cameraPinProblem({ numeric: { base: 123, pin } })).toBe("Invalid camera pin: numeric");
+  });
+
   test("accepts an HTTP camera without a pin", () => {
     expect(cameraPinProblem({ unpinned: { base: "http://camera.example" } })).toBeNull();
   });
