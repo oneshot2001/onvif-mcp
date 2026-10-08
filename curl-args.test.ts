@@ -30,6 +30,49 @@ describe("curl request", () => {
     ["JSON POST", { jsonBody, maxTime: 15 }],
     ["SOAP", { soapBody }],
   ] as const) {
+    test(`${name} fails on HTTP errors`, () => {
+      const { args } = curlRequest(cam, password, "/request", opts);
+      expect(args).toContain("--fail");
+    });
+
+    for (const status of [401, 200]) {
+      test(`${name} exits ${status === 200 ? "zero" : "non-zero"} for HTTP ${status}`, async () => {
+        let requests = 0;
+        const server = Bun.serve({
+          hostname: "127.0.0.1",
+          port: 0,
+          fetch(request) {
+            requests++;
+            if (status === 200 && !request.headers.has("authorization")) {
+              return new Response("Authenticate", {
+                status: 401,
+                headers: { "WWW-Authenticate": 'Digest realm="test", nonce="test-nonce", qop="auth"' },
+              });
+            }
+            return new Response(status === 200 ? "OK" : "Unauthorized", {
+              status,
+              headers: status === 401 ? { "WWW-Authenticate": 'Basic realm="test"' } : {},
+            });
+          },
+        });
+        try {
+          const { args, stdin } = curlRequest(
+            { ...cam, base: `http://127.0.0.1:${server.port}` }, password, "/request", { ...opts, maxTime: 2 },
+          );
+          // Ignore user curl configuration and proxies so the request stays on loopback.
+          const child = Bun.spawn([args[0]!, "-q", ...args.slice(1), "--noproxy", "*"], {
+            stdin: Buffer.from(stdin), stdout: "ignore", stderr: "ignore",
+          });
+          const exitCode = await child.exited;
+          expect(requests).toBeGreaterThan(0);
+          if (status === 200) expect(exitCode).toBe(0);
+          else expect(exitCode).not.toBe(0);
+        } finally {
+          await server.stop(true);
+        }
+      });
+    }
+
     test(`${name} keeps credentials on stdin and requires digest authentication`, () => {
       const { args, stdin } = curlRequest(cam, password, "/request", opts);
       expect(args.join(" ")).not.toContain(password);
@@ -57,7 +100,7 @@ describe("curl request", () => {
   test("leaves requests without a pin unchanged", () => {
     const { args } = curlRequest(cam, password, "/request");
     expect(args).not.toContain("--pinnedpubkey");
-    expect(args).toEqual(["curl", "-sk", "--digest", "--config", "-", "--max-time", "10", "https://camera.example/request"]);
+    expect(args).toEqual(["curl", "-sk", "--digest", "--fail", "--config", "-", "--max-time", "10", "https://camera.example/request"]);
   });
 
   test("rejects a pin with an HTTP base", () => {
@@ -74,7 +117,7 @@ describe("curl request", () => {
 
   test("leaves HTTP requests without a pin unchanged", () => {
     const { args, stdin } = curlRequest({ ...cam, base: "http://camera.example" }, password, "/request");
-    expect(args).toEqual(["curl", "-sk", "--digest", "--config", "-", "--max-time", "10", "http://camera.example/request"]);
+    expect(args).toEqual(["curl", "-sk", "--digest", "--fail", "--config", "-", "--max-time", "10", "http://camera.example/request"]);
     expect(stdin).toBe(`user = "root:${password}"\n`);
   });
 
