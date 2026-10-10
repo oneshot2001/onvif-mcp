@@ -6,6 +6,15 @@ const password = "camera-secret-password";
 const jsonBody = { method: "getConfiguration" };
 const soapBody = '<?xml version="1.0"?><s:Envelope><s:Body/></s:Envelope>';
 
+let canListen = false;
+try {
+  const server = Bun.serve({ hostname: "127.0.0.1", port: 0, fetch: () => new Response() });
+  server.stop(true);
+  canListen = true;
+} catch {
+  canListen = false;
+}
+
 describe("camera pin validation", () => {
   test("accepts a sha256 pin", () => {
     expect(() => validatePin("sha256//AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=")).not.toThrow();
@@ -36,7 +45,7 @@ describe("curl request", () => {
     });
 
     for (const status of [401, 200]) {
-      test(`${name} exits ${status === 200 ? "zero" : "non-zero"} for HTTP ${status}`, async () => {
+      test.skipIf(!canListen)(`${name} exits ${status === 200 ? "zero" : "non-zero"} for HTTP ${status}`, async () => {
         let requests = 0;
         const server = Bun.serve({
           hostname: "127.0.0.1",
