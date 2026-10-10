@@ -14,6 +14,7 @@ import { parseParams } from "./vapix-params";
 import { parseEventMessage } from "./event-parse";
 import { openEventWebSocket } from "./event-websocket";
 import { deviceText } from "./device-text";
+import { formatDeviceInfo, parseDeviceMeta } from "./device-info";
 import { formatPresetRecall } from "./ptz-output";
 import { formatDriftLines, type ConfigDiff } from "./config-drift";
 import { appendLocked, emptyChainConflict, formatReceiptsText, lastReceiptFrom, missingHandoffHeads, selectReceipts, verifyChain } from "./receipt-chain";
@@ -233,11 +234,10 @@ async function soap(tool: string, camera: string, body: string): Promise<{ ok: b
 async function deviceInfo(tool: string, camera: string): Promise<string> {
   if (camOf(camera).protocol === "onvif") {
     const r = await soap(tool, camera, '<tds:GetDeviceInformation xmlns:tds="http://www.onvif.org/ver10/device/wsdl"/>');
-    const g = (tag: string) => r.body.match(new RegExp(`<tds:${tag}>([^<]+)`))?.[1] ?? "?";
-    return `Model=${deviceText(`${g("Manufacturer")} ${g("Model")}`)} | Firmware=${deviceText(g("FirmwareVersion"))} | protocol=onvif`;
+    return formatDeviceInfo("onvif", r);
   }
   const r = await vapix(tool, camera, "/axis-cgi/param.cgi?action=list&group=Brand.ProdShortName,Properties.PTZ.PTZ");
-  return `${deviceText(r.body.trim())} | protocol=vapix`;
+  return formatDeviceInfo("vapix", r);
 }
 
 async function snapshot(tool: string, camera: string, outFile: string): Promise<boolean> {
@@ -267,12 +267,10 @@ async function ptzMove(tool: string, camera: string, pan: number, tilt: number, 
 async function deviceMeta(tool: string, camera: string): Promise<{ manufacturer: string; model: string; firmware: string }> {
   if (camOf(camera).protocol === "onvif") {
     const r = await soap(tool, camera, '<tds:GetDeviceInformation xmlns:tds="http://www.onvif.org/ver10/device/wsdl"/>');
-    const g = (tag: string) => r.body.match(new RegExp(`<tds:${tag}>([^<]+)`))?.[1] ?? "unknown";
-    return { manufacturer: g("Manufacturer"), model: g("Model"), firmware: g("FirmwareVersion") };
+    return parseDeviceMeta("onvif", camera, r);
   }
   const r = await vapix(tool, camera, "/axis-cgi/param.cgi?action=list&group=Brand.ProdNbr,Properties.Firmware.Version");
-  const p = parseParams(r.body);
-  return { manufacturer: "AXIS", model: p["Brand.ProdNbr"] ?? camera, firmware: p["Properties.Firmware.Version"] ?? "unknown" };
+  return parseDeviceMeta("vapix", camera, r);
 }
 
 // AAR wire emission for the two pinned-ontology actions — successes AND policy

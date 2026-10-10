@@ -1,0 +1,21 @@
+import { deviceText } from "./device-text";
+import { parseParams } from "./vapix-params";
+
+export function formatDeviceInfo(protocol: "vapix" | "onvif", r: { ok: boolean; body: string }): string {
+  if (!r.ok) return `device info unavailable (request failed) | protocol=${protocol}`;
+  if (protocol === "onvif") {
+    const g = (tag: string) => r.body.match(new RegExp(`<tds:${tag}>([^<]+)`))?.[1] ?? "?";
+    return `Model=${deviceText(`${g("Manufacturer")} ${g("Model")}`)} | Firmware=${deviceText(g("FirmwareVersion"))} | protocol=onvif`;
+  }
+  return `${deviceText(r.body.trim())} | protocol=vapix`;
+}
+
+export function parseDeviceMeta(protocol: "vapix" | "onvif", camera: string, r: { ok: boolean; body: string }): { manufacturer: string; model: string; firmware: string } {
+  if (!r.ok) return { manufacturer: "unavailable", model: "unavailable", firmware: "unavailable" };
+  if (protocol === "onvif") {
+    const g = (tag: string) => r.body.match(new RegExp(`<tds:${tag}>([^<]+)`))?.[1] ?? "unknown";
+    return { manufacturer: g("Manufacturer"), model: g("Model"), firmware: g("FirmwareVersion") };
+  }
+  const p = parseParams(r.body);
+  return { manufacturer: "AXIS", model: p["Brand.ProdNbr"] ?? camera, firmware: p["Properties.Firmware.Version"] ?? "unknown" };
+}
