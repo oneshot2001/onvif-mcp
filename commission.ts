@@ -304,9 +304,11 @@ export function registerCommission(server: McpServer, d: CommissionDeps) {
     const started = new Date().toISOString();
     const fired = Object.fromEntries(prepared.spec.scenarios.map((scenario) => [scenario.name, { count: 0, first: null as string | null, last: null as string | null }]));
     const warnings = prepared.aoa.warning ? [prepared.aoa.warning] : [];
+    let window_seconds = 0;
     if (!prepared.spec.observe.seconds) warnings.push("observation skipped by observe.seconds=0");
     else if (!canObserve || !prepared.aoa.installed) warnings.push("observation skipped because scenarios were not deployed and verified");
     else {
+      window_seconds = prepared.spec.observe.seconds;
       const deployed = scenarios.filter((scenario): scenario is ScenarioResult & { id: number } => scenario.deployed && scenario.id !== null);
       const byTopic = new Map(deployed.map((scenario) => [`tnsaxis:CameraApplicationPlatform/ObjectAnalytics/Device1Scenario${scenario.id}`, scenario.name]));
       let sensed: Awaited<ReturnType<CommissionDeps["observeEvents"]>>;
@@ -325,9 +327,9 @@ export function registerCommission(server: McpServer, d: CommissionDeps) {
         item.first ??= at;
         item.last = at;
       }
+      for (const [name, item] of Object.entries(fired)) if (!item.count) warnings.push(`${name}: 0 events in window`);
     }
-    for (const [name, item] of Object.entries(fired)) if (!item.count) warnings.push(`${name}: 0 events in window`);
-    const observation = { window_seconds: prepared.spec.observe.seconds, started, finished: new Date().toISOString(), fired, warnings };
+    const observation = { window_seconds, started, finished: new Date().toISOString(), fired, warnings };
     if (prepared.spec.observe.seconds && canObserve && prepared.aoa.installed) d.receipt("commission_apply", { camera, spec: prepared.spec.name, observation: true }, "allow", `observed ${prepared.spec.observe.seconds}s AOA event window`, d.sha256(observation), "independently_sensed");
     return observation;
   };

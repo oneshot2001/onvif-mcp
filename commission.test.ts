@@ -382,6 +382,36 @@ describe("commission specs", () => {
     expect(h.writes).toEqual(["AOA:setConfiguration"]);
   });
 
+  test.each([
+    [30, true, "observation skipped because scenarios were not deployed and verified"],
+    [0, false, "observation skipped by observe.seconds=0"],
+  ] as const)("skipped observation records no measured window (seconds=%s, forced failure=%s)", async (seconds, forceFailure, warning) => {
+    const h = harness();
+    writeFileSync(join(h.root, "specs", "aoa.yaml"), `spec: camspec/0.1\nname: aoa\nparams:\n  Image.I0.Appearance.Rotation: '180'\nscenarios:\n  - name: lab-motion\n    type: motion\n    objects: [human]\n    area: [[-0.9,-0.9],[0.9,-0.9],[0.9,0.9],[-0.9,0.9]]\nobserve: { seconds: ${seconds} }\n`);
+    const events = spyOn(h.deps, "observeEvents");
+    if (forceFailure) process.env.COMMISSION_FAIL_PARAM = "Image.I0.Appearance.Rotation";
+    const out = JSON.parse((await h.handlers.commission_apply!({ camera: "cam", spec: "aoa", approve: true })).content[0]!.text);
+    expect(out.passed).toBe(!forceFailure);
+    expect(out.rolled_back).toBe(forceFailure);
+    expect(events).not.toHaveBeenCalled();
+    const handoff = JSON.parse(readFileSync(out.handoff, "utf8"));
+    for (const observation of [out.observation, handoff.observation]) {
+      expect(observation.window_seconds).toBe(0);
+      expect(observation.warnings).toContain(warning);
+      expect(observation.warnings.join("\n")).not.toContain("0 events in window");
+    }
+    expect(verifyHandoffs(h.root, h.publicKey)).toEqual({ count: 1, bad: [] });
+  });
+
+  test("an observed window with no events keeps the zero-event warning", async () => {
+    const h = harness();
+    writeFileSync(join(h.root, "specs", "aoa.yaml"), "spec: camspec/0.1\nname: aoa\nscenarios:\n  - name: lab-motion\n    type: motion\n    objects: [human]\n    area: [[-0.9,-0.9],[0.9,-0.9],[0.9,0.9],[-0.9,0.9]]\nobserve: { seconds: 1 }\n");
+    const events = spyOn(h.deps, "observeEvents").mockResolvedValue({ events: [], warnings: [] });
+    const out = JSON.parse((await h.handlers.commission_apply!({ camera: "cam", spec: "aoa", approve: true })).content[0]!.text);
+    expect(events).toHaveBeenCalledTimes(1);
+    expect(out.observation).toMatchObject({ window_seconds: 1, fired: { "lab-motion": { count: 0 } }, warnings: ["lab-motion: 0 events in window"] });
+  });
+
   for (const phase of ["apply", "rollback"] as const) {
     test.each(["added", "removed", "changed"])(`refuses AOA ${phase} when an unmanaged scenario is %s`, async (change) => {
       let concurrentConfig: ReturnType<typeof h.aoa> | undefined;
