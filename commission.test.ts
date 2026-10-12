@@ -88,6 +88,18 @@ describe("commission specs", () => {
     else process.env.NODE_ENV = previousNodeEnv;
   });
 
+  test("commission_plan does not parse failed device metadata", async () => {
+    const h = harness();
+    writeFileSync(join(h.root, "specs", "metadata.yaml"), "spec: camspec/0.1\nname: metadata\n");
+    const vapix = h.deps.vapix;
+    h.deps.vapix = async (tool, camera, path) => path.includes("Brand.ProdShortName")
+      ? { ok: false, body: "<html>401 Unauthorized</html>" } : vapix(tool, camera, path);
+    const parseParams = spyOn(h.deps, "parseParams");
+    const text = (await h.handlers.commission_plan!({ camera: "cam", spec: "metadata" })).content[0]!.text;
+    expect(text).toContain("device metadata fetch failed");
+    expect(parseParams).not.toHaveBeenCalled();
+  });
+
   test.each([
     ["commission_plan", false],
     ["commission_verify", false],

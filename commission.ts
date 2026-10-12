@@ -240,8 +240,8 @@ export function registerCommission(server: McpServer, d: CommissionDeps) {
   };
   const meta = async (tool: string, camera: string) => {
     const r = await d.vapix(tool, camera, "/axis-cgi/param.cgi?action=list&group=Brand.ProdShortName,Brand.ProdFullName,Brand.ProdNbr,Properties.Firmware.Version,Properties.System.SerialNumber");
-    const p = d.parseParams(r.body);
     if (!r.ok) throw new Error("device metadata fetch failed");
+    const p = d.parseParams(r.body);
     return { id: camera, model: p["Brand.ProdShortName"] ?? p["Brand.ProdFullName"] ?? (p["Brand.ProdNbr"] ? `AXIS ${p["Brand.ProdNbr"]}` : "unknown"), firmware: p["Properties.Firmware.Version"] ?? "unknown", serial: p["Properties.System.SerialNumber"] ?? "unknown" };
   };
   const prepare = async (tool: string, camera: string, ref: string) => {
