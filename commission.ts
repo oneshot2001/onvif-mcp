@@ -308,29 +308,33 @@ export function registerCommission(server: McpServer, d: CommissionDeps) {
     if (!prepared.spec.observe.seconds) warnings.push("observation skipped by observe.seconds=0");
     else if (!canObserve || !prepared.aoa.installed) warnings.push("observation skipped because scenarios were not deployed and verified");
     else {
-      window_seconds = prepared.spec.observe.seconds;
       const deployed = scenarios.filter((scenario): scenario is ScenarioResult & { id: number } => scenario.deployed && scenario.id !== null);
       const byTopic = new Map(deployed.map((scenario) => [`tnsaxis:CameraApplicationPlatform/ObjectAnalytics/Device1Scenario${scenario.id}`, scenario.name]));
       let sensed: Awaited<ReturnType<CommissionDeps["observeEvents"]>>;
       try { sensed = await d.observeEvents(tool, camera, [...byTopic.keys()], prepared.spec.observe.seconds); }
       catch (e) { sensed = { events: [], warnings: [`event observation failed: ${e instanceof Error ? e.message : String(e)}`] }; }
       warnings.push(...sensed.warnings);
-      for (const event of sensed.events) {
-        const name = byTopic.get(event.topic);
-        if (!name) continue;
-        const data = event.message?.data ?? {};
-        const active = data.active ?? data.state;
-        if (active !== undefined && ![true, 1, "1", "true"].includes(active as never)) continue;
-        const at = new Date().toISOString(); // host receive time — camera clocks drift (P3285 ran 17s ahead with no NTP)
-        const item = fired[name]!;
-        item.count++;
-        item.first ??= at;
-        item.last = at;
+      const failure = sensed.warnings.find((warning) => /^(event WebSocket |event observation failed:)/.test(warning));
+      if (failure) d.receipt("commission_apply", { camera, spec: prepared.spec.name, observation: true }, "allow", `observation FAILED: ${failure}`);
+      else {
+        window_seconds = prepared.spec.observe.seconds;
+        for (const event of sensed.events) {
+          const name = byTopic.get(event.topic);
+          if (!name) continue;
+          const data = event.message?.data ?? {};
+          const active = data.active ?? data.state;
+          if (active !== undefined && ![true, 1, "1", "true"].includes(active as never)) continue;
+          const at = new Date().toISOString(); // host receive time — camera clocks drift (P3285 ran 17s ahead with no NTP)
+          const item = fired[name]!;
+          item.count++;
+          item.first ??= at;
+          item.last = at;
+        }
+        for (const [name, item] of Object.entries(fired)) if (!item.count) warnings.push(`${name}: 0 events in window`);
       }
-      for (const [name, item] of Object.entries(fired)) if (!item.count) warnings.push(`${name}: 0 events in window`);
     }
     const observation = { window_seconds, started, finished: new Date().toISOString(), fired, warnings };
-    if (prepared.spec.observe.seconds && canObserve && prepared.aoa.installed) d.receipt("commission_apply", { camera, spec: prepared.spec.name, observation: true }, "allow", `observed ${prepared.spec.observe.seconds}s AOA event window`, d.sha256(observation), "independently_sensed");
+    if (window_seconds) d.receipt("commission_apply", { camera, spec: prepared.spec.name, observation: true }, "allow", `observed ${window_seconds}s AOA event window`, d.sha256(observation), "independently_sensed");
     return observation;
   };
   const writeHandoff = (handoff: Handoff) => {

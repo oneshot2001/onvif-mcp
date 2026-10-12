@@ -403,6 +403,33 @@ describe("commission specs", () => {
     expect(verifyHandoffs(h.root, h.publicKey)).toEqual({ count: 1, bad: [] });
   });
 
+  test.each([
+    ["event WebSocket connection rejected", false],
+    ["event WebSocket failed", false],
+    ["event WebSocket connection timed out", false],
+    ["event observation failed: connection lost", false],
+    ["event observation failed: connection lost", true],
+  ] as const)("failed observation records no measured window (%s, throws=%s)", async (warning, throws) => {
+    const h = harness();
+    writeFileSync(join(h.root, "specs", "aoa.yaml"), "spec: camspec/0.1\nname: aoa\nscenarios:\n  - name: lab-motion\n    type: motion\n    objects: [human]\n    area: [[-0.9,-0.9],[0.9,-0.9],[0.9,0.9],[-0.9,0.9]]\nobserve: { seconds: 30 }\n");
+    const events = spyOn(h.deps, "observeEvents").mockImplementation(async () => {
+      if (throws) throw new Error("connection lost");
+      return { events: [], warnings: [warning] };
+    });
+    const out = JSON.parse((await h.handlers.commission_apply!({ camera: "cam", spec: "aoa", approve: true })).content[0]!.text);
+    expect(out.passed).toBeTrue();
+    expect(events).toHaveBeenCalledTimes(1);
+    const handoff = JSON.parse(readFileSync(out.handoff, "utf8"));
+    for (const observation of [out.observation, handoff.observation]) {
+      expect(observation.window_seconds).toBe(0);
+      expect(observation.warnings.join("\n")).toContain(warning);
+      expect(observation.warnings.join("\n")).not.toContain("0 events in window");
+    }
+    expect(handoff.observation.warnings).toEqual([warning]);
+    expect(h.receipts.some((receipt) => receipt.evidence === "independently_sensed")).toBeFalse();
+    expect(verifyHandoffs(h.root, h.publicKey)).toEqual({ count: 1, bad: [] });
+  });
+
   test("an observed window with no events keeps the zero-event warning", async () => {
     const h = harness();
     writeFileSync(join(h.root, "specs", "aoa.yaml"), "spec: camspec/0.1\nname: aoa\nscenarios:\n  - name: lab-motion\n    type: motion\n    objects: [human]\n    area: [[-0.9,-0.9],[0.9,-0.9],[0.9,0.9],[-0.9,0.9]]\nobserve: { seconds: 1 }\n");
