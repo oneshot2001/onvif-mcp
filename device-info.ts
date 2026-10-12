@@ -1,6 +1,11 @@
 import { deviceText } from "./device-text";
 import { parseParams } from "./vapix-params";
 
+export function parseSnapshotUri(r: { ok: boolean; body: string }): string | null {
+  if (!r.ok) return null;
+  return r.body.match(/<tt:Uri>([^<]+)/)?.[1]?.replace(/&amp;/g, "&") ?? null;
+}
+
 export function formatDeviceInfo(protocol: "vapix" | "onvif", r: { ok: boolean; body: string }): string {
   if (!r.ok) return `device info unavailable (request failed) | protocol=${protocol}`;
   if (protocol === "onvif") {

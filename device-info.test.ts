@@ -1,5 +1,25 @@
 import { describe, expect, test } from "bun:test";
-import { formatDeviceInfo, parseDeviceMeta } from "./device-info";
+import { formatDeviceInfo, parseDeviceMeta, parseSnapshotUri } from "./device-info";
+
+describe("ONVIF snapshot URI", () => {
+  test("failed request ignores a URI echoed in SOAP Fault detail", () => {
+    const r = { ok: false, body: "<s:Fault><s:Detail><tt:Uri>http://x/jpg</tt:Uri></s:Detail></s:Fault>" };
+    expect(parseSnapshotUri(r)).toBeNull();
+  });
+
+  test("successful request decodes ampersands in the snapshot URI", () => {
+    const r = { ok: true, body: "<tt:Uri>http://cam/axis-cgi/jpg/image.cgi?a=1&amp;b=2</tt:Uri>" };
+    expect(parseSnapshotUri(r)).toBe("http://cam/axis-cgi/jpg/image.cgi?a=1&b=2");
+  });
+
+  test("successful request preserves a plain snapshot URI", () => {
+    expect(parseSnapshotUri({ ok: true, body: "<tt:Uri>http://x/jpg</tt:Uri>" })).toBe("http://x/jpg");
+  });
+
+  test.each(["", "<tt:Uri></tt:Uri>"])("successful request without a URI returns null: %s", (body) => {
+    expect(parseSnapshotUri({ ok: true, body })).toBeNull();
+  });
+});
 
 for (const protocol of ["vapix", "onvif"] as const) {
   describe(`${protocol} device info`, () => {
