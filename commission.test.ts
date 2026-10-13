@@ -225,7 +225,8 @@ describe("commission specs", () => {
     expect(result.observation.warnings[0]).toBe(deviceText(warning));
     const handoff = JSON.parse(readFileSync(result.handoff, "utf8"));
     expect(handoff.observation.warnings[0]).toBe(warning);
-    expect(h.receipts.find((receipt) => receipt.detail === "observed 1s AOA event window")!.resultHash).toBe(h.deps.sha256(handoff.observation));
+    expect(h.receipts).toContainEqual(expect.objectContaining({ detail: `observation FAILED: ${warning}`, evidence: undefined }));
+    expect(verifyHandoffs(h.root, h.publicKey)).toEqual({ count: 1, bad: [] });
   });
 
   test("approved apply shares the actuation budget and receipts rate denials; previews do not count", async () => {
@@ -438,6 +439,27 @@ describe("commission specs", () => {
       expect(observation.warnings.join("\n")).not.toContain("0 events in window");
     }
     expect(handoff.observation.warnings).toEqual([warning]);
+    expect(h.receipts.some((receipt) => receipt.evidence === "independently_sensed")).toBeFalse();
+    expect(verifyHandoffs(h.root, h.publicKey)).toEqual({ count: 1, bad: [] });
+  });
+
+  test("a refused event subscription records no measured window", async () => {
+    const h = harness();
+    writeFileSync(join(h.root, "specs", "aoa.yaml"), "spec: camspec/0.1\nname: aoa\nscenarios:\n  - name: lab-motion\n    type: motion\n    objects: [human]\n    area: [[-0.9,-0.9],[0.9,-0.9],[0.9,0.9],[-0.9,0.9]]\nobserve: { seconds: 30 }\n");
+    const warning = "event stream error: invalid topic filter";
+    const events = spyOn(h.deps, "observeEvents").mockResolvedValue({ events: [], warnings: [warning] });
+    const out = JSON.parse((await h.handlers.commission_apply!({ camera: "cam", spec: "aoa", approve: true })).content[0]!.text);
+    expect(out.passed).toBeTrue();
+    expect(events).toHaveBeenCalledTimes(1);
+    const handoff = JSON.parse(readFileSync(out.handoff, "utf8"));
+    for (const observation of [out.observation, handoff.observation]) {
+      expect(observation.window_seconds).toBe(0);
+      expect(observation.warnings.join("\n")).toContain(warning);
+      expect(observation.warnings.join("\n")).not.toContain("0 events in window");
+    }
+    expect(out.observation.warnings).toEqual([deviceText(warning)]);
+    expect(handoff.observation.warnings).toEqual([warning]);
+    expect(h.receipts).toContainEqual(expect.objectContaining({ tool: "commission_apply", detail: `observation FAILED: ${warning}`, evidence: undefined }));
     expect(h.receipts.some((receipt) => receipt.evidence === "independently_sensed")).toBeFalse();
     expect(verifyHandoffs(h.root, h.publicKey)).toEqual({ count: 1, bad: [] });
   });

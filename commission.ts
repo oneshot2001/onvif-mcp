@@ -314,7 +314,7 @@ export function registerCommission(server: McpServer, d: CommissionDeps) {
       try { sensed = await d.observeEvents(tool, camera, [...byTopic.keys()], prepared.spec.observe.seconds); }
       catch (e) { sensed = { events: [], warnings: [`event observation failed: ${e instanceof Error ? e.message : String(e)}`] }; }
       warnings.push(...sensed.warnings);
-      const failure = sensed.warnings.find((warning) => /^(event WebSocket |event observation failed:)/.test(warning));
+      const failure = sensed.warnings.find((warning) => /^(event WebSocket |event observation failed:|event stream error:)/.test(warning));
       if (failure) d.receipt("commission_apply", { camera, spec: prepared.spec.name, observation: true }, "allow", `observation FAILED: ${failure}`);
       else {
         window_seconds = prepared.spec.observe.seconds;
