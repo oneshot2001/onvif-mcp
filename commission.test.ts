@@ -417,12 +417,12 @@ describe("commission specs", () => {
   });
 
   test.each([
-    ["event WebSocket connection rejected", false],
-    ["event WebSocket failed", false],
-    ["event WebSocket connection timed out", false],
-    ["event observation failed: connection lost", false],
-    ["event observation failed: connection lost", true],
-  ] as const)("failed observation records no measured window (%s, throws=%s)", async (warning, throws) => {
+    { warning: "event WebSocket connection rejected", throws: false },
+    { warning: "event WebSocket failed", throws: false },
+    { warning: "event WebSocket connection timed out", throws: false },
+    { warning: "event observation failed: connection lost", throws: false },
+    { warning: "event observation failed: connection lost", throws: true },
+  ] as const)("failed observation records no measured window ($warning, throws=$throws)", async ({ warning, throws }) => {
     const h = harness();
     writeFileSync(join(h.root, "specs", "aoa.yaml"), "spec: camspec/0.1\nname: aoa\nscenarios:\n  - name: lab-motion\n    type: motion\n    objects: [human]\n    area: [[-0.9,-0.9],[0.9,-0.9],[0.9,0.9],[-0.9,0.9]]\nobserve: { seconds: 30 }\n");
     const events = spyOn(h.deps, "observeEvents").mockImplementation(async () => {
