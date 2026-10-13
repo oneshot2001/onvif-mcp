@@ -84,6 +84,104 @@ Honest scope boundary:
 - Per-bundle evidence dirs under `receipts/aar/`: `bundle.cbor`, pinned
   `trust-policy.json`, pre-emission `prior-state.json` snapshot, `meta.json`.
 
+## 2026-10-12 — v0.2.3 wire, durable attempt before send
+
+Part 2 uses the upstream two-phase `realClock` builder completed in aar
+`96fb57b`. Offline tests verify new snapshot, preset, refusal, fast-send and
+slow-send bundles as `conformant`, `evaluated_profile: AAR-3`, against each
+bundle's own prior-state snapshot. The worktree dependency is a symlink to
+Part 1; `package.json` and `bun.lock` are deliberately unchanged. Claude will
+repin after the upstream commit reaches aar main. This is offline validation,
+not a new live-camera conformance claim.
+
+Device metadata is read before emission, and its observation time is recorded
+when the read completes. `emit()` accepts a deferred `send(T0)` returning the
+actual dispatch and outcome-observation readings. It reserves `next_epoch`
+through a file fsync, atomic rename and directory fsync before reading the
+epoch-open time. Prior-state updates use the same atomic write pattern.
+Reservations are never rolled back: a crash or failed emission can leave a
+gap, but cannot reuse an epoch. All producer instances serialize emissions
+through one process-wide promise queue; failed calls do not poison the queue.
+The **single-writer process assumption** still covers `producer-state.json`,
+`prior-state.json`, `anchor.jsonl`, and now `journal.jsonl`.
+
+The journal is append-only JSONL. `attempt_envelope` holds the invocation ID,
+receipt ID, signed envelope digest and envelope CBOR hex. After that append
+and fsync return, a fresh clock reading becomes `envelope_synced_at` in an
+`attempt_committed` marker carrying the same envelope identifiers and bytes.
+The marker is also appended and fsynced before `send()` can run. Two records
+are necessary: a record cannot contain a reading taken after its own fsync.
+The marker's timestamp describes the **envelope record's completed fsync**;
+it does not claim to time its own fsync. No credentials, transport responses,
+or exception details are journaled.
+
+A journal append/fsync failure prevents the send and produces a signed
+`not_dispatched` attempt with `journal/unavailable` only if the refusal is
+decided within T0's second. A later refusal fails loudly without a bundle.
+If bundle storage also fails, tool output contains `aar-emit FAILED` and the
+existing JSONL chain gets an `aar_emit` failure receipt. Camera actions are
+blocked whenever wire emission fails before send; preset output then says
+`preset not dispatched`, without a false transport-error receipt.
+A returned transport failure records status 0
+and outcome `unknown`, including failed snapshots. A successful recall with
+failed readback retains its dispatch receipt and an unknown outcome. A thrown
+`send()` is ambiguous: no bundle, an attempted `dispatch_ambiguous` journal
+append, and `aar-emit FAILED: dispatch outcome ambiguous`. No automatic retry
+occurs. Failed completion journaling also fails emission without retrying.
+
+Startup examines the journal before credentials, signing-key setup or MCP
+connection. A torn, unparseable or invalid record produces
+`aar journal corrupt: … (path)` and a nonzero exit; nothing is repaired or
+truncated. An envelope/committed attempt lacking a completion produces a
+warning naming its invocation and startup continues. It is never redispatched.
+A `dispatch_ambiguous` record terminates recovery bookkeeping but does not
+assert a known device result. Recovery does not reconstruct missing bundles.
+After saving a journal refusal bundle, a best-effort `refusal_persisted` marker
+clears any pending attempt for that invocation. Appends check only that the
+journal is empty or ends with a newline; full validation occurs at startup.
+
+Event times come from clock readings, never arithmetic backdating: metadata
+observation; dispatch immediately before the device operation; outcome after
+capture/readback; T0 for pre-send receipts; T1 after send and completion
+journaling for post-send receipts; fresh post-send monotonic evidence and
+anchor observation. The epoch-open reading is taken before T0 and emission
+waits for the next clock second, because v0.2.3 requires epoch open strictly
+before close even for a same-second send or denial. This adds up to one second
+before T0; an early timer wake sleeps again for the remainder. T0 is a phase
+commitment reading, **not** an fsync-completion claim.
+The upstream builder freezes pre-send ancestors, credentials and the request
+at T0 and uses T1 for descendants, closure, selector, bundle creation and
+verification metadata. Backwards clocks or a span beyond the exported
+60-second bound fail loudly; timestamps are never clamped.
+
+Preset settlement keeps the eight-poll cap and stops before another 10-second
+curl timeout plus one-second sleep can reach the bound. Its deadline is
+based on T0, so metadata and queue time do not consume the budget. Scheduler
+or fsync stalls can still exceed the bound, in which case emission fails.
+Successful recall plus a successful last readback gives evidence level
+`device_acknowledged`; equal consecutive reads only stop polling early.
+The readback is from the same device channel, so outcome state stays `unknown`:
+it cannot establish the preset's independently known target position.
+
+**Validity bounds and placeholder residue remain disclosed.** Freshness
+`issued_at` is the builder phase time minus 60 seconds and `expires_at` is
+phase time plus 3600; trust-store `created_at` is T0 minus 3600. Credentials use
+`valid_from = T0 - 3600`, `valid_until = T0 + 86400`; delegation bounds are
+T0 minus 60 through T0 plus 3600. These demo validity bounds are not event or
+issuance observations. The existing legal block (`incident-response`, `US-CO`,
+`security-sensitive`, demo retention), delegation purposes, correlation peer
+binding, decision inputs/counters, and request/consumption framing remain
+demo residue. Same-operator trust and self-asserted evidence limits still apply.
+
+Every prior-state write uses the upstream seven-field CBOR key ordering and
+rejects duplicate entries. Historical entries are retained and re-sorted;
+bundle snapshots capture the sorted history before that bundle. A brand-new
+producer necessarily has an empty first snapshot; subsequent snapshots are
+nonempty. **Existing `receipts/aar/*/` bundles are never rewritten.** They stay
+on the August pre-release wire and continue to fail v0.2.3 verification.
+`--verify-aar [dir]` remains per-bundle and reports those failures, without
+skipping or relabeling old bundles; it now runs before camera/key setup.
+
 ## Sequencing constraint (flagged 2026-08-04)
 
 The AAR repo is PRIVATE until launch. onvif-mcp going public with AAR references

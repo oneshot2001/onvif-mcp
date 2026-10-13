@@ -124,10 +124,7 @@ v0.2 vocabulary: principals, enforcement points, node kinds (`observation`,
 `action_attempt`, `authorization`), and calibrated outcome-evidence levels
 (`device_acknowledged`, `independently_sensed`, `unknown`).
 
-**Honesty note:** wire conformance to AAR v0.2 (deterministic CBOR, detached
-COSE_Sign1 ES256) is **not claimed yet**. The current chain is a draft
-transport. The gap analysis and conformance plan live in
-[`docs/aar-alignment.md`](docs/aar-alignment.md).
+New snapshot/preset bundles target AAR v0.2.3 (dependency repin pending); the JSONL chain stays draft and old bundles stay on the August wire. See [alignment and offline validation](docs/aar-alignment.md).
 
 ## Transports
 

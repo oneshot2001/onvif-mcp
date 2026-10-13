@@ -1,3 +1,5 @@
+export const CURL_TIMEOUT_SECONDS = 10;
+
 export function validatePin(pin: unknown): void {
   if (pin === undefined) return;
   if (typeof pin !== "string" || !pin.startsWith("sha256//")) throw new Error("camera pin must start with sha256//");
@@ -12,7 +14,7 @@ export function curlRequest(
 ): { args: string[]; stdin: string } {
   const url = `${cam.base}${path}`;
   const credentials = `${cam.user}:${password}`.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
-  const args = ["curl", "-sk", "--digest", "--fail", "--config", "-", "--max-time", String(opts.maxTime ?? 10)];
+  const args = ["curl", "-sk", "--digest", "--fail", "--config", "-", "--max-time", String(opts.maxTime ?? CURL_TIMEOUT_SECONDS)];
   if (cam.pin !== undefined) {
     validatePin(cam.pin);
     if (!url.startsWith("https://")) throw new Error("camera pin requires an https:// URL");
