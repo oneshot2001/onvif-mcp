@@ -86,13 +86,11 @@ Honest scope boundary:
 
 ## 2026-10-12 — v0.2.3 wire, durable attempt before send
 
-Part 2 uses the upstream two-phase `realClock` builder completed in aar
-`96fb57b`. Offline tests verify new snapshot, preset, refusal, fast-send and
-slow-send bundles as `conformant`, `evaluated_profile: AAR-3`, against each
-bundle's own prior-state snapshot. The worktree dependency is a symlink to
-Part 1; `package.json` and `bun.lock` are deliberately unchanged. Claude will
-repin after the upstream commit reaches aar main. This is offline validation,
-not a new live-camera conformance claim.
+The producer pins `aar-kat-harness@github:oneshot2001/aar#96fb57b`: the v0.2.3
+wire plus the opt-in two-phase `realClock` builder (demo layer only; no spec,
+verifier or KAT change). Offline tests verify new snapshot, preset, refusal,
+fast-send and slow-send bundles as `conformant`, `evaluated_profile: AAR-3`,
+against each bundle's own prior-state snapshot.
 
 Device metadata is read before emission, and its observation time is recorded
 when the read completes. `emit()` accepts a deferred `send(T0)` returning the
