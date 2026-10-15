@@ -1,0 +1,21 @@
+{
+  "apiVersion": "1.5",
+  "method": "getNTPInfo",
+  "data": {
+    "client": {
+      "enabled": true,
+      "NTSEnabled": false,
+      "serversSource": "DHCP",
+      "maxSupportedStaticServers": 5,
+      "staticServers": [],
+      "advertisedServers": [],
+      "staticNTSKEServers": [],
+      "NTSKEServerCACerts": [],
+      "synced": false,
+      "timeToNextSync": 0,
+      "timeOffset": 0.0,
+      "minpoll": 6,
+      "maxpoll": 10
+    }
+  }
+}

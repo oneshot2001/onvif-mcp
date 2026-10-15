@@ -1,0 +1,6 @@
+pan=143.25
+tilt=-31.81
+zoom=100
+focus=8906
+brightness=5000
+autofocus=on

@@ -1,0 +1,11 @@
+{
+  "apiVersion": "1.0",
+  "method": "getDateTimeInfo",
+  "data": {
+    "dateTime": "2026-10-15T22:38:23Z",
+    "localDateTime": "2026-10-15T16:38:23-06:00",
+    "maxYearSupported": 2069,
+    "posixTimeZone": "MST7MDT6,M3.2.0/2:00:00,M11.1.0/2:00:00",
+    "dstEnabled": true
+  }
+}
