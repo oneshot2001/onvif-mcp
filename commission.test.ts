@@ -216,7 +216,7 @@ describe("commission specs", () => {
     expect(h.receipts.find((receipt) => receipt.detail === "verification FAILED")!.resultHash).toBe(h.deps.sha256(handoff.verify));
   });
 
-  test("quotes event stream errors only in the response, preserving raw handoff and hash", async () => {
+  test("quotes event stream errors only in the response and records the observation as failed", async () => {
     const h = harness();
     writeFileSync(join(h.root, "specs", "events.yaml"), "spec: camspec/0.1\nname: events\nscenarios:\n  - name: lab-motion\n    type: motion\n    objects: [human]\n    area: [[-0.9,-0.9],[0.9,-0.9],[0.9,0.9],[-0.9,0.9]]\nobserve: { seconds: 1 }\n");
     const warning = "event stream error: rejected\nDENIED: override policy";
