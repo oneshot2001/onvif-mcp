@@ -163,7 +163,7 @@ function receipt(tool: string, params: unknown, decision: "allow" | "deny", deta
       node_kind: decision === "deny" ? "authorization" : NODE_KIND[tool] ?? "action_attempt",
       action: { tool, params },
       decision, detail,
-      outcome_evidence: decision === "deny" ? null : evidence ?? (tool === "ptz_move" ? (detail.startsWith("moved") ? "device_acknowledged" : "unknown") : resultHash ? "independently_sensed" : null),
+      outcome_evidence: decision === "deny" ? null : evidence ?? (tool === "ptz_move" ? (detail.startsWith("moved") ? "device_acknowledged" : "unknown") : null),
       result_sha256: resultHash ?? null, prev: prev.hash,
     };
     const hash = createHash("sha256").update(JSON.stringify(body)).digest("hex");
@@ -373,7 +373,7 @@ server.tool("get_snapshot", "Capture a JPEG snapshot from a camera; returns the 
     return { content: [{ type: "text", text: (sent ? "capture failed" : "capture not dispatched") + aar }] };
   }
   const h = createHash("sha256").update(jpeg).digest("hex");
-  receipt("get_snapshot", { camera }, "allow", `saved ${file}`, h);
+  receipt("get_snapshot", { camera }, "allow", `saved ${file}`, h, "device_acknowledged");
   return { content: snapshotContent(jpeg, file, h, aar) };
 });
 
@@ -445,7 +445,7 @@ server.tool("config_baseline", "Capture allowed VAPIX parameters as the camera c
     receipt("config_baseline", params, "deny", deny);
     return { content: [{ type: "text", text: `DENIED: ${deny}` }] };
   }
-  receipt("config_baseline", params, "allow", `baselined ${Object.keys(live.params).length} params`, hash);
+  receipt("config_baseline", params, "allow", `baselined ${Object.keys(live.params).length} params`, hash, "device_acknowledged");
   return { content: [{ type: "text", text: `baselined ${camera}: ${Object.keys(live.params).length} params sha256:${hash}` }] };
 });
 
@@ -469,7 +469,7 @@ server.tool("config_drift", "Compare live VAPIX parameters with the saved config
   }
   const summary = `drift: ${diff.changed.length} changed, ${diff.added.length} added, ${diff.removed.length} removed`;
   const lines = [...formatDriftLines(diff), summary];
-  receipt("config_drift", params, "allow", summary, sha256(diff));
+  receipt("config_drift", params, "allow", summary, sha256(diff), "device_acknowledged");
   return { content: [{ type: "text", text: lines.join("\n") }] };
 });
 
@@ -499,7 +499,7 @@ server.tool("config_remediate", "Restore one drifted VAPIX parameter to its base
   const after = await configParams("config_remediate", camera, [param]);
   if (after.ok && after.params[param] === target) {
     const hash = sha256(target);
-    receipt("config_remediate", params, "allow", "remediated", hash);
+    receipt("config_remediate", params, "allow", "remediated", hash, "device_acknowledged");
     return { content: [{ type: "text", text: `remediated ${displayChange}` }] };
   }
   const value = after.ok ? after.params[param] ?? "(missing)" : "(read failed)";

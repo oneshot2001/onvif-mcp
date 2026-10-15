@@ -12,7 +12,7 @@ Receipt bodies use AAR v0.2 vocabulary:
 | `principal {role: "agent", type: "service", id}` | principal-role / principal-type |
 | `enforcement_point` | principal-role `enforcement_point` (this server) |
 | `node_kind` | `observation` (snapshot/list) · `action_attempt` (ptz) · `authorization` (denials) |
-| `outcome_evidence` | outcome-evidence-level: `device_acknowledged` (VAPIX/ONVIF 200 on move) · `independently_sensed` (content-hashed frame) · `unknown` |
+| `outcome_evidence` | outcome-evidence-level: `device_acknowledged` (VAPIX/ONVIF 200 on move, or the commanded device's own frame / params / events read back) · `unknown` · none for locally computed artifacts (plans, verify summaries, handoffs). `independently_sensed` is never emitted: it needs an observer outside the commanded device. JSONL receipts written before 2026-10-15 used `independently_sensed` for content-hashed read-backs; read those as `device_acknowledged`. |
 | `result_sha256` | digest binding of the produced artifact |
 | `prev`/`hash`/`sig` | draft transport chain (NOT the AAR wire) |
 

@@ -122,7 +122,7 @@ Every call — allowed or denied — appends a receipt. A denial looks like this
 Receipt semantics follow the [Agent Action Receipts (AAR)](https://github.com/oneshot2001/aar)
 v0.2 vocabulary: principals, enforcement points, node kinds (`observation`,
 `action_attempt`, `authorization`), and calibrated outcome-evidence levels
-(`device_acknowledged`, `independently_sensed`, `unknown`).
+(`device_acknowledged`, `unknown`). `independently_sensed` needs an observer outside the commanded device, so this server never emits it.
 
 New snapshot/preset bundles are AAR v0.2.3 wire (pinned aar `96fb57b`), with the attempt journaled before the camera send; the JSONL chain stays draft and bundles from before 2026-10-12 stay on the August pre-release wire. See [alignment and offline validation](docs/aar-alignment.md).
 

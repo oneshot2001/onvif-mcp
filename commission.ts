@@ -334,7 +334,7 @@ export function registerCommission(server: McpServer, d: CommissionDeps) {
       }
     }
     const observation = { window_seconds, started, finished: new Date().toISOString(), fired, warnings };
-    if (window_seconds) d.receipt("commission_apply", { camera, spec: prepared.spec.name, observation: true }, "allow", `observed ${window_seconds}s AOA event window`, d.sha256(observation), "independently_sensed");
+    if (window_seconds) d.receipt("commission_apply", { camera, spec: prepared.spec.name, observation: true }, "allow", `observed ${window_seconds}s AOA event window`, d.sha256(observation), "device_acknowledged");
     return observation;
   };
   const writeHandoff = (handoff: Handoff) => {

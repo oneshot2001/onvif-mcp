@@ -1,5 +1,7 @@
 # Build packet: config-drift executor (bet #6 first unit)
 
+> **Superseded 2026-10-15:** read-backs from the commanded device are receipted `device_acknowledged`, never `independently_sensed`; see `docs/aar-alignment.md`.
+
 Claude plans → Codex builds → Claude reviews + live-verifies. This packet is the plan.
 
 ## Goal

@@ -1,5 +1,7 @@
 # Build packet: commission Phase 2 — AOA scenarios + event observation
 
+> **Superseded 2026-10-15:** read-backs from the commanded device are receipted `device_acknowledged`, never `independently_sensed`; see `docs/aar-alignment.md`.
+
 Claude plans → Codex builds → Claude reviews + live-verifies (Q6358/Q6325 run AOA). PDF render is Claude's — do NOT build it.
 Phase 1 (`docs/commission-packet.md`) shipped `a224086`; keep its style and structure. Extend `commission.ts`; new module `aoa.ts` only if it removes duplication.
 

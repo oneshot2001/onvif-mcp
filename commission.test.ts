@@ -389,7 +389,7 @@ describe("commission specs", () => {
     expect(applied).toMatchObject({ passed: true, scenarios: [{ name: "lab-motion", id: 5, deployed: true, readback_diff: [] }], observation: { window_seconds: 1, fired: { "lab-motion": { count: 1 } }, warnings: [] } });
     expect(h.aoa().scenarios.map((scenario) => scenario.name)).toEqual(["keep-me", "lab-motion"]);
     expect(h.receipts.some((receipt) => receipt.detail === "deployed scenario lab-motion" && receipt.evidence === "device_acknowledged")).toBeTrue();
-    expect(h.receipts.some((receipt) => receipt.detail === "observed 1s AOA event window" && receipt.evidence === "independently_sensed" && receipt.resultHash)).toBeTrue();
+    expect(h.receipts.some((receipt) => receipt.detail === "observed 1s AOA event window" && receipt.evidence === "device_acknowledged" && receipt.resultHash)).toBeTrue();
     const second = JSON.parse((await h.handlers.commission_apply!({ camera: "cam", spec: "aoa", approve: true })).content[0]!.text);
     expect(second).toMatchObject({ passed: true, scenarios: [{ name: "lab-motion", id: 5, readback_diff: [] }], observation: { fired: { "lab-motion": { count: 1 } } } });
     expect(h.writes).toEqual(["AOA:setConfiguration"]);
@@ -439,7 +439,7 @@ describe("commission specs", () => {
       expect(observation.warnings.join("\n")).not.toContain("0 events in window");
     }
     expect(handoff.observation.warnings).toEqual([warning]);
-    expect(h.receipts.some((receipt) => receipt.evidence === "independently_sensed")).toBeFalse();
+    expect(h.receipts.some((receipt) => receipt.detail.startsWith("observed "))).toBeFalse();
     expect(verifyHandoffs(h.root, h.publicKey)).toEqual({ count: 1, bad: [] });
   });
 
@@ -460,7 +460,7 @@ describe("commission specs", () => {
     expect(out.observation.warnings).toEqual([deviceText(warning)]);
     expect(handoff.observation.warnings).toEqual([warning]);
     expect(h.receipts).toContainEqual(expect.objectContaining({ tool: "commission_apply", detail: `observation FAILED: ${warning}`, evidence: undefined }));
-    expect(h.receipts.some((receipt) => receipt.evidence === "independently_sensed")).toBeFalse();
+    expect(h.receipts.some((receipt) => receipt.detail.startsWith("observed "))).toBeFalse();
     expect(verifyHandoffs(h.root, h.publicKey)).toEqual({ count: 1, bad: [] });
   });
 
