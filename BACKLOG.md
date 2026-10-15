@@ -5,6 +5,7 @@ Branch `night/YYYY-MM-DD` off `main`. Never push. No live camera calls (192.168.
 
 ## Ready
 
+- [ ] Tests T2 (from 2026-10-15 night-run review of cb50429, P3; coverage gap, not a regression): cb50429 changed the receipt evidence default in `index.ts:166` (a `resultHash` no longer promotes to `independently_sensed`; the default is `null`) and made `get_snapshot` (:376), `config_baseline` (:448), `config_drift` (:472) and `config_remediate` (:502) pass `"device_acknowledged"` explicitly, but no test exercises any of it (probe 2026-10-15: clone at cb50429, `git show origin/main:index.ts > index.ts && bun test` → 477 pass / 0 fail, so reverting the whole `index.ts` half stays green). Move the `outcome_evidence` expression out of `receipt()` into a pure exported function in `receipt-chain.ts` (e.g. `outcomeEvidence(tool, decision, detail, evidence)`) called from `receipt()`, no behaviour change. Tests first: deny → `null`; `ptz_move` "moved via vapix" → `device_acknowledged`; `ptz_move` "transport error" → `unknown`; `get_snapshot` allow with a resultHash and no evidence → `null`, never `independently_sensed`; an explicit `"device_acknowledged"` passes through; no input returns `independently_sensed` — accept: `bun test` exits 0 with the new tests; with the new function changed back to the pre-cb50429 `resultHash ? "independently_sensed"` default, at least one new test fails; tests run offline (no camera, no listener, no `.keys/`, no writes under `receipts/`).
 
 
 
