@@ -1,3 +1,5 @@
+import { deviceText } from "./device-text";
+
 export type NtpInfo = {
   enabled: boolean;
   synced_since_restart: boolean;
@@ -6,6 +8,62 @@ export type NtpInfo = {
   static_servers: string[];
   advertised_servers: string[];
 };
+
+export type ClockResult = {
+  state: "ok";
+  camera_time: string;
+  host_before: string;
+  host_after: string;
+  offset_s: number;
+  uncertainty_s: number;
+  reference: "host system clock, sync not checked";
+  ntp: NtpInfo | null;
+} | {
+  state: "failed";
+  reason: "time read failed" | "time reply malformed" | "host clock stepped backwards";
+};
+
+export type ClockDeps = {
+  now: () => number;
+  vapixPost: (tool: string, camera: string, path: string, body: unknown) => Promise<{ ok: boolean; body: string }>;
+};
+
+export async function clockCheck(tool: string, camera: string, deps: ClockDeps): Promise<ClockResult> {
+  const before = deps.now();
+  let time: { ok: boolean; body: string };
+  try {
+    time = await deps.vapixPost(tool, camera, "/axis-cgi/time.cgi", { apiVersion: "1.0", method: "getDateTimeInfo" });
+  } catch {
+    return { state: "failed", reason: "time read failed" };
+  }
+  const after = deps.now();
+  if (!time.ok) return { state: "failed", reason: "time read failed" };
+  const cameraMs = parseDateTimeInfo(time.body);
+  if (cameraMs === null) return { state: "failed", reason: "time reply malformed" };
+  const offset = clockOffset(cameraMs, before, after);
+  if (offset === null) return { state: "failed", reason: "host clock stepped backwards" };
+  let ntp: NtpInfo | null = null;
+  try {
+    const r = await deps.vapixPost(tool, camera, "/axis-cgi/ntp.cgi", { apiVersion: "1.0", method: "getNTPInfo" });
+    if (r.ok) ntp = parseNtpInfo(r.body);
+  } catch { /* NTP availability does not change the observed offset. */ }
+  return {
+    state: "ok", camera_time: new Date(cameraMs).toISOString(),
+    host_before: new Date(before).toISOString(), host_after: new Date(after).toISOString(),
+    ...offset, reference: "host system clock, sync not checked", ntp,
+  };
+}
+
+export function formatClock(camera: string, r: ClockResult): string {
+  if (r.state === "failed") return `${camera} clock read FAILED: ${r.reason}`;
+  const sign = r.offset_s >= 0 ? "+" : "";
+  const observation = `${camera} clock: observed ${sign}${r.offset_s} s (±${r.uncertainty_s} s) against this host's system clock (host sync not checked; ± covers the request round trip and whole-second camera time only)`;
+  const list = (servers: string[]) => servers.length ? servers.map(s => deviceText(s)).join(",") : "none";
+  const ntp = r.ntp;
+  return observation + "\n" + (ntp
+    ? `NTP (device-reported): enabled=${ntp.enabled}, synced since restart=${ntp.synced_since_restart}, NTS=${ntp.nts_enabled}, source=${deviceText(ntp.servers_source)}, static=${list(ntp.static_servers)}, advertised=${list(ntp.advertised_servers)}`
+    : "NTP: unavailable");
+}
 
 function isObject(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);

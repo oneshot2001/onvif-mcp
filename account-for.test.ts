@@ -8,6 +8,7 @@ const cam = { ...admin, accounts: { viewer, operator } };
 const roles = [
   ["list_cameras", viewer],
   ["get_snapshot", viewer],
+  ["clock_check", viewer],
   ["config_baseline", viewer],
   ["config_drift", viewer],
   ["commission_plan", viewer],

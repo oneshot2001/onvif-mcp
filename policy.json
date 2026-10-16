@@ -3,6 +3,7 @@
     "claude-main": {
       "tools": [
         "list_cameras",
+        "clock_check",
         "get_snapshot",
         "ptz_move",
         "ptz_preset",

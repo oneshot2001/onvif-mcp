@@ -6,6 +6,7 @@ export function accountFor(tool: string, cam: CameraAccounts): Account {
   switch (tool) {
     case "list_cameras":
     case "get_snapshot":
+    case "clock_check":
     case "config_baseline":
     case "config_drift":
     case "commission_plan":

@@ -14,6 +14,12 @@ const registrations = sources.map(({ file, text }) => ({
 }));
 
 describe("tool registry drift", () => {
+  test("clock_check is registered and granted only to claude-main", () => {
+    expect(registrations[0]!.names).toContain("clock_check");
+    expect(policy.agents["claude-main"].tools).toContain("clock_check");
+    expect(policy.agents["untrusted-demo"].tools).not.toContain("clock_check");
+  });
+
   test("finds tool registrations in both source files", () => {
     expect(registrations.filter(({ names }) => names.length === 0).map(({ file }) => file)).toEqual([]);
   });

@@ -99,6 +99,7 @@ bun index.ts --verify
 |---|---|---|
 | `list_cameras` | Live device info for cameras this agent may see | agent known, tool granted |
 | `get_snapshot` | Capture a JPEG, return path + SHA-256 | + camera granted |
+| `clock_check` | Read the camera clock offset against this host (host sync not checked) and device-reported NTP status. Axis documents `getDateTimeInfo` as Viewer and `getNTPInfo` as Administrator, so under a viewer account NTP shows unavailable (no elevated retry). | + camera granted |
 | `ptz_move` | Relative pan/tilt/zoom in degrees | + camera granted, camera is PTZ, step within `maxStep` |
 | `ptz_preset` | Recall a named PTZ preset (VAPIX); emits an AAR wire bundle | + camera granted, camera is PTZ, ptz grant |
 | `commission_plan` | Diff parameters and named AOA scenarios; list applicable presets; no writes | + camera granted, config groups granted, all params allowed, AOA grant for scenario specs |

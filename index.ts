@@ -16,6 +16,7 @@ import { parseParams } from "./vapix-params";
 import { parseEventMessage } from "./event-parse";
 import { openEventWebSocket } from "./event-websocket";
 import { deviceText } from "./device-text";
+import { clockCheck, formatClock } from "./clock";
 import { formatDeviceInfo, parseDeviceMeta, parseSnapshotUri } from "./device-info";
 import { formatPresetRecall } from "./ptz-output";
 import { formatDriftLines, type ConfigDiff } from "./config-drift";
@@ -152,7 +153,7 @@ function lastReceipt(): { seq: number; hash: string } {
 // outcome-evidence levels). Wire conformance (deterministic CBOR + detached
 // COSE_Sign1 ES256) is NOT claimed — this JSONL+ed25519 chain is a draft
 // transport; the conformant producer is scoped in docs/aar-alignment.md.
-const NODE_KIND: Record<string, string> = { ptz_move: "action_attempt", ptz_preset: "action_attempt", get_snapshot: "observation", list_cameras: "observation", get_receipts: "observation", config_baseline: "observation", config_drift: "observation", config_remediate: "action_attempt", commission_plan: "observation", commission_apply: "action_attempt", commission_verify: "observation" };
+const NODE_KIND: Record<string, string> = { ptz_move: "action_attempt", ptz_preset: "action_attempt", get_snapshot: "observation", clock_check: "observation", list_cameras: "observation", get_receipts: "observation", config_baseline: "observation", config_drift: "observation", config_remediate: "action_attempt", commission_plan: "observation", commission_apply: "action_attempt", commission_verify: "observation" };
 function receipt(tool: string, params: unknown, decision: "allow" | "deny", detail: string, resultHash?: string, evidence?: string) {
   appendLocked(LOG, (prev) => {
     const body = {
@@ -346,6 +347,16 @@ server.tool("list_cameras", "List cameras this agent may access, with live devic
   for (const id of visible) out.push(`${id}: ${await deviceInfo("list_cameras", id)}`);
   receipt("list_cameras", {}, "allow", `returned ${visible.length} cameras`);
   return { content: [{ type: "text", text: out.join("\n") }] };
+});
+
+server.tool("clock_check", "Read the camera clock offset against this host (host sync not checked) and device-reported NTP status",
+  { camera: cameraId.describe("camera id from list_cameras") }, async ({ camera }) => {
+  const deny = allowed("clock_check", camera);
+  if (deny) { receipt("clock_check", { camera }, "deny", deny); return { content: [{ type: "text", text: `DENIED: ${deny}` }] }; }
+  const result = await clockCheck("clock_check", camera, { now: Date.now, vapixPost });
+  const text = formatClock(camera, result);
+  receipt("clock_check", { camera }, "allow", text.split("\n")[0]!, sha256(result), result.state === "ok" ? "device_acknowledged" : "unknown");
+  return { content: [{ type: "text", text }] };
 });
 
 server.tool("get_snapshot", "Capture a JPEG snapshot from a camera; returns the image plus saved file path and sha256",
