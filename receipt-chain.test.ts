@@ -1,5 +1,50 @@
 import { describe, expect, test } from "bun:test";
-import { emptyChainConflict, formatReceiptsText, lastReceiptFrom, selectReceipts } from "./receipt-chain";
+import { emptyChainConflict, formatReceiptsText, lastReceiptFrom, outcomeEvidence, selectReceipts } from "./receipt-chain";
+
+describe("receipt outcome evidence", () => {
+  const resultHash = "a".repeat(64);
+  const tools = ["ptz_move", "ptz_preset", "get_snapshot", "config_baseline", "config_drift", "config_remediate", "commission_plan", "commission_apply", "commission_verify", "list_cameras", "get_receipts", "aar_emit", "unrecognized"];
+
+  test("denial overrides inferred and explicit evidence", () => {
+    expect(outcomeEvidence("ptz_move", "deny", "moved via vapix", resultHash)).toBeNull();
+    expect(outcomeEvidence("get_snapshot", "deny", "denied", resultHash, "device_acknowledged")).toBeNull();
+  });
+
+  test("successful PTZ movement is device acknowledged", () => {
+    expect(outcomeEvidence("ptz_move", "allow", "moved via vapix")).toBe("device_acknowledged");
+  });
+
+  test("PTZ transport failure has unknown evidence", () => {
+    expect(outcomeEvidence("ptz_move", "allow", "transport error")).toBe("unknown");
+  });
+
+  test("a snapshot result hash alone supplies no outcome evidence", () => {
+    expect(outcomeEvidence("get_snapshot", "allow", "saved snapshot", resultHash)).toBeNull();
+  });
+
+  test.each(["get_snapshot", "config_baseline", "config_drift", "config_remediate"])("%s passes explicit device acknowledgement through", (tool) => {
+    expect(outcomeEvidence(tool, "allow", "completed", resultHash, "device_acknowledged")).toBe("device_acknowledged");
+  });
+
+  test("explicit evidence takes precedence over the PTZ detail", () => {
+    expect(outcomeEvidence("ptz_move", "allow", "moved via vapix", undefined, "unknown")).toBe("unknown");
+    expect(outcomeEvidence("ptz_move", "allow", "transport error", undefined, "device_acknowledged")).toBe("device_acknowledged");
+  });
+
+  test("no tool, decision, detail or hash infers independently sensed evidence", () => {
+    for (const tool of tools) {
+      for (const decision of ["allow", "deny"] as const) {
+        for (const detail of ["", "moved via vapix", "transport error", "saved snapshot"]) {
+          for (const hash of [undefined, "", resultHash]) {
+            for (const evidence of [undefined, "device_acknowledged", "unknown"]) {
+              expect(outcomeEvidence(tool, decision, detail, hash, evidence)).not.toBe("independently_sensed");
+            }
+          }
+        }
+      }
+    }
+  });
+});
 
 describe("get_receipts text", () => {
   test("escapes Unicode separators while preserving raw receipt details", () => {

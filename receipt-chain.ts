@@ -3,6 +3,11 @@ import { appendFileSync, closeSync, existsSync, fstatSync, linkSync, openSync, r
 
 export const STALE_LOCK_MS = 60_000;
 
+export function outcomeEvidence(tool: string, decision: "allow" | "deny", detail: string, resultHash?: string, evidence?: string): string | null {
+  // A result hash binds bytes; it does not establish independent sensing.
+  return decision === "deny" ? null : evidence ?? (tool === "ptz_move" ? (detail.startsWith("moved") ? "device_acknowledged" : "unknown") : null);
+}
+
 export function formatReceiptsText(lines: string[]): string {
   // Escape display text only; stored receipt bytes remain unchanged.
   return lines.join("\n").replace(/\u2028/g, "\\u2028").replace(/\u2029/g, "\\u2029") || "(empty chain)";

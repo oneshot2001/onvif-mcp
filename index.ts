@@ -19,7 +19,7 @@ import { deviceText } from "./device-text";
 import { formatDeviceInfo, parseDeviceMeta, parseSnapshotUri } from "./device-info";
 import { formatPresetRecall } from "./ptz-output";
 import { formatDriftLines, type ConfigDiff } from "./config-drift";
-import { appendLocked, emptyChainConflict, formatReceiptsText, lastReceiptFrom, missingHandoffHeads, selectReceipts, verifyChain } from "./receipt-chain";
+import { appendLocked, emptyChainConflict, formatReceiptsText, lastReceiptFrom, missingHandoffHeads, outcomeEvidence, selectReceipts, verifyChain } from "./receipt-chain";
 import { curlRequest } from "./curl-args";
 import { cameraPinProblem } from "./camera-pins";
 import { accountFor, type CameraAccounts } from "./account-for";
@@ -163,7 +163,7 @@ function receipt(tool: string, params: unknown, decision: "allow" | "deny", deta
       node_kind: decision === "deny" ? "authorization" : NODE_KIND[tool] ?? "action_attempt",
       action: { tool, params },
       decision, detail,
-      outcome_evidence: decision === "deny" ? null : evidence ?? (tool === "ptz_move" ? (detail.startsWith("moved") ? "device_acknowledged" : "unknown") : null),
+      outcome_evidence: outcomeEvidence(tool, decision, detail, resultHash, evidence),
       result_sha256: resultHash ?? null, prev: prev.hash,
     };
     const hash = createHash("sha256").update(JSON.stringify(body)).digest("hex");
