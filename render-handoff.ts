@@ -11,6 +11,20 @@ const rows = (items: any[], cols: string[]) => items.length
   : `<p class="muted">none</p>`;
 const status = h.verify.passed ? "PASS" : "FAIL";
 const fired = h.observation ? Object.entries(h.observation.fired ?? {}).map(([name, v]: any) => ({ name, ...v })) : [];
+const clockSection = () => {
+  const clock = h.clock;
+  if (!clock) return "";
+  const heading = "<h2>Camera clock (observed at handoff time)</h2>";
+  if (clock.state === "failed") return `${heading}<p>Clock read failed: ${esc(clock.reason)}</p>`;
+  const tenths = Math.round(Math.abs(clock.offset_s) * 10);
+  const minutes = Math.floor(tenths / 600);
+  const offset = `${minutes ? `${minutes} min ` : ""}${((tenths % 600) / 10).toFixed(1)} s ${clock.offset_s < 0 ? "slow" : "fast"} (±${(Math.ceil(clock.uncertainty_s * 10) / 10).toFixed(1)} s)`;
+  const ntp = clock.ntp;
+  const ntpText = ntp
+    ? `NTP (device-reported): enabled ${ntp.enabled}, synced since restart ${ntp.synced_since_restart}, NTS ${ntp.nts_enabled}, source ${ntp.servers_source}, static ${ntp.static_servers.join(", ") || "none"}, advertised ${ntp.advertised_servers.join(", ") || "none"}`
+    : "NTP: unavailable";
+  return `${heading}<p>${esc(offset)}</p><p>Measured against the commissioning host's system clock; the host's own sync was not checked.</p><p>${esc(ntpText)}</p>`;
+};
 
 const html = `<!doctype html><meta charset="utf-8"><title>Handoff ${esc(h.camera.id)}</title>
 <style>
@@ -22,8 +36,10 @@ code,.mono{font-family:"JetBrains Mono",Menlo,monospace;font-size:8.5pt;word-bre
 .grid{display:grid;grid-template-columns:1fr 1fr;gap:4px 24px}.sig{margin-top:40px;display:grid;grid-template-columns:1fr 1fr;gap:40px}.sig div{border-top:1px solid #111;padding-top:6px;font-size:9pt}
 </style>
 <h1>Camera commissioning handoff <span class="badge">${status}</span></h1>
+<p class="muted">PASS/FAIL covers camspec conformance only. Clock and scene observations are not part of it and do not establish time accuracy or physical location.</p>
 <div class="muted">${esc(h.artifact)} · spec <b>${esc(h.spec.name)}</b> · run ${esc(h.run.started)} → ${esc(h.run.finished)}</div>
 <h2>Device</h2><div class="grid"><div>Camera: <b>${esc(h.camera.id)}</b> — ${esc(h.camera.model)}</div><div>Firmware: ${esc(h.camera.firmware)}</div><div>Serial: ${esc(h.camera.serial)}</div><div>Agent: ${esc(h.agent)}</div></div>
+${clockSection()}
 <h2>Plan (live → desired)</h2>${rows(h.plan, ["param", "current", "desired"])}
 <h2>Applied</h2>${rows(h.applied.map((a: any) => a.param ? a : a.preset ? { param: `preset:${a.preset}`, previous: "", desired: `pan ${a.pan} tilt ${a.tilt} zoom ${a.zoom}` } : { param: `scenario:${a.scenario}`, previous: "", desired: `${a.type} (id ${a.id})` }), ["param", "previous", "desired"])}
 <h2>Verification — ${status}</h2>${rows(h.verify.failed, ["param", "desired", "observed"])}

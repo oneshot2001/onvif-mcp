@@ -6,6 +6,13 @@ import { join } from "node:path";
 import { readCommissionSpec, registerCommission, verifyHandoffs, type CommissionDeps } from "./commission";
 import { makeLimiter } from "./rate-limit";
 import { deviceText } from "./device-text";
+import type { ClockResult } from "./clock";
+
+const fakeClock: Extract<ClockResult, { state: "ok" }> = {
+  state: "ok", camera_time: "2026-10-17T00:09:40.000Z",
+  host_before: "2026-10-17T00:00:00.000Z", host_after: "2026-10-17T00:00:00.362Z",
+  offset_s: 580.512, uncertainty_s: 1.181, reference: "host system clock, sync not checked", ntp: null,
+};
 
 const roots: string[] = [];
 afterEach(() => {
@@ -43,6 +50,7 @@ function harness(options: { ptz?: boolean; aoa?: boolean; aoaInstalled?: boolean
     sha256: (value) => createHash("sha256").update(typeof value === "string" ? value : JSON.stringify(value)).digest("hex"),
     lastReceipt: () => ({ seq, hash: seq ? `hash-${seq}` : "genesis" }),
     checkActuation: options.checkActuation ?? (() => null),
+    clockCheck: async () => structuredClone(fakeClock),
     receipt: (tool, _params, decision, detail, resultHash, evidence) => { seq++; receipts.push({ tool, decision, detail, resultHash, evidence }); },
     configParams: async (_tool, _camera, groups) => ({ ok: true, params: Object.fromEntries(Object.entries(state).filter(([param]) => groups.some((group) => param === group || param.startsWith(`${group}.`)))) }),
     vapix: async (_tool, _camera, path) => {
@@ -130,13 +138,29 @@ describe("commission specs", () => {
     writeFileSync(join(h.root, "specs", "accounts.yaml"), "spec: camspec/0.1\nname: accounts\nparams:\n  Image.I0.Appearance.Rotation: '180'\npresets:\n  Home: { pan: 0, tilt: 0, zoom: 1 }\nscenarios:\n  - name: lab-motion\n    type: motion\n    objects: [human]\n    area: [[-0.9,-0.9],[0.9,-0.9],[0.9,0.9],[-0.9,0.9]]\nobserve: { seconds: 1 }\n");
     const spies = [spyOn(h.deps, "vapix"), spyOn(h.deps, "vapixPost"), spyOn(h.deps, "configParams")];
     const events = spyOn(h.deps, "observeEvents");
+    const clock = spyOn(h.deps, "clockCheck").mockImplementation(async () => {
+      expect(h.receipts.at(-1)!.detail).toBe(tool === "commission_verify" || rollback ? "verification FAILED" : "verification passed");
+      expect(h.state["Image.I0.Appearance.Rotation"]).toBe(approve && !rollback ? "180" : "0");
+      expect(events.mock.calls.length).toBe(approve && !rollback ? 1 : 0);
+      if (rollback) expect(h.receipts.some((r) => r.detail === "restored prior AOA configuration")).toBeTrue();
+      return structuredClone(fakeClock);
+    });
     if (rollback) process.env.COMMISSION_FAIL_PARAM = "Image.I0.Appearance.Rotation";
     const result = JSON.parse((await h.handlers[tool]!({ camera: "cam", spec: "accounts", approve })).content[0]!.text);
     for (const spy of spies) expect(spy.mock.calls.length).toBeGreaterThan(0);
-    for (const spy of [...spies, events]) {
+    for (const spy of [...spies, events, clock]) {
       for (const args of spy.mock.calls) expect(args.slice(0, 2)).toEqual([tool, "cam"]);
     }
     expect(events.mock.calls.length).toBe(approve && !rollback ? 1 : 0);
+    expect(clock.mock.calls.length).toBe(tool === "commission_verify" || approve ? 1 : 0);
+    if (tool === "commission_verify" || approve) {
+      expect(typeof result.handoff).toBe("string");
+      expect(result.handoff).toEndWith(".json");
+      const handoff = JSON.parse(readFileSync(result.handoff, "utf8"));
+      expect(handoff.clock).toEqual(fakeClock);
+      expect(handoff.artifact).toBe("camspec-handoff/0.1");
+      expect(verifyHandoffs(h.root, h.publicKey)).toEqual({ count: 1, bad: [] });
+    }
     if (approve) {
       expect(result.passed).toBe(!rollback);
       expect(result.rolled_back).toBe(rollback);
@@ -328,6 +352,61 @@ describe("commission specs", () => {
     expect(verifyHandoffs(h.root, h.publicKey)).toEqual({ count: 1, bad: [] });
   });
 
+  test.each(["commission_apply", "commission_verify"] as const)("%s awaits the clock before finishing and captures its receipts", async (tool) => {
+    const h = harness();
+    writeFileSync(join(h.root, "specs", "clock.yaml"), "spec: camspec/0.1\nname: clock\n");
+    let observed: ClockResult | undefined;
+    const clock = spyOn(h.deps, "clockCheck").mockImplementation(async () => {
+      expect(h.receipts.at(-1)!.detail).toBe("verification passed");
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      observed = { ...fakeClock, host_after: new Date().toISOString() };
+      h.deps.receipt(tool, { camera: "cam" }, "allow", "clock read");
+      return observed;
+    });
+    const out = JSON.parse((await h.handlers[tool]!({ camera: "cam", spec: "clock", approve: true })).content[0]!.text);
+    expect(clock.mock.calls).toEqual([[tool, "cam"]]);
+    expect(typeof out.handoff).toBe("string");
+    expect(out.handoff).toEndWith(".json");
+    const handoff = JSON.parse(readFileSync(out.handoff, "utf8"));
+    expect(handoff.clock).toEqual(observed);
+    expect(handoff.clock.state).toBe("ok");
+    expect(Date.parse(handoff.run.finished)).toBeGreaterThanOrEqual(Date.parse(handoff.clock.host_after));
+    expect(handoff.receipts.last_seq).toBe(h.receipts.length - 1);
+    expect(handoff.receipts.chain_head_hash).toBe(`hash-${h.receipts.length - 1}`);
+    expect(verifyHandoffs(h.root, h.publicKey)).toEqual({ count: 1, bad: [] });
+  });
+
+  for (const tool of ["commission_apply", "commission_verify"] as const) {
+    test.each([true, false])(`${tool} preserves conformance when the clock rejects (passed=%s)`, async (passed) => {
+      const h = harness();
+      writeFileSync(join(h.root, "specs", "clock.yaml"), "spec: camspec/0.1\nname: clock\nparams:\n  Image.I0.Appearance.Rotation: '180'\n");
+      if (tool === "commission_apply" && !passed) process.env.COMMISSION_FAIL_PARAM = "Image.I0.Appearance.Rotation";
+      if (tool === "commission_verify" && passed) h.state["Image.I0.Appearance.Rotation"] = "180";
+      spyOn(h.deps, "clockCheck").mockRejectedValue(new Error("private device detail"));
+      const out = JSON.parse((await h.handlers[tool]!({ camera: "cam", spec: "clock", approve: true })).content[0]!.text);
+      expect(typeof out.handoff).toBe("string");
+      expect(out.handoff).toEndWith(".json");
+      const handoff = JSON.parse(readFileSync(out.handoff, "utf8"));
+      expect(handoff.clock).toEqual({ state: "failed", reason: "clock check threw" });
+      expect(out.passed).toBe(passed);
+      expect(handoff.verify).toEqual({ passed, failed: out.failed });
+      expect(verifyHandoffs(h.root, h.publicKey)).toEqual({ count: 1, bad: [] });
+    });
+
+    test.each(["sign", "write"])(`${tool} surfaces handoff %s errors after awaiting the clock`, async (failure) => {
+      const h = harness();
+      writeFileSync(join(h.root, "specs", "clock.yaml"), "spec: camspec/0.1\nname: clock\n");
+      if (failure === "sign") h.deps.privateKey = "invalid key";
+      else writeFileSync(join(h.root, "handoff"), "blocks directory creation");
+      const clock = spyOn(h.deps, "clockCheck");
+      const out = await h.handlers[tool]!({ camera: "cam", spec: "clock", approve: true });
+      expect(clock.mock.calls).toEqual([[tool, "cam"]]);
+      expect(out).toMatchObject({ isError: true });
+      expect(h.receipts.at(-1)!.detail).toStartWith("FAILED: ");
+      expect(h.receipts.some((r) => r.detail.startsWith("handoff "))).toBeFalse();
+    });
+  }
+
   test("verify records signed notes immediately after observation", async () => {
     const h = harness();
     writeFileSync(join(h.root, "specs", "verify.yaml"), "spec: camspec/0.1\nname: verify\n");
@@ -336,7 +415,7 @@ describe("commission specs", () => {
     const out = JSON.parse(result.content[0]!.text);
     const handoff = JSON.parse(readFileSync(out.handoff, "utf8"));
     expect(handoff.notes).toBe(notes);
-    expect(Object.keys(handoff)).toEqual(["artifact", "spec", "camera", "agent", "policy_sha256", "run", "plan", "applied", "verify", "rollback", "scenarios", "observation", "notes", "receipts", "sig"]);
+    expect(Object.keys(handoff)).toEqual(["artifact", "spec", "camera", "agent", "policy_sha256", "run", "plan", "applied", "verify", "rollback", "scenarios", "observation", "notes", "clock", "receipts", "sig"]);
     expect(verifyHandoffs(h.root, h.publicKey)).toEqual({ count: 1, bad: [] });
   });
 
@@ -349,7 +428,7 @@ describe("commission specs", () => {
     expect(verifyHandoffs(h.root, h.publicKey)).toEqual({ count: 1, bad: [] });
   });
 
-  test("verifies a legacy handoff signed without the notes key", () => {
+  test("verifies a legacy handoff signed without the notes or clock keys", () => {
     const h = harness();
     const handoff = {
       artifact: "camspec-handoff/0.1", spec: { name: "legacy", sha256: "spec-hash" },

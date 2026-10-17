@@ -2,6 +2,7 @@ import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import { cameraId, specRef } from "./schemas";
 import { deviceText } from "./device-text";
+import type { ClockResult } from "./clock";
 import { sign as edSign, verify as edVerify } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, readdirSync, realpathSync, writeFileSync } from "node:fs";
 import { basename, join, resolve, sep } from "node:path";
@@ -36,6 +37,7 @@ type Handoff = {
   scenarios: ScenarioResult[];
   observation: Observation | null;
   notes: string | null;
+  clock: ClockResult | { state: "failed"; reason: "clock check threw" };
   receipts: { first_seq: number; last_seq: number; chain_head_hash: string };
 };
 
@@ -56,6 +58,7 @@ export type CommissionDeps = {
   receipt: (tool: string, params: unknown, decision: "allow" | "deny", detail: string, resultHash?: string, evidence?: string) => void;
   lastReceipt: () => ReceiptHead;
   checkActuation: () => string | null;
+  clockCheck: (tool: string, camera: string) => Promise<ClockResult>;
 };
 
 const TOP_KEYS = ["spec", "name", "applies_to", "params", "presets", "scenarios", "observe"];
@@ -347,14 +350,17 @@ export function registerCommission(server: McpServer, d: CommissionDeps) {
     writeFileSync(file, bytes);
     return { file, hash: d.sha256(bytes) };
   };
-  const finish = (tool: "commission_apply" | "commission_verify", params: unknown, started: string, firstSeq: number, prepared: Awaited<ReturnType<typeof prepare>>, applied: Applied[], verify: { passed: boolean; failed: Failure[] }, rollback: Handoff["rollback"], scenarios: ScenarioResult[], observation: Observation | null, notes?: string) => {
+  const finish = async (tool: "commission_apply" | "commission_verify", params: unknown, started: string, firstSeq: number, prepared: Awaited<ReturnType<typeof prepare>>, applied: Applied[], verify: { passed: boolean; failed: Failure[] }, rollback: Handoff["rollback"], scenarios: ScenarioResult[], observation: Observation | null, notes?: string) => {
     d.receipt(tool, params, "allow", verify.passed ? "verification passed" : "verification FAILED", d.sha256(verify));
-    const head = d.lastReceipt();
+    let clock: Handoff["clock"];
+    try { clock = await d.clockCheck(tool, prepared.cameraMeta.id); }
+    catch { clock = { state: "failed", reason: "clock check threw" }; }
     const finished = new Date().toISOString();
+    const head = d.lastReceipt();
     const handoff: Handoff = {
       artifact: "camspec-handoff/0.1", spec: { name: prepared.spec.name, sha256: prepared.sha256 }, camera: prepared.cameraMeta,
       agent: d.agent, policy_sha256: d.sha256(Buffer.from(d.policyBytes).toString()), run: { started, finished }, plan: prepared.plan, applied, verify, rollback, scenarios, observation,
-      notes: notes ?? null,
+      notes: notes ?? null, clock,
       receipts: { first_seq: firstSeq, last_seq: head.seq, chain_head_hash: head.hash },
     };
     const artifact = writeHandoff(handoff);
@@ -465,7 +471,7 @@ export function registerCommission(server: McpServer, d: CommissionDeps) {
         }
         rollback = { performed: true, verified: rollbackWrites && (await checkParams("commission_apply", camera, rollbackSpec)).length === 0 };
       }
-      const file = finish("commission_apply", params, started, firstSeq, p, applied, checked.verify, rollback, checked.scenarios, observation, notes);
+      const file = await finish("commission_apply", params, started, firstSeq, p, applied, checked.verify, rollback, checked.scenarios, observation, notes);
       const out = { ...verifyOutput(checked.verify), rolled_back: rollback?.performed ?? false, rollback_verified: rollback?.verified ?? null, scenarios: scenarioOutput(checked.scenarios), observation: observationOutput(observation), handoff: file };
       return { content: [{ type: "text", text: jsonOutput(out) }] };
     } catch (e) { return error("commission_apply", params, e); }
@@ -481,7 +487,7 @@ export function registerCommission(server: McpServer, d: CommissionDeps) {
     try {
       const p = await prepare("commission_verify", camera, ref);
       const checked = await check("commission_verify", camera, p);
-      const file = finish("commission_verify", params, started, firstSeq, p, [], checked.verify, null, checked.scenarios, null, notes);
+      const file = await finish("commission_verify", params, started, firstSeq, p, [], checked.verify, null, checked.scenarios, null, notes);
       return { content: [{ type: "text", text: jsonOutput({ ...verifyOutput(checked.verify), scenarios: scenarioOutput(checked.scenarios), observation: null, handoff: file }) }] };
     } catch (e) { return error("commission_verify", params, e); }
   });
