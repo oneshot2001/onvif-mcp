@@ -3,7 +3,7 @@ import { z } from "zod";
 import { cameraId, specRef } from "./schemas";
 import { deviceText } from "./device-text";
 import type { ClockResult } from "./clock";
-import { createHash, randomUUID, sign as edSign, verify as edVerify } from "node:crypto";
+import { createHash, createPublicKey, randomUUID, sign as edSign, verify as edVerify } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, readdirSync, realpathSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { basename, join, resolve, sep } from "node:path";
 
@@ -31,6 +31,14 @@ type Scene = {
   ptz_position: (PtzPosition & { read_before: string; read_after: string }) | { state: "failed"; reason: "position read failed" | "position reply malformed" } | null;
   location: { text: string; source: "installer-entered, not verified" } | null;
 };
+type SceneChanges = {
+  previous_handoff: { file: string; sha256: string };
+  previous_reference_frame: { file: string; sha256: string } | null;
+  ptz_coordinate_difference: PtzPosition | null;
+  entered_location_text_changed: boolean | null;
+  observed_offset_difference_s: number | null;
+  observed_offset_difference_allowance_s: number | null;
+};
 type Handoff = {
   artifact: "camspec-handoff/0.1";
   spec: { name: string; sha256: string };
@@ -46,6 +54,7 @@ type Handoff = {
   observation: Observation | null;
   notes: string | null;
   scene: Scene;
+  scene_changes?: SceneChanges | null;
   clock: ClockResult | { state: "failed"; reason: "clock check threw" };
   receipts: { first_seq: number; last_seq: number; chain_head_hash: string };
 };
@@ -366,6 +375,52 @@ export function registerCommission(server: McpServer, d: CommissionDeps) {
     if (window_seconds) d.receipt("commission_apply", { camera, spec: prepared.spec.name, observation: true }, "allow", `observed ${window_seconds}s AOA event window`, d.sha256(observation), "device_acknowledged");
     return observation;
   };
+  const sceneChanges = (camera: Handoff["camera"], firstSeq: number, scene: Scene, clock: Handoff["clock"]): SceneChanges | null => {
+    const dir = join(d.root, "handoff");
+    const publicKey = createPublicKey(d.privateKey);
+    let previous: { body: Partial<Handoff>; file: string; sha256: string; seq: number } | null = null;
+    let tied = false;
+    for (const file of existsSync(dir) ? readdirSync(dir).filter((file) => file.endsWith(".json")) : []) {
+      try {
+        const bytes = readFileSync(join(dir, file));
+        const { sig, ...body } = JSON.parse(bytes.toString());
+        const hash = createHash("sha256").update(JSON.stringify(body)).digest("hex");
+        if (typeof sig !== "string" || !edVerify(null, Buffer.from(hash), publicKey, Buffer.from(sig, "base64"))) continue;
+        const seq = body.receipts?.last_seq;
+        if (body.artifact !== "camspec-handoff/0.1" || body.camera?.id !== camera.id
+          || typeof body.camera?.serial !== "string" || !body.camera.serial || body.camera.serial === "unknown" || body.camera.serial !== camera.serial
+          || !Number.isSafeInteger(seq) || seq >= firstSeq) continue;
+        if (!previous || seq > previous.seq) {
+          previous = { body, file, sha256: createHash("sha256").update(bytes).digest("hex"), seq };
+          tied = false;
+        } else if (seq === previous.seq) tied = true;
+      } catch { /* Unreadable, malformed, or invalidly signed discovery hints are ineligible. */ }
+    }
+    if (!previous || tied) return null;
+    const oldScene = previous.body.scene;
+    const frame = oldScene?.reference_frame;
+    const oldPtz = oldScene?.ptz_position;
+    const ptz = scene.ptz_position;
+    const hasPosition = (p: Scene["ptz_position"] | undefined): p is PtzPosition & { read_before: string; read_after: string } =>
+      !!p && typeof p === "object" && !("state" in p) && [p.pan, p.tilt, p.zoom].every((v) => typeof v === "number" && Number.isFinite(v));
+    const oldClock = previous.body.clock;
+    const round = (value: number, places: number) => Number(value.toFixed(places));
+    return {
+      previous_handoff: { file: previous.file, sha256: previous.sha256 },
+      previous_reference_frame: frame && typeof frame === "object" && !("state" in frame) && typeof frame.file === "string" && typeof frame.sha256 === "string"
+        ? { file: frame.file, sha256: frame.sha256 } : null,
+      ptz_coordinate_difference: hasPosition(ptz) && hasPosition(oldPtz)
+        ? { pan: round(ptz.pan - oldPtz.pan, 2), tilt: round(ptz.tilt - oldPtz.tilt, 2), zoom: round(ptz.zoom - oldPtz.zoom, 2) } : null,
+      entered_location_text_changed: typeof scene.location?.text === "string" && scene.location.text.length > 0
+        && typeof oldScene?.location?.text === "string" && oldScene.location.text.length > 0
+        ? scene.location.text !== oldScene.location.text : null,
+      observed_offset_difference_s: clock.state === "ok" && oldClock?.state === "ok" && Number.isFinite(clock.offset_s) && Number.isFinite(oldClock.offset_s)
+        ? round(clock.offset_s - oldClock.offset_s, 3) : null,
+      observed_offset_difference_allowance_s: clock.state === "ok" && oldClock?.state === "ok" && Number.isFinite(clock.uncertainty_s) && Number.isFinite(oldClock.uncertainty_s)
+        // Same binary rounding safeguard as clockOffset; not a comparison tolerance.
+        ? Math.ceil((clock.uncertainty_s + oldClock.uncertainty_s) * 1000 - 1e-9) / 1000 : null,
+    };
+  };
   const writeHandoff = (handoff: Handoff) => {
     const hash = d.sha256(handoff);
     const signed = { ...handoff, sig: edSign(null, Buffer.from(hash), d.privateKey).toString("base64") };
@@ -431,10 +486,11 @@ export function registerCommission(server: McpServer, d: CommissionDeps) {
       agent: d.agent, policy_sha256: d.sha256(Buffer.from(d.policyBytes).toString()), run: { started, finished }, plan: prepared.plan, applied, verify, rollback, scenarios, observation,
       notes: notes ?? null, clock, scene,
       receipts: { first_seq: firstSeq, last_seq: head.seq, chain_head_hash: head.hash },
+      ...(tool === "commission_verify" ? { scene_changes: sceneChanges(prepared.cameraMeta, firstSeq, scene, clock) } : {}),
     };
     const artifact = writeHandoff(handoff);
     d.receipt(tool, params, "allow", `handoff ${basename(artifact.file)}`, artifact.hash);
-    return artifact.file;
+    return { file: artifact.file, scene_changes: handoff.scene_changes };
   };
   const error = (tool: string, params: unknown, value: unknown) => {
     const message = value instanceof Error ? value.message : String(value);
@@ -540,7 +596,7 @@ export function registerCommission(server: McpServer, d: CommissionDeps) {
         }
         rollback = { performed: true, verified: rollbackWrites && (await checkParams("commission_apply", camera, rollbackSpec)).length === 0 };
       }
-      const file = await finish("commission_apply", params, started, firstSeq, p, applied, checked.verify, rollback, checked.scenarios, observation, notes, location);
+      const { file } = await finish("commission_apply", params, started, firstSeq, p, applied, checked.verify, rollback, checked.scenarios, observation, notes, location);
       const out = { ...verifyOutput(checked.verify), rolled_back: rollback?.performed ?? false, rollback_verified: rollback?.verified ?? null, scenarios: scenarioOutput(checked.scenarios), observation: observationOutput(observation), handoff: file };
       return { content: [{ type: "text", text: jsonOutput(out) }] };
     } catch (e) { return error("commission_apply", params, e); }
@@ -556,8 +612,8 @@ export function registerCommission(server: McpServer, d: CommissionDeps) {
     try {
       const p = await prepare("commission_verify", camera, ref);
       const checked = await check("commission_verify", camera, p);
-      const file = await finish("commission_verify", params, started, firstSeq, p, [], checked.verify, null, checked.scenarios, null, notes, location);
-      return { content: [{ type: "text", text: jsonOutput({ ...verifyOutput(checked.verify), scenarios: scenarioOutput(checked.scenarios), observation: null, handoff: file }) }] };
+      const { file, scene_changes } = await finish("commission_verify", params, started, firstSeq, p, [], checked.verify, null, checked.scenarios, null, notes, location);
+      return { content: [{ type: "text", text: jsonOutput({ ...verifyOutput(checked.verify), scenarios: scenarioOutput(checked.scenarios), observation: null, handoff: file, scene_changes }) }] };
     } catch (e) { return error("commission_verify", params, e); }
   });
 }

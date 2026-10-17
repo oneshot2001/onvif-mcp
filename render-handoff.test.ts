@@ -157,3 +157,58 @@ test.each(["snapshot rate limited", "snapshot failed", "not a complete JPEG"])("
 test.each(["position read failed", "position reply malformed"])("renders PTZ failure %s", (reason) => {
   expect(renderScene({ reference_frame: { state: "failed", reason: "snapshot failed" }, ptz_position: { state: "failed", reason }, location: null })).toContain(reason);
 });
+
+function renderChanges(scene_changes: unknown) {
+  const root = mkdtempSync(join(tmpdir(), "onvif-render-changes-"));
+  try {
+    const file = join(root, "handoff.json");
+    writeFileSync(file, JSON.stringify({ ...fixture, scene_changes }));
+    // The renderer must use the signed fields even if the prior JSON is invalid.
+    writeFileSync(join(root, "previous<&>.json"), "{invalid JSON");
+    const result = Bun.spawnSync([process.execPath, join(import.meta.dir, "render-handoff.ts"), file], { cwd: root, stdout: "pipe", stderr: "pipe" });
+    expect(result.exitCode).toBe(0);
+    expect(result.stderr.toString()).toBe("");
+    return readFileSync(join(root, "handoff.html"), "utf8");
+  } finally { rmSync(root, { recursive: true, force: true }); }
+}
+
+const changes = {
+  previous_handoff: { file: "previous<&>.json", sha256: "abc123" },
+  previous_reference_frame: { file: "previous<&>.jpg", sha256: "def456" },
+  ptz_coordinate_difference: { pan: 6.75, tilt: -1.25, zoom: 0 },
+  entered_location_text_changed: true,
+  observed_offset_difference_s: 0.5,
+  observed_offset_difference_allowance_s: 2.381,
+};
+
+test("renders signed differences and previous frame for human comparison without reopening previous JSON", () => {
+  const html = renderChanges(changes);
+  expect(html).toContain("<h2>Changes since previous handoff previous&lt;&amp;&gt;.json</h2>");
+  expect(html).toContain("PTZ coordinate difference (not distance moved): pan +6.75° tilt -1.25° zoom +0 (VAPIX zoom units)");
+  expect(html).toContain("Entered location text changed: yes");
+  expect(html).toContain("Observed camera-minus-host offset difference: +0.5 s (±2.381 s; host reference changes can contribute; not a measure of camera clock drift)");
+  expect(html).toContain("Previous reference frame: previous&lt;&amp;&gt;.jpg def456");
+  expect(html.replace("not distance moved", "")).not.toMatch(/\b(moved|unchanged|drifted)\b/);
+});
+
+test("renders all null differences as unavailable, with no numerical zero or verdict", () => {
+  const html = renderChanges({ ...changes, previous_reference_frame: null, ptz_coordinate_difference: null,
+    entered_location_text_changed: null, observed_offset_difference_s: null, observed_offset_difference_allowance_s: null });
+  expect(html).toContain("PTZ coordinate difference (not distance moved): unavailable");
+  expect(html).toContain("Entered location text changed: unavailable (not comparable)");
+  expect(html).toContain("Observed camera-minus-host offset difference: unavailable (±unavailable;");
+  expect(html).toContain("Previous reference frame: unavailable");
+  const section = html.split("<h2>Changes since previous handoff")[1]!.split("<h2>")[0]!;
+  expect(section).not.toMatch(/[+-]?0(?:[. ]|°)/);
+  expect(section.replace("not distance moved", "")).not.toMatch(/\b(moved|unchanged|drifted)\b/);
+});
+
+test.each([null, undefined])("omits changes section when scene_changes is %s", (value) => {
+  expect(renderChanges(value)).not.toContain("Changes since previous handoff");
+});
+
+test("renders false as no and a negative offset with its sign", () => {
+  const html = renderChanges({ ...changes, entered_location_text_changed: false, observed_offset_difference_s: -0.5 });
+  expect(html).toContain("Entered location text changed: no");
+  expect(html).toContain("offset difference: -0.5 s (±2.381 s;");
+});

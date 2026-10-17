@@ -50,6 +50,23 @@ const sceneSection = () => {
   return `<h2>Scene reference (observed at handoff time; not proof of location)</h2><p>${frameText}</p>${ptzText}<p>${location}</p>`;
 };
 
+const changesSection = () => {
+  const changes = h.scene_changes;
+  if (!changes) return "";
+  const signed = (value: number) => `${value >= 0 ? "+" : ""}${value}`;
+  const ptz = changes.ptz_coordinate_difference;
+  const coordinates = ptz ? `pan ${esc(signed(ptz.pan))}° tilt ${esc(signed(ptz.tilt))}° zoom ${esc(signed(ptz.zoom))} (VAPIX zoom units)` : "unavailable";
+  const location = changes.entered_location_text_changed == null ? "unavailable (not comparable)" : changes.entered_location_text_changed ? "yes" : "no";
+  const offset = changes.observed_offset_difference_s == null ? "unavailable" : `${esc(signed(changes.observed_offset_difference_s))} s`;
+  const allowance = changes.observed_offset_difference_allowance_s == null ? "unavailable" : `${esc(changes.observed_offset_difference_allowance_s)} s`;
+  const frame = changes.previous_reference_frame;
+  return `<h2>Changes since previous handoff ${esc(changes.previous_handoff.file)}</h2>
+<p>PTZ coordinate difference (not distance moved): ${coordinates}</p>
+<p>Entered location text changed: ${location}</p>
+<p>Observed camera-minus-host offset difference: ${offset} (±${allowance}; host reference changes can contribute; not a measure of camera clock drift)</p>
+<p>Previous reference frame: ${frame ? `${esc(frame.file)} ${esc(frame.sha256)}` : "unavailable"}</p>`;
+};
+
 const html = `<!doctype html><meta charset="utf-8"><title>Handoff ${esc(h.camera.id)}</title>
 <style>
 body{font:11pt/1.45 -apple-system,Inter,system-ui,sans-serif;color:#111;margin:0;padding:32px 40px}
@@ -65,6 +82,7 @@ code,.mono{font-family:"JetBrains Mono",Menlo,monospace;font-size:8.5pt;word-bre
 <h2>Device</h2><div class="grid"><div>Camera: <b>${esc(h.camera.id)}</b> — ${esc(h.camera.model)}</div><div>Firmware: ${esc(h.camera.firmware)}</div><div>Serial: ${esc(h.camera.serial)}</div><div>Agent: ${esc(h.agent)}</div></div>
 ${clockSection()}
 ${sceneSection()}
+${changesSection()}
 <h2>Plan (live → desired)</h2>${rows(h.plan, ["param", "current", "desired"])}
 <h2>Applied</h2>${rows(h.applied.map((a: any) => a.param ? a : a.preset ? { param: `preset:${a.preset}`, previous: "", desired: `pan ${a.pan} tilt ${a.tilt} zoom ${a.zoom}` } : { param: `scenario:${a.scenario}`, previous: "", desired: `${a.type} (id ${a.id})` }), ["param", "previous", "desired"])}
 <h2>Verification — ${status}</h2>${rows(h.verify.failed, ["param", "desired", "observed"])}

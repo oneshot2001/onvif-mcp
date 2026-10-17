@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, spyOn, test } from "bun:test";
 import { createHash, generateKeyPairSync, sign } from "node:crypto";
 import { copyFileSync, readdirSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { basename, join } from "node:path";
 import { parsePtzPosition, readCommissionSpec, registerCommission, verifyHandoffs, type CommissionDeps } from "./commission";
 import { makeLimiter } from "./rate-limit";
 import { deviceText } from "./device-text";
@@ -417,7 +417,7 @@ describe("commission specs", () => {
     const out = JSON.parse(result.content[0]!.text);
     const handoff = JSON.parse(readFileSync(out.handoff, "utf8"));
     expect(handoff.notes).toBe(notes);
-    expect(Object.keys(handoff)).toEqual(["artifact", "spec", "camera", "agent", "policy_sha256", "run", "plan", "applied", "verify", "rollback", "scenarios", "observation", "notes", "clock", "scene", "receipts", "sig"]);
+    expect(Object.keys(handoff)).toEqual(["artifact", "spec", "camera", "agent", "policy_sha256", "run", "plan", "applied", "verify", "rollback", "scenarios", "observation", "notes", "clock", "scene", "receipts", "scene_changes", "sig"]);
     expect(verifyHandoffs(h.root, h.publicKey)).toEqual({ count: 1, bad: [] });
   });
 
@@ -743,5 +743,189 @@ describe("scene reference", () => {
     expect(snapshot).not.toHaveBeenCalled();
     expect(limit).not.toHaveBeenCalled();
     expect(vapix.mock.calls.some((call) => call[2].includes("query=position"))).toBeFalse();
+  });
+});
+
+describe("changes since previous handoff", () => {
+  const setup = () => {
+    const h = harness({ ptz: true });
+    writeFileSync(join(h.root, "specs/scene.yaml"), "spec: camspec/0.1\nname: scene\n");
+    h.deps.cameras = { q6358: { ptz: true }, q6325: { ptz: true } };
+    h.deps.policy["claude-main"]!.cameras = ["q6358", "q6325"];
+    const vapix = h.deps.vapix;
+    let pan = 143.25;
+    h.deps.vapix = async (tool, camera, path) => path.includes("query=position")
+      ? { ok: true, body: `pan=${pan}\ntilt=-31.81\nzoom=100` } : vapix(tool, camera, path);
+    const snapshot = h.deps.snapshot;
+    h.deps.snapshot = async (...args) => {
+      await new Promise((resolve) => setTimeout(resolve, 2)); // Distinct retained file stems.
+      return snapshot(...args);
+    };
+    const run = async (location?: string, tool = "commission_verify", camera = "q6358") => {
+      const output = JSON.parse((await h.handlers[tool]!({ camera, spec: "scene", location, approve: true })).content[0]!.text);
+      expect(output.passed).toBeTrue();
+      const bytes = readFileSync(output.handoff);
+      const handoff = JSON.parse(bytes.toString());
+      expect(output.scene_changes).toEqual(handoff.scene_changes);
+      return { output, handoff, bytes, file: output.handoff as string };
+    };
+    const retain = (file: string, handoff: any, key = h.deps.privateKey) => {
+      const { sig: _sig, ...body } = handoff;
+      const hash = createHash("sha256").update(JSON.stringify(body)).digest("hex");
+      writeFileSync(join(h.root, "handoff", file), JSON.stringify({ ...body, sig: sign(null, Buffer.from(hash), key).toString("base64") }, null, 2) + "\n");
+    };
+    return { ...h, run, retain, setPan: (value: number) => { pan = value; } };
+  };
+
+  test("two verify runs sign coordinate and host-relative offset differences and return the identical object", async () => {
+    const h = setup();
+    const previous = await h.run("gate\u2028west");
+    expect(previous.handoff.scene_changes).toBeNull();
+    h.setPan(150);
+    h.deps.clockCheck = async () => ({ ...fakeClock, offset_s: 581.012, uncertainty_s: 1.2 });
+    const current = await h.run("gate\u2028east");
+    expect(current.handoff.scene_changes).toEqual({
+      previous_handoff: { file: basename(previous.file), sha256: createHash("sha256").update(previous.bytes).digest("hex") },
+      previous_reference_frame: { file: previous.handoff.scene.reference_frame.file, sha256: previous.handoff.scene.reference_frame.sha256 },
+      ptz_coordinate_difference: { pan: 6.75, tilt: 0, zoom: 0 },
+      entered_location_text_changed: true,
+      observed_offset_difference_s: 0.5,
+      observed_offset_difference_allowance_s: 2.381,
+    });
+    expect(verifyHandoffs(h.root, h.publicKey)).toEqual({ count: 2, bad: [] });
+  });
+
+  test("a q6325 signature copied to a later q6358 filename cannot select a different camera", async () => {
+    const h = setup();
+    const previous = await h.run(undefined, "commission_verify", "q6325");
+    copyFileSync(previous.file, join(h.root, "handoff/q6358-2099-01-01T00:00:00.000Z.json"));
+    expect((await h.run()).handoff.scene_changes).toBeNull();
+  });
+
+  test.each(["serial", "empty serial", "unknown serial", "other key", "tampered", "malformed", "artifact", "equal seq", "future seq", "string seq", "missing seq"])("ignores an ineligible retained handoff: %s", async (mode) => {
+    const h = setup();
+    const previous = await h.run();
+    const body = previous.handoff;
+    rmSync(previous.file);
+    const file = "q6358-2099-01-01T00:00:00.000Z.json";
+    let key = h.deps.privateKey;
+    if (mode === "serial") body.camera.serial = "different";
+    if (mode === "empty serial" || mode === "unknown serial") {
+      body.camera.serial = mode === "empty serial" ? "" : "unknown";
+      const vapix = h.deps.vapix;
+      h.deps.vapix = async (...args) => {
+        const reply = await vapix(...args);
+        return { ...reply, body: reply.body.replace("SerialNumber=serial", `SerialNumber=${body.camera.serial}`) };
+      };
+    }
+    if (mode === "other key") key = generateKeyPairSync("ed25519").privateKey.export({ type: "pkcs8", format: "pem" }).toString();
+    if (mode === "artifact") body.artifact = "other/0.1";
+    if (mode === "equal seq") body.receipts.last_seq = h.deps.lastReceipt().seq + 1;
+    if (mode === "future seq") body.receipts.last_seq = h.deps.lastReceipt().seq + 100;
+    if (mode === "string seq") body.receipts.last_seq = "1";
+    if (mode === "missing seq") delete body.receipts.last_seq;
+    h.retain(file, body, key);
+    if (mode === "malformed") writeFileSync(join(h.root, "handoff", file), "{broken");
+    if (mode === "tampered") writeFileSync(join(h.root, "handoff", file), JSON.stringify({ ...body, camera: { ...body.camera, serial: "serial" }, notes: "tampered" }));
+    expect((await h.run()).handoff.scene_changes).toBeNull();
+  });
+
+  test("signed receipt sequence wins over filename and finished time, including lower sequence ties", async () => {
+    const h = setup();
+    const previous = await h.run("gate");
+    const lower = structuredClone(previous.handoff);
+    lower.receipts.last_seq--;
+    lower.run.finished = "2099-01-01T00:00:00.000Z";
+    lower.scene.ptz_position.pan = 10;
+    h.retain("q6358-2099-01-01T00:00:00.000Z.json", lower);
+    h.retain("q6358-2099-01-02T00:00:00.000Z.json", lower);
+    h.setPan(150);
+    const changes = (await h.run("gate")).handoff.scene_changes;
+    expect(changes.previous_handoff.file).toBe(basename(previous.file));
+    expect(changes.ptz_coordinate_difference.pan).toBe(6.75);
+    expect(changes.entered_location_text_changed).toBeFalse();
+  });
+
+  test("a tie at the greatest eligible sequence yields no previous", async () => {
+    const h = setup();
+    const previous = await h.run();
+    h.retain("duplicate.json", previous.handoff);
+    expect((await h.run()).handoff.scene_changes).toBeNull();
+  });
+
+  test.each(["previous", "current"])("missing %s observations remain null", async (side) => {
+    const h = setup();
+    const snapshot = h.deps.snapshot;
+    const vapix = h.deps.vapix;
+    const unavailable = () => {
+      h.deps.snapshot = async () => false;
+      h.deps.vapix = async (...args) => args[2].includes("query=position") ? { ok: false, body: "" } : vapix(...args);
+      h.deps.clockCheck = async () => ({ state: "failed", reason: "time read failed" });
+    };
+    if (side === "previous") unavailable();
+    const previous = await h.run(side === "previous" ? undefined : "gate");
+    h.deps.snapshot = snapshot;
+    h.deps.vapix = vapix;
+    h.deps.clockCheck = async () => structuredClone(fakeClock);
+    if (side === "current") unavailable();
+    const changes = (await h.run(side === "current" ? undefined : "gate")).handoff.scene_changes;
+    expect(changes.ptz_coordinate_difference).toBeNull();
+    expect(changes.entered_location_text_changed).toBeNull();
+    expect(changes.observed_offset_difference_s).toBeNull();
+    expect(changes.observed_offset_difference_allowance_s).toBeNull();
+    expect(changes.previous_reference_frame).toEqual(side === "previous" ? null : {
+      file: previous.handoff.scene.reference_frame.file, sha256: previous.handoff.scene.reference_frame.sha256,
+    });
+  });
+
+  test("legacy signed handoffs without scene or clock remain eligible but incomparable", async () => {
+    const h = setup();
+    const previous = await h.run();
+    delete previous.handoff.scene;
+    delete previous.handoff.clock;
+    h.retain(basename(previous.file), previous.handoff);
+    const changes = (await h.run()).handoff.scene_changes;
+    expect(changes.previous_handoff.file).toBe(basename(previous.file));
+    for (const field of ["previous_reference_frame", "ptz_coordinate_difference", "entered_location_text_changed", "observed_offset_difference_s", "observed_offset_difference_allowance_s"]) expect(changes[field]).toBeNull();
+  });
+
+  test("rounds coordinate differences to two decimals, offset to three, allowance upwards to three", async () => {
+    const h = setup();
+    await h.run("");
+    h.setPan(142.013);
+    h.deps.clockCheck = async () => ({ ...fakeClock, offset_s: 580.0106, uncertainty_s: 1.2001 });
+    const changes = (await h.run("gate")).handoff.scene_changes;
+    expect(changes.ptz_coordinate_difference.pan).toBe(-1.24);
+    expect(changes.observed_offset_difference_s).toBe(-0.501);
+    expect(changes.observed_offset_difference_allowance_s).toBe(2.382);
+    expect(changes.entered_location_text_changed).toBeNull();
+  });
+
+  test("apply never sets scene_changes even with an eligible previous handoff", async () => {
+    const h = setup();
+    await h.run();
+    const current = await h.run(undefined, "commission_apply");
+    expect(current.handoff).not.toHaveProperty("scene_changes");
+    expect(current.output).not.toHaveProperty("scene_changes");
+  });
+
+  test("allowance rounding does not add a millisecond for binary floating-point noise", async () => {
+    const h = setup();
+    h.deps.clockCheck = async () => ({ ...fakeClock, uncertainty_s: 1 });
+    await h.run();
+    h.deps.clockCheck = async () => ({ ...fakeClock, uncertainty_s: 1.006 });
+    expect((await h.run()).handoff.scene_changes.observed_offset_difference_allowance_s).toBe(2.006);
+  });
+
+  test("malformed signed observations are unavailable without dropping the eligible previous handoff", async () => {
+    const h = setup();
+    const previous = await h.run();
+    previous.handoff.scene.reference_frame = "invalid";
+    previous.handoff.scene.ptz_position = "invalid";
+    h.retain(basename(previous.file), previous.handoff);
+    const changes = (await h.run()).handoff.scene_changes;
+    expect(changes.previous_handoff.file).toBe(basename(previous.file));
+    expect(changes.previous_reference_frame).toBeNull();
+    expect(changes.ptz_coordinate_difference).toBeNull();
   });
 });
