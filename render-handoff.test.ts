@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { expect, test } from "bun:test";
 import { copyFileSync, existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -27,6 +28,7 @@ test("renders scenario rows and the receipt hash from an offline handoff without
     }
     expect(html).toContain(`chain head ${fixture.receipts.chain_head_hash}<br>`);
     expect(html).not.toContain("Camera clock (observed at handoff time)");
+    expect(html).not.toContain("Scene reference");
     expect(html).toContain(scope);
     expect(existsSync(join(root, "handoff.pdf"))).toBeFalse();
   } finally {
@@ -111,4 +113,47 @@ test("escapes the spec name and plan desired value in HTML without PDF", () => {
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
+});
+
+
+function renderScene(scene: unknown, sidecar?: Buffer) {
+  const root = mkdtempSync(join(tmpdir(), "onvif-render-scene-"));
+  try {
+    const file = join(root, "handoff.json");
+    writeFileSync(file, JSON.stringify({ ...fixture, scene }));
+    if (sidecar) writeFileSync(join(root, "handoff.jpg"), sidecar);
+    const result = Bun.spawnSync([process.execPath, join(import.meta.dir, "render-handoff.ts"), file], { cwd: root, stdout: "pipe", stderr: "pipe" });
+    expect(result.exitCode).toBe(0);
+    expect(result.stderr.toString()).toBe("");
+    return readFileSync(join(root, "handoff.html"), "utf8");
+  } finally { rmSync(root, { recursive: true, force: true }); }
+}
+
+test.each(["match", "missing", "changed"])("renders scene sidecar %s against the signed hash", (mode) => {
+  const bytes = readFileSync(join(import.meta.dir, "fixtures/scene/synthetic-8x8.jpg"));
+  const hash = createHash("sha256").update(bytes).digest("hex");
+  const sidecar = Buffer.from(bytes);
+  if (mode === "changed") sidecar[10] = sidecar[10]! ^ 1;
+  const html = renderScene({
+    reference_frame: { file: "handoff.jpg", sha256: hash },
+    ptz_position: { pan: 143.25, tilt: -31.81, zoom: 100 },
+    location: { text: "<gate>&", source: "installer-entered, not verified" },
+  }, mode === "missing" ? undefined : sidecar);
+  expect(html).toContain("<h2>Scene reference (observed at handoff time; not proof of location)</h2>");
+  expect(html).toContain("handoff.jpg");
+  expect(html).toContain(hash);
+  expect(html).toContain(mode === "match" ? "frame file matches the signed hash" : mode === "missing" ? "frame file missing" : "frame file does not match the signed hash");
+  expect(html).toContain("PTZ position read after the frame (device-reported): pan 143.25° tilt -31.81° zoom 100 (VAPIX zoom units)");
+  expect(html).toContain("Location (entered by the installer, not verified): &lt;gate&gt;&amp;");
+  expect(html).not.toContain("<gate>");
+});
+
+test.each(["snapshot rate limited", "snapshot failed", "not a complete JPEG"])("renders frame failure %s and absent location", (reason) => {
+  const html = renderScene({ reference_frame: { state: "failed", reason }, ptz_position: null, location: null });
+  expect(html).toContain(reason);
+  expect(html).toContain("Location: not entered");
+  expect(html).not.toContain("PTZ position read after the frame");
+});
+test.each(["position read failed", "position reply malformed"])("renders PTZ failure %s", (reason) => {
+  expect(renderScene({ reference_frame: { state: "failed", reason: "snapshot failed" }, ptz_position: { state: "failed", reason }, location: null })).toContain(reason);
 });

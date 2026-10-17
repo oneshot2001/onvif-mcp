@@ -1,6 +1,8 @@
 // Render a signed camspec handoff (handoff/*.json) to HTML + PDF. JSON stays the source of truth.
 // usage: bun render-handoff.ts handoff/<file>.json [--pdf]
 import { readFileSync, writeFileSync, existsSync } from "node:fs";
+import { createHash } from "node:crypto";
+import { basename, dirname, join } from "node:path";
 import { execSync } from "node:child_process";
 
 const file = process.argv[2]!;
@@ -26,6 +28,28 @@ const clockSection = () => {
   return `${heading}<p>${esc(offset)}</p><p>Measured against the commissioning host's system clock; the host's own sync was not checked.</p><p>${esc(ntpText)}</p>`;
 };
 
+const sceneSection = () => {
+  const scene = h.scene;
+  if (!scene) return "";
+  const frame = scene.reference_frame;
+  let frameText: string;
+  if (frame.state === "failed") frameText = esc(frame.reason);
+  else {
+    const sidecar = join(dirname(file), basename(frame.file));
+    let state = "frame file missing";
+    if (existsSync(sidecar)) {
+      const hash = createHash("sha256").update(readFileSync(sidecar)).digest("hex");
+      state = hash === frame.sha256 ? "frame file matches the signed hash" : "frame file does not match the signed hash";
+    }
+    frameText = `Frame: ${esc(frame.file)}<br>sha256 ${esc(frame.sha256)}<br>${state}`;
+  }
+  const ptz = scene.ptz_position;
+  const ptzText = !ptz ? "" : ptz.state === "failed" ? `<p>${esc(ptz.reason)}</p>`
+    : `<p>PTZ position read after the frame (device-reported): pan ${esc(ptz.pan)}° tilt ${esc(ptz.tilt)}° zoom ${esc(ptz.zoom)} (VAPIX zoom units)</p>`;
+  const location = scene.location ? `Location (entered by the installer, not verified): ${esc(scene.location.text)}` : "Location: not entered";
+  return `<h2>Scene reference (observed at handoff time; not proof of location)</h2><p>${frameText}</p>${ptzText}<p>${location}</p>`;
+};
+
 const html = `<!doctype html><meta charset="utf-8"><title>Handoff ${esc(h.camera.id)}</title>
 <style>
 body{font:11pt/1.45 -apple-system,Inter,system-ui,sans-serif;color:#111;margin:0;padding:32px 40px}
@@ -40,6 +64,7 @@ code,.mono{font-family:"JetBrains Mono",Menlo,monospace;font-size:8.5pt;word-bre
 <div class="muted">${esc(h.artifact)} · spec <b>${esc(h.spec.name)}</b> · run ${esc(h.run.started)} → ${esc(h.run.finished)}</div>
 <h2>Device</h2><div class="grid"><div>Camera: <b>${esc(h.camera.id)}</b> — ${esc(h.camera.model)}</div><div>Firmware: ${esc(h.camera.firmware)}</div><div>Serial: ${esc(h.camera.serial)}</div><div>Agent: ${esc(h.agent)}</div></div>
 ${clockSection()}
+${sceneSection()}
 <h2>Plan (live → desired)</h2>${rows(h.plan, ["param", "current", "desired"])}
 <h2>Applied</h2>${rows(h.applied.map((a: any) => a.param ? a : a.preset ? { param: `preset:${a.preset}`, previous: "", desired: `pan ${a.pan} tilt ${a.tilt} zoom ${a.zoom}` } : { param: `scenario:${a.scenario}`, previous: "", desired: `${a.type} (id ${a.id})` }), ["param", "previous", "desired"])}
 <h2>Verification — ${status}</h2>${rows(h.verify.failed, ["param", "desired", "observed"])}

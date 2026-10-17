@@ -1,9 +1,9 @@
 import { afterEach, beforeEach, describe, expect, spyOn, test } from "bun:test";
 import { createHash, generateKeyPairSync, sign } from "node:crypto";
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { copyFileSync, readdirSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { readCommissionSpec, registerCommission, verifyHandoffs, type CommissionDeps } from "./commission";
+import { parsePtzPosition, readCommissionSpec, registerCommission, verifyHandoffs, type CommissionDeps } from "./commission";
 import { makeLimiter } from "./rate-limit";
 import { deviceText } from "./device-text";
 import type { ClockResult } from "./clock";
@@ -51,6 +51,8 @@ function harness(options: { ptz?: boolean; aoa?: boolean; aoaInstalled?: boolean
     lastReceipt: () => ({ seq, hash: seq ? `hash-${seq}` : "genesis" }),
     checkActuation: options.checkActuation ?? (() => null),
     clockCheck: async () => structuredClone(fakeClock),
+    checkSnapshot: () => null,
+    snapshot: async (_tool, _camera, file) => { copyFileSync(join(import.meta.dir, "fixtures/scene/synthetic-8x8.jpg"), file); return true; },
     receipt: (tool, _params, decision, detail, resultHash, evidence) => { seq++; receipts.push({ tool, decision, detail, resultHash, evidence }); },
     configParams: async (_tool, _camera, groups) => ({ ok: true, params: Object.fromEntries(Object.entries(state).filter(([param]) => groups.some((group) => param === group || param.startsWith(`${group}.`)))) }),
     vapix: async (_tool, _camera, path) => {
@@ -415,7 +417,7 @@ describe("commission specs", () => {
     const out = JSON.parse(result.content[0]!.text);
     const handoff = JSON.parse(readFileSync(out.handoff, "utf8"));
     expect(handoff.notes).toBe(notes);
-    expect(Object.keys(handoff)).toEqual(["artifact", "spec", "camera", "agent", "policy_sha256", "run", "plan", "applied", "verify", "rollback", "scenarios", "observation", "notes", "clock", "receipts", "sig"]);
+    expect(Object.keys(handoff)).toEqual(["artifact", "spec", "camera", "agent", "policy_sha256", "run", "plan", "applied", "verify", "rollback", "scenarios", "observation", "notes", "clock", "scene", "receipts", "sig"]);
     expect(verifyHandoffs(h.root, h.publicKey)).toEqual({ count: 1, bad: [] });
   });
 
@@ -625,5 +627,121 @@ describe("commission specs", () => {
       id: 5, type: "crosslinecounting", objectClassifications: [{ type: "vehicle" }],
       triggers: [{ type: "countingLine", countingDirection: "leftToRight", vertices: [[-0.5, 0], [0.5, 0]] }],
     });
+  });
+});
+
+
+describe("scene reference", () => {
+  const fixture = (name: string) => readFileSync(join(import.meta.dir, "fixtures/scene", name));
+  const position = fixture("q6358-ptz-position.txt").toString();
+  const sceneHarness = (ptz = true) => {
+    const h = harness({ ptz });
+    writeFileSync(join(h.root, "specs/scene.yaml"), "spec: camspec/0.1\nname: scene\n");
+    const vapix = h.deps.vapix;
+    h.deps.vapix = async (tool, camera, path) => path.includes("query=position") ? { ok: true, body: position } : vapix(tool, camera, path);
+    return h;
+  };
+  const run = async (h: ReturnType<typeof sceneHarness>, tool = "commission_verify", location?: string) => {
+    const output = JSON.parse((await h.handlers[tool]!({ camera: "cam", spec: "scene", approve: true, location })).content[0]!.text);
+    expect(output.passed).toBeTrue();
+    expect(typeof output.handoff).toBe("string");
+    const handoff = JSON.parse(readFileSync(output.handoff, "utf8"));
+    expect(handoff.verify.passed).toBeTrue();
+    expect(verifyHandoffs(h.root, h.publicKey)).toEqual({ count: 1, bad: [] });
+    return { handoff, file: output.handoff as string };
+  };
+
+  test("parses both PTZ fixtures and ignores unrelated keys", () => {
+    expect(position).toContain("\r\n");
+    expect(parsePtzPosition(position)).toEqual({ pan: 143.25, tilt: -31.81, zoom: 100 });
+    expect(parsePtzPosition(fixture("q6325-ptz-position.txt").toString())?.zoom).toBe(1954);
+    expect(parsePtzPosition("other=anything\npan=1\ntilt=-2.5\nzoom=3\n")).toEqual({ pan: 1, tilt: -2.5, zoom: 3 });
+  });
+  test.each([
+    "pan=1\npan=2\ntilt=3\nzoom=4", "pan=1\ntilt=2\ntilt=3\nzoom=4", "pan=1\ntilt=2\nzoom=3\nzoom=4",
+    "pan=143.25evil\ntilt=2\nzoom=3", "pan=\ntilt=2\nzoom=3", "pan=Infinity\ntilt=2\nzoom=3", "pan=1\nzoom=3",
+  ])("rejects malformed PTZ reply %s", (body) => expect(parsePtzPosition(body)).toBeNull());
+
+  test.each(["commission_apply", "commission_verify"])("%s signs raw frame bytes and verbatim location after clock and frame acquisition", async (tool) => {
+    const h = sceneHarness();
+    const order: string[] = [];
+    h.deps.clockCheck = async () => { order.push("clock"); return structuredClone(fakeClock); };
+    const snapshot = h.deps.snapshot;
+    const capture = spyOn(h.deps, "snapshot").mockImplementation(async (...args) => {
+      order.push("frame");
+      await new Promise((resolve) => setTimeout(resolve, 2));
+      return snapshot(...args);
+    });
+    const vapix = h.deps.vapix;
+    h.deps.vapix = async (t, c, path) => {
+      if (path.includes("query=position")) { order.push("ptz"); expect([t, c]).toEqual([tool, "cam"]); }
+      return vapix(t, c, path);
+    };
+    const location = "  <gate>&\nraw location\u2028  ";
+    const { handoff, file } = await run(h, tool, location);
+    const frame = handoff.scene.reference_frame;
+    const bytes = fixture("synthetic-8x8.jpg");
+    expect(frame.sha256).toBe(createHash("sha256").update(bytes).digest("hex"));
+    expect(frame.sha256).not.toBe(h.deps.sha256(bytes));
+    expect(join(h.root, "handoff", frame.file)).toBe(file.replace(/\.json$/, ".jpg"));
+    expect(readFileSync(file.replace(/\.json$/, ".jpg"))).toEqual(bytes);
+    expect(capture.mock.calls[0]!.slice(0, 2)).toEqual([tool, "cam"]);
+    expect(capture.mock.calls[0]![2]).toMatch(/\/handoff\/\.capture-cam-\d+-.+\.jpg$/);
+    expect(order).toEqual(["clock", "frame", "ptz"]);
+    expect(frame.captured_before <= frame.captured_after).toBeTrue();
+    expect(frame.captured_after <= handoff.scene.ptz_position.read_before).toBeTrue();
+    expect(handoff.scene.ptz_position.read_after <= handoff.run.finished).toBeTrue();
+    expect(handoff.scene.ptz_position).toMatchObject({ pan: 143.25, tilt: -31.81, zoom: 100 });
+    expect(handoff.scene.location).toEqual({ text: location, source: "installer-entered, not verified" });
+    expect(readdirSync(join(h.root, "handoff")).sort()).toEqual([frame.file, file.split("/").at(-1)].sort());
+  });
+
+  for (const mode of ["truncated", "false", "reject", "missing", "denied"] as const) {
+    test(`frame ${mode} is isolated from PTZ and removes temporary files`, async () => {
+      const h = sceneHarness();
+      const capture = spyOn(h.deps, "snapshot").mockImplementation(async (_t, _c, file) => {
+        if (mode !== "missing") writeFileSync(file, Buffer.from([0xff, 0xd8, 0xff]));
+        if (mode === "reject") throw new Error("private failure detail");
+        return mode !== "false";
+      });
+      if (mode === "denied") h.deps.checkSnapshot = () => "private limiter detail";
+      const { handoff } = await run(h);
+      expect(handoff.scene.reference_frame).toEqual({ state: "failed", reason: mode === "denied" ? "snapshot rate limited" : mode === "truncated" ? "not a complete JPEG" : "snapshot failed" });
+      expect(handoff.scene.ptz_position).toMatchObject({ pan: 143.25, tilt: -31.81, zoom: 100 });
+      expect(handoff.scene.location).toBeNull();
+      expect(readdirSync(join(h.root, "handoff")).every((file) => file.endsWith(".json"))).toBeTrue();
+      expect(capture).toHaveBeenCalledTimes(mode === "denied" ? 0 : 1);
+    });
+  }
+  for (const mode of ["failed", "reject", "malformed"] as const) {
+    test(`PTZ ${mode} is isolated from frame acquisition`, async () => {
+      const h = sceneHarness();
+      const vapix = h.deps.vapix;
+      h.deps.vapix = async (t, c, path) => {
+        if (!path.includes("query=position")) return vapix(t, c, path);
+        if (mode === "reject") throw new Error("private failure detail");
+        return { ok: mode !== "failed", body: mode === "malformed" ? "pan=143.25evil\ntilt=2\nzoom=3" : position };
+      };
+      const { handoff } = await run(h);
+      expect(handoff.scene.ptz_position).toEqual({ state: "failed", reason: mode === "malformed" ? "position reply malformed" : "position read failed" });
+      expect(handoff.scene.reference_frame.sha256).toBe(createHash("sha256").update(fixture("synthetic-8x8.jpg")).digest("hex"));
+    });
+  }
+  test("non-PTZ never queries position", async () => {
+    const h = sceneHarness(false);
+    const vapix = spyOn(h.deps, "vapix");
+    const { handoff } = await run(h);
+    expect(handoff.scene.ptz_position).toBeNull();
+    expect(vapix.mock.calls.some((call) => call[2].includes("query=position"))).toBeFalse();
+  });
+  test("plan and dry-run acquire no scene", async () => {
+    const h = sceneHarness();
+    const snapshot = spyOn(h.deps, "snapshot");
+    const limit = spyOn(h.deps, "checkSnapshot");
+    const vapix = spyOn(h.deps, "vapix");
+    for (const tool of ["commission_plan", "commission_apply"]) await h.handlers[tool]!({ camera: "cam", spec: "scene", approve: false });
+    expect(snapshot).not.toHaveBeenCalled();
+    expect(limit).not.toHaveBeenCalled();
+    expect(vapix.mock.calls.some((call) => call[2].includes("query=position"))).toBeFalse();
   });
 });

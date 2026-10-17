@@ -337,7 +337,7 @@ async function emitAar(tool: string, camera: string, actionName: "camera.stream.
 }
 
 const server = new McpServer({ name: "onvif-mcp", version: "0.1.0" });
-registerCommission(server, { root: ROOT, agent: AGENT, policy, policyBytes, cameras, privateKey: PRIV, vapix, vapixPost, observeEvents, configParams, parseParams, inGroup, sha256, receipt, lastReceipt, checkActuation: () => rateDenied("actuation"), clockCheck: (tool, camera) => clockCheck(tool, camera, { now: Date.now, vapixPost }) });
+registerCommission(server, { root: ROOT, agent: AGENT, policy, policyBytes, cameras, privateKey: PRIV, vapix, vapixPost, observeEvents, configParams, parseParams, inGroup, sha256, receipt, lastReceipt, snapshot, checkSnapshot: () => rateDenied("snapshot"), checkActuation: () => rateDenied("actuation"), clockCheck: (tool, camera) => clockCheck(tool, camera, { now: Date.now, vapixPost }) });
 
 server.tool("list_cameras", "List cameras this agent may access, with live device info", {}, async () => {
   const deny = allowed("list_cameras");

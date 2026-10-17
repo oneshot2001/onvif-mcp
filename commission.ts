@@ -3,8 +3,8 @@ import { z } from "zod";
 import { cameraId, specRef } from "./schemas";
 import { deviceText } from "./device-text";
 import type { ClockResult } from "./clock";
-import { sign as edSign, verify as edVerify } from "node:crypto";
-import { existsSync, mkdirSync, readFileSync, readdirSync, realpathSync, writeFileSync } from "node:fs";
+import { createHash, randomUUID, sign as edSign, verify as edVerify } from "node:crypto";
+import { existsSync, mkdirSync, readFileSync, readdirSync, realpathSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { basename, join, resolve, sep } from "node:path";
 
 type Policy = { tools: string[]; cameras: string[]; config?: { groups: string[]; remediate?: boolean; aoa?: boolean } };
@@ -23,6 +23,14 @@ type ScenarioResult = { name: string; id: number | null; type: Scenario["type"];
 type EventNotification = { topic: string; timestamp?: string | number; message?: { data?: Record<string, unknown> } };
 type Observation = { window_seconds: number; started: string; finished: string; fired: Record<string, { count: number; first: string | null; last: string | null }>; warnings: string[] };
 type ReceiptHead = { seq: number; hash: string };
+type PtzPosition = { pan: number; tilt: number; zoom: number };
+type ReferenceFrame = { file: string; sha256: string; captured_before: string; captured_after: string }
+  | { state: "failed"; reason: "snapshot rate limited" | "snapshot failed" | "not a complete JPEG" };
+type Scene = {
+  reference_frame: ReferenceFrame;
+  ptz_position: (PtzPosition & { read_before: string; read_after: string }) | { state: "failed"; reason: "position read failed" | "position reply malformed" } | null;
+  location: { text: string; source: "installer-entered, not verified" } | null;
+};
 type Handoff = {
   artifact: "camspec-handoff/0.1";
   spec: { name: string; sha256: string };
@@ -37,6 +45,7 @@ type Handoff = {
   scenarios: ScenarioResult[];
   observation: Observation | null;
   notes: string | null;
+  scene: Scene;
   clock: ClockResult | { state: "failed"; reason: "clock check threw" };
   receipts: { first_seq: number; last_seq: number; chain_head_hash: string };
 };
@@ -58,8 +67,25 @@ export type CommissionDeps = {
   receipt: (tool: string, params: unknown, decision: "allow" | "deny", detail: string, resultHash?: string, evidence?: string) => void;
   lastReceipt: () => ReceiptHead;
   checkActuation: () => string | null;
+  snapshot: (tool: string, camera: string, outFile: string) => Promise<boolean>;
+  checkSnapshot: () => string | null;
   clockCheck: (tool: string, camera: string) => Promise<ClockResult>;
 };
+
+export function parsePtzPosition(body: string): PtzPosition | null {
+  const position: Partial<PtzPosition> = {};
+  for (const line of body.split(/\r?\n/)) {
+    const equals = line.indexOf("=");
+    if (equals < 0) continue;
+    const key = line.slice(0, equals);
+    if (key !== "pan" && key !== "tilt" && key !== "zoom") continue;
+    const value = line.slice(equals + 1);
+    if (position[key] !== undefined || !/^-?\d+(\.\d+)?$/.test(value) || !Number.isFinite(Number(value))) return null;
+    position[key] = Number(value);
+  }
+  return position.pan !== undefined && position.tilt !== undefined && position.zoom !== undefined
+    ? { pan: position.pan, tilt: position.tilt, zoom: position.zoom } : null;
+}
 
 const TOP_KEYS = ["spec", "name", "applies_to", "params", "presets", "scenarios", "observe"];
 const HARD_DENY = ["Network", "System.BoxRebootAction", "RemoteService", "Time"];
@@ -350,17 +376,60 @@ export function registerCommission(server: McpServer, d: CommissionDeps) {
     writeFileSync(file, bytes);
     return { file, hash: d.sha256(bytes) };
   };
-  const finish = async (tool: "commission_apply" | "commission_verify", params: unknown, started: string, firstSeq: number, prepared: Awaited<ReturnType<typeof prepare>>, applied: Applied[], verify: { passed: boolean; failed: Failure[] }, rollback: Handoff["rollback"], scenarios: ScenarioResult[], observation: Observation | null, notes?: string) => {
+  const finish = async (tool: "commission_apply" | "commission_verify", params: unknown, started: string, firstSeq: number, prepared: Awaited<ReturnType<typeof prepare>>, applied: Applied[], verify: { passed: boolean; failed: Failure[] }, rollback: Handoff["rollback"], scenarios: ScenarioResult[], observation: Observation | null, notes?: string, location?: string) => {
     d.receipt(tool, params, "allow", verify.passed ? "verification passed" : "verification FAILED", d.sha256(verify));
     let clock: Handoff["clock"];
     try { clock = await d.clockCheck(tool, prepared.cameraMeta.id); }
     catch { clock = { state: "failed", reason: "clock check threw" }; }
+    const camera = prepared.cameraMeta.id;
+    const dir = join(d.root, "handoff");
+    let temp: string | null = null;
+    let reference_frame: ReferenceFrame = { state: "failed", reason: "snapshot failed" };
+    try {
+      if (d.checkSnapshot() !== null) reference_frame = { state: "failed", reason: "snapshot rate limited" };
+      else {
+        mkdirSync(dir, { recursive: true });
+        temp = join(dir, `.capture-${camera}-${Date.now()}-${randomUUID()}.jpg`);
+        const captured_before = new Date().toISOString();
+        const ok = await d.snapshot(tool, camera, temp);
+        const captured_after = new Date().toISOString();
+        if (ok === true && existsSync(temp)) {
+          const bytes = readFileSync(temp);
+          if (bytes.length >= 4 && bytes[0] === 0xff && bytes[1] === 0xd8 && bytes.at(-2) === 0xff && bytes.at(-1) === 0xd9) {
+            reference_frame = { file: "", sha256: createHash("sha256").update(bytes).digest("hex"), captured_before, captured_after };
+          } else reference_frame = { state: "failed", reason: "not a complete JPEG" };
+        }
+      }
+    } catch { reference_frame = { state: "failed", reason: "snapshot failed" }; }
+    if (temp && "state" in reference_frame) rmSync(temp, { force: true });
+
+    let ptz_position: Scene["ptz_position"] = null;
+    if (d.cameras[camera]!.ptz) {
+      try {
+        const read_before = new Date().toISOString();
+        const reply = await d.vapix(tool, camera, "/axis-cgi/com/ptz.cgi?query=position");
+        const read_after = new Date().toISOString();
+        const position = reply.ok ? parsePtzPosition(reply.body) : null;
+        ptz_position = position ? { ...position, read_before, read_after }
+          : { state: "failed", reason: reply.ok ? "position reply malformed" : "position read failed" };
+      } catch { ptz_position = { state: "failed", reason: "position read failed" }; }
+    }
     const finished = new Date().toISOString();
+    if (temp && !("state" in reference_frame)) {
+      try {
+        reference_frame.file = `${camera}-${finished}.jpg`;
+        renameSync(temp, join(dir, reference_frame.file));
+      } catch {
+        reference_frame = { state: "failed", reason: "snapshot failed" };
+        rmSync(temp, { force: true });
+      }
+    }
+    const scene: Scene = { reference_frame, ptz_position, location: location === undefined ? null : { text: location, source: "installer-entered, not verified" } };
     const head = d.lastReceipt();
     const handoff: Handoff = {
       artifact: "camspec-handoff/0.1", spec: { name: prepared.spec.name, sha256: prepared.sha256 }, camera: prepared.cameraMeta,
       agent: d.agent, policy_sha256: d.sha256(Buffer.from(d.policyBytes).toString()), run: { started, finished }, plan: prepared.plan, applied, verify, rollback, scenarios, observation,
-      notes: notes ?? null, clock,
+      notes: notes ?? null, clock, scene,
       receipts: { first_seq: firstSeq, last_seq: head.seq, chain_head_hash: head.hash },
     };
     const artifact = writeHandoff(handoff);
@@ -395,7 +464,7 @@ export function registerCommission(server: McpServer, d: CommissionDeps) {
   });
 
   server.tool("commission_apply", "Plan or explicitly apply a camspec, verify, and roll back parameters on failure; optional free-text notes recorded in the handoff",
-    { camera: cameraId, spec: specRef, approve: z.boolean(), notes: z.string().max(2000).optional() }, async ({ camera, spec: ref, approve, notes }) => {
+    { camera: cameraId, spec: specRef, approve: z.boolean(), notes: z.string().max(2000).optional(), location: z.string().max(200).optional() }, async ({ camera, spec: ref, approve, notes, location }) => {
     const params = { camera, spec: ref, approve };
     const reason = denied("commission_apply", camera, approve) ?? (approve ? d.checkActuation() : null);
     if (reason) { d.receipt("commission_apply", params, "deny", reason); return { content: [{ type: "text", text: `DENIED: ${reason}` }] }; }
@@ -471,14 +540,14 @@ export function registerCommission(server: McpServer, d: CommissionDeps) {
         }
         rollback = { performed: true, verified: rollbackWrites && (await checkParams("commission_apply", camera, rollbackSpec)).length === 0 };
       }
-      const file = await finish("commission_apply", params, started, firstSeq, p, applied, checked.verify, rollback, checked.scenarios, observation, notes);
+      const file = await finish("commission_apply", params, started, firstSeq, p, applied, checked.verify, rollback, checked.scenarios, observation, notes, location);
       const out = { ...verifyOutput(checked.verify), rolled_back: rollback?.performed ?? false, rollback_verified: rollback?.verified ?? null, scenarios: scenarioOutput(checked.scenarios), observation: observationOutput(observation), handoff: file };
       return { content: [{ type: "text", text: jsonOutput(out) }] };
     } catch (e) { return error("commission_apply", params, e); }
   });
 
   server.tool("commission_verify", "Verify live conformance to a camspec and emit a signed handoff; optional free-text notes recorded in the handoff",
-    { camera: cameraId, spec: specRef, notes: z.string().max(2000).optional() }, async ({ camera, spec: ref, notes }) => {
+    { camera: cameraId, spec: specRef, notes: z.string().max(2000).optional(), location: z.string().max(200).optional() }, async ({ camera, spec: ref, notes, location }) => {
     const params = { camera, spec: ref };
     const reason = denied("commission_verify", camera);
     if (reason) { d.receipt("commission_verify", params, "deny", reason); return { content: [{ type: "text", text: `DENIED: ${reason}` }] }; }
@@ -487,7 +556,7 @@ export function registerCommission(server: McpServer, d: CommissionDeps) {
     try {
       const p = await prepare("commission_verify", camera, ref);
       const checked = await check("commission_verify", camera, p);
-      const file = await finish("commission_verify", params, started, firstSeq, p, [], checked.verify, null, checked.scenarios, null, notes);
+      const file = await finish("commission_verify", params, started, firstSeq, p, [], checked.verify, null, checked.scenarios, null, notes, location);
       return { content: [{ type: "text", text: jsonOutput({ ...verifyOutput(checked.verify), scenarios: scenarioOutput(checked.scenarios), observation: null, handoff: file }) }] };
     } catch (e) { return error("commission_verify", params, e); }
   });
