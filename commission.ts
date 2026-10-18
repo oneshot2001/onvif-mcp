@@ -4,7 +4,7 @@ import { cameraId, specRef } from "./schemas";
 import { deviceText } from "./device-text";
 import type { ClockResult } from "./clock";
 import { createHash, createPublicKey, randomUUID, sign as edSign, verify as edVerify } from "node:crypto";
-import { existsSync, mkdirSync, readFileSync, readdirSync, realpathSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, realpathSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { basename, join, resolve, sep } from "node:path";
 
 type Policy = { tools: string[]; cameras: string[]; config?: { groups: string[]; remediate?: boolean; aoa?: boolean } };
@@ -382,7 +382,9 @@ export function registerCommission(server: McpServer, d: CommissionDeps) {
     let tied = false;
     for (const file of existsSync(dir) ? readdirSync(dir).filter((file) => file.endsWith(".json")) : []) {
       try {
-        const bytes = readFileSync(join(dir, file));
+        const path = join(dir, file);
+        if (!lstatSync(path).isFile()) continue;
+        const bytes = readFileSync(path);
         const { sig, ...body } = JSON.parse(bytes.toString());
         const hash = createHash("sha256").update(JSON.stringify(body)).digest("hex");
         if (typeof sig !== "string" || !edVerify(null, Buffer.from(hash), publicKey, Buffer.from(sig, "base64"))) continue;

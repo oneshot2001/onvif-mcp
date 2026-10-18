@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, spyOn, test } from "bun:test";
 import { createHash, generateKeyPairSync, sign } from "node:crypto";
-import { copyFileSync, readdirSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { copyFileSync, readdirSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, join } from "node:path";
 import { parsePtzPosition, readCommissionSpec, registerCommission, verifyHandoffs, type CommissionDeps } from "./commission";
@@ -793,6 +793,27 @@ describe("changes since previous handoff", () => {
       observed_offset_difference_allowance_s: 2.381,
     });
     expect(verifyHandoffs(h.root, h.publicKey)).toEqual({ count: 2, bad: [] });
+  });
+
+  test("verify skips FIFO and symlink JSON candidates and compares the real signed handoff", async () => {
+    const h = setup();
+    const previous = await h.run("gate");
+    const target = join(h.root, "previous.json");
+    copyFileSync(previous.file, target);
+    symlinkSync(target, join(h.root, "handoff", "zy-link.json"));
+    expect(Bun.spawnSync(["mkfifo", join(h.root, "handoff", "zz-fifo.json")]).exitCode).toBe(0);
+
+    h.setPan(150);
+    h.deps.clockCheck = async () => ({ ...fakeClock, offset_s: 581.012, uncertainty_s: 1.2 });
+    const current = await h.run("east");
+    expect(current.handoff.scene_changes).toEqual({
+      previous_handoff: { file: basename(previous.file), sha256: createHash("sha256").update(previous.bytes).digest("hex") },
+      previous_reference_frame: { file: previous.handoff.scene.reference_frame.file, sha256: previous.handoff.scene.reference_frame.sha256 },
+      ptz_coordinate_difference: { pan: 6.75, tilt: 0, zoom: 0 },
+      entered_location_text_changed: true,
+      observed_offset_difference_s: 0.5,
+      observed_offset_difference_allowance_s: 2.381,
+    });
   });
 
   test("a q6325 signature copied to a later q6358 filename cannot select a different camera", async () => {
