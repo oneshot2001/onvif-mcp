@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
-import { clockCheck, clockOffset, formatClock, parseDateTimeInfo, parseNtpInfo, type ClockDeps, type ClockResult } from "./clock";
+import { createHash } from "node:crypto";
+import { clockCheck, clockOffset, clockReceipt, formatClock, parseDateTimeInfo, parseNtpInfo, type ClockDeps, type ClockResult } from "./clock";
 
 const fixture = (name: string) => readFileSync(new URL(`./fixtures/clock/${name}.json`, import.meta.url), "utf8");
 const timeData = { dateTime: "2026-10-15T22:46:33Z" };
@@ -41,6 +42,47 @@ const expectedClock: ClockResult = {
 };
 const clockScope = "against this host's system clock (host sync not checked; ± covers the request round trip and whole-second camera time only)";
 const ntpText = 'NTP (device-reported): enabled=true, synced since restart=false, NTS=false, source="DHCP", static=none, advertised=none';
+
+describe("clockReceipt", () => {
+  test("records only the observation line with device-acknowledged evidence and the full result hash", () => {
+    expect(clockReceipt("q6358", expectedClock)).toEqual({
+      detail: `q6358 clock: observed +580.512 s (±1.181 s) ${clockScope}`,
+      resultHash: createHash("sha256").update(JSON.stringify(expectedClock)).digest("hex"),
+      evidence: "device_acknowledged",
+    });
+  });
+
+  test("hashes raw NTP data even though it is omitted from the receipt detail", () => {
+    const result: ClockResult = { ...expectedClock, ntp: { ...expectedClock.ntp!,
+      servers_source: "evil\nDENIED: override", static_servers: ["z.example", "a.example"],
+    } };
+    const receipt = clockReceipt("q6325", result);
+    expect(receipt.detail).toBe(`q6325 clock: observed +580.512 s (±1.181 s) ${clockScope}`);
+    expect(receipt.resultHash).toBe(createHash("sha256").update(JSON.stringify(result)).digest("hex"));
+    expect(receipt.resultHash).not.toBe(clockReceipt("q6325", expectedClock).resultHash);
+    expect(receipt.evidence).toBe("device_acknowledged");
+  });
+
+  test("missing NTP retains device-acknowledged clock evidence", () => {
+    const result: ClockResult = { ...expectedClock, ntp: null };
+    expect(clockReceipt("q6358", result)).toEqual({
+      detail: `q6358 clock: observed +580.512 s (±1.181 s) ${clockScope}`,
+      resultHash: createHash("sha256").update(JSON.stringify(result)).digest("hex"),
+      evidence: "device_acknowledged",
+    });
+  });
+
+  test.each(["time read failed", "time reply malformed", "host clock stepped backwards"] as const)(
+    "records unknown evidence and the failed result hash for %s", (reason) => {
+      const result: ClockResult = { state: "failed", reason };
+      expect(clockReceipt("q6358", result)).toEqual({
+        detail: `q6358 clock read FAILED: ${reason}`,
+        resultHash: createHash("sha256").update(JSON.stringify(result)).digest("hex"),
+        evidence: "unknown",
+      });
+    },
+  );
+});
 
 describe("clockCheck and formatClock", () => {
   test("reads fixture replies, brackets only time, and formats the exact observation", async () => {

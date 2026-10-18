@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { deviceText } from "./device-text";
 
 export type NtpInfo = {
@@ -51,6 +52,14 @@ export async function clockCheck(tool: string, camera: string, deps: ClockDeps):
     state: "ok", camera_time: new Date(cameraMs).toISOString(),
     host_before: new Date(before).toISOString(), host_after: new Date(after).toISOString(),
     ...offset, reference: "host system clock, sync not checked", ntp,
+  };
+}
+
+export function clockReceipt(camera: string, result: ClockResult) {
+  return {
+    detail: formatClock(camera, result).split("\n")[0]!,
+    resultHash: createHash("sha256").update(JSON.stringify(result)).digest("hex"),
+    evidence: result.state === "ok" ? "device_acknowledged" : "unknown",
   };
 }
 

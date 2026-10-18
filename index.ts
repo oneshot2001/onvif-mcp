@@ -16,7 +16,7 @@ import { parseParams } from "./vapix-params";
 import { parseEventMessage } from "./event-parse";
 import { openEventWebSocket } from "./event-websocket";
 import { deviceText } from "./device-text";
-import { clockCheck, formatClock } from "./clock";
+import { clockCheck, clockReceipt, formatClock } from "./clock";
 import { formatDeviceInfo, parseDeviceMeta, parseSnapshotUri } from "./device-info";
 import { formatPresetRecall } from "./ptz-output";
 import { formatDriftLines, type ConfigDiff } from "./config-drift";
@@ -355,7 +355,8 @@ server.tool("clock_check", "Read the camera clock offset against this host (host
   if (deny) { receipt("clock_check", { camera }, "deny", deny); return { content: [{ type: "text", text: `DENIED: ${deny}` }] }; }
   const result = await clockCheck("clock_check", camera, { now: Date.now, vapixPost });
   const text = formatClock(camera, result);
-  receipt("clock_check", { camera }, "allow", text.split("\n")[0]!, sha256(result), result.state === "ok" ? "device_acknowledged" : "unknown");
+  const { detail, resultHash, evidence } = clockReceipt(camera, result);
+  receipt("clock_check", { camera }, "allow", detail, resultHash, evidence);
   return { content: [{ type: "text", text }] };
 });
 
