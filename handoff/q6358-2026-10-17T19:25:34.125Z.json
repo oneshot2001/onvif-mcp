@@ -1,0 +1,82 @@
+{
+  "artifact": "camspec-handoff/0.1",
+  "spec": {
+    "name": "lab-baseline",
+    "sha256": "66bf82dc18085f7ccf2ee4e8ca32ada50b137a7b0e703324183cc63df47005b5"
+  },
+  "camera": {
+    "id": "q6358",
+    "model": "AXIS Q6358-LE",
+    "firmware": "12.9.57",
+    "serial": "E82725146996"
+  },
+  "agent": "claude-main",
+  "policy_sha256": "c4ac30eb8cd6c4ee71a6dbcaef4f67a5ce72ae6b51899de1a6fca3c5f76a6ce4",
+  "run": {
+    "started": "2026-10-17T19:25:31.827Z",
+    "finished": "2026-10-17T19:25:34.125Z"
+  },
+  "plan": [],
+  "applied": [],
+  "verify": {
+    "passed": true,
+    "failed": []
+  },
+  "rollback": null,
+  "scenarios": [],
+  "observation": null,
+  "notes": "Live check of K3/S1/S2 (clock, scene reference, scene changes), run 1 of 2.",
+  "clock": {
+    "state": "ok",
+    "camera_time": "2026-10-17T19:35:13.000Z",
+    "host_before": "2026-10-17T19:25:32.889Z",
+    "host_after": "2026-10-17T19:25:33.285Z",
+    "offset_s": 579.913,
+    "uncertainty_s": 1.198,
+    "reference": "host system clock, sync not checked",
+    "ntp": {
+      "enabled": true,
+      "synced_since_restart": false,
+      "nts_enabled": false,
+      "servers_source": "DHCP",
+      "static_servers": [],
+      "advertised_servers": []
+    }
+  },
+  "scene": {
+    "reference_frame": {
+      "file": "q6358-2026-10-17T19:25:34.125Z.jpg",
+      "sha256": "0340893bf770be01802c71273a5f6d6c8dd560e95f833928f9156cd71f76c53c",
+      "captured_before": "2026-10-17T19:25:33.444Z",
+      "captured_after": "2026-10-17T19:25:34.068Z"
+    },
+    "ptz_position": {
+      "pan": 143.25,
+      "tilt": -31.81,
+      "zoom": 92,
+      "read_before": "2026-10-17T19:25:34.071Z",
+      "read_after": "2026-10-17T19:25:34.124Z"
+    },
+    "location": {
+      "text": "Lab test position A",
+      "source": "installer-entered, not verified"
+    }
+  },
+  "receipts": {
+    "first_seq": 346,
+    "last_seq": 346,
+    "chain_head_hash": "aac9261e5844b5adaf36f185135f35989e7bc738a4ae66201f7b3d4ac1b735ef"
+  },
+  "scene_changes": {
+    "previous_handoff": {
+      "file": "q6358-2026-10-07T23:09:22.685Z.json",
+      "sha256": "a5da48e326548aa691b1b4a80c293629c1f4f59c9f59b18ec32611e577c79240"
+    },
+    "previous_reference_frame": null,
+    "ptz_coordinate_difference": null,
+    "entered_location_text_changed": null,
+    "observed_offset_difference_s": null,
+    "observed_offset_difference_allowance_s": null
+  },
+  "sig": "Q1RU+H6Bt0wWc/ufnQzBk//dw20XBT2rDkV/AIampyHJuDQ5BKQ1P9at4EP5CYoO1XvFtuu92DgJToWF11d5Cw=="
+}
