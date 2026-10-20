@@ -430,6 +430,21 @@ describe("commission specs", () => {
     expect(verifyHandoffs(h.root, h.publicKey)).toEqual({ count: 1, bad: [] });
   });
 
+  test("verifyHandoffs promptly rejects FIFO and symlink JSON candidates beside a valid signed handoff", async () => {
+    const h = harness();
+    writeFileSync(join(h.root, "specs", "verify.yaml"), "spec: camspec/0.1\nname: verify\n");
+    const result = await h.handlers.commission_verify!({ camera: "cam", spec: "verify" });
+    const { handoff } = JSON.parse(result.content[0]!.text);
+    expect(verifyHandoffs(h.root, h.publicKey)).toEqual({ count: 1, bad: [] });
+    expect(Bun.spawnSync(["mkfifo", join(h.root, "handoff", "fifo.json")]).exitCode).toBe(0);
+    symlinkSync(handoff, join(h.root, "handoff", "symlink.json"));
+
+    const started = performance.now();
+    const verified = verifyHandoffs(h.root, h.publicKey);
+    expect(performance.now() - started).toBeLessThan(1000);
+    expect({ ...verified, bad: verified.bad.sort() }).toEqual({ count: 3, bad: ["fifo.json", "symlink.json"] });
+  });
+
   test("verifies a legacy handoff signed without the notes or clock keys", () => {
     const h = harness();
     const handoff = {

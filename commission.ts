@@ -177,7 +177,9 @@ export function verifyHandoffs(root: string, publicKey: string): { count: number
   const bad: string[] = [];
   for (const file of files) {
     try {
-      const { sig, ...body } = JSON.parse(readFileSync(join(dir, file), "utf8"));
+      const path = join(dir, file);
+      if (!lstatSync(path).isFile()) { bad.push(file); continue; }
+      const { sig, ...body } = JSON.parse(readFileSync(path, "utf8"));
       const hash = new Bun.CryptoHasher("sha256").update(JSON.stringify(body)).digest("hex");
       if (typeof sig !== "string" || !edVerify(null, Buffer.from(hash), publicKey, Buffer.from(sig, "base64"))) bad.push(file);
     } catch { bad.push(file); }
