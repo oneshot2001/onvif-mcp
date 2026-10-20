@@ -162,6 +162,15 @@ export function readCommissionSpec(root: string, ref: string): { spec: Spec; sha
   return { spec: { spec: "camspec/0.1", name: doc.name, ...(applies ? { applies_to: applies as { models: string[] } } : {}), params: params as Record<string, string>, presets, scenarios, observe }, sha256: new Bun.CryptoHasher("sha256").update(bytes).digest("hex") };
 }
 
+export function handoffHeads(dir: string): string[] {
+  const files = existsSync(dir) ? readdirSync(dir).filter((file) => file.endsWith(".json")) : [];
+  return files.map((file) => {
+    const path = join(dir, file);
+    if (!lstatSync(path).isFile()) throw new Error(`handoff '${file}' is not a regular file`);
+    return JSON.parse(readFileSync(path, "utf8")).receipts.chain_head_hash;
+  });
+}
+
 export function verifyHandoffs(root: string, publicKey: string): { count: number; bad: string[] } {
   const dir = join(root, "handoff");
   const files = existsSync(dir) ? readdirSync(dir).filter((file) => file.endsWith(".json")) : [];

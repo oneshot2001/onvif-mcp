@@ -10,7 +10,7 @@ import { join } from "node:path";
 import { AarWireProducer, verifyBundleDir, type WireEmitInput } from "./receipts-aar/producer";
 import { checkAarJournal } from "./receipts-aar/journal";
 import { sendPreset, sendSnapshot } from "./receipts-aar/actions";
-import { hardDenied, registerCommission, verifyHandoffs } from "./commission";
+import { handoffHeads, hardDenied, registerCommission, verifyHandoffs } from "./commission";
 import { snapshotContent } from "./snapshot-content";
 import { parseParams } from "./vapix-params";
 import { parseEventMessage } from "./event-parse";
@@ -533,12 +533,7 @@ server.tool("get_receipts", "Return the caller's last N signed receipts from the
 
 try {
   const head = lastReceipt();
-  const handoffDir = join(ROOT, "handoff");
-  const handoffHeads: string[] = existsSync(handoffDir)
-    ? readdirSync(handoffDir).filter((file) => file.endsWith(".json"))
-      .map((file) => JSON.parse(readFileSync(join(handoffDir, file), "utf8")).receipts.chain_head_hash)
-    : [];
-  const conflict = emptyChainConflict(head, handoffHeads);
+  const conflict = emptyChainConflict(head, handoffHeads(join(ROOT, "handoff")));
   if (conflict !== null) throw new Error(conflict);
 } catch (error) {
   console.error(`${error instanceof Error ? error.message : String(error)} (${LOG})`);
