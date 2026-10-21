@@ -22,6 +22,7 @@ import { formatPresetRecall } from "./ptz-output";
 import { formatDriftLines, type ConfigDiff } from "./config-drift";
 import { appendLocked, emptyChainConflict, formatReceiptsText, lastReceiptFrom, missingHandoffHeads, outcomeEvidence, selectReceipts, verifyChain } from "./receipt-chain";
 import { curlRequest } from "./curl-args";
+import { currentInvocationId, withInvocations } from "./invocation";
 import { cameraPinProblem } from "./camera-pins";
 import { accountFor, type CameraAccounts } from "./account-for";
 import { keyModeProblem } from "./key-perms";
@@ -178,7 +179,7 @@ function camOf(id: string) {
 async function vapix(tool: string, camera: string, path: string, outFile?: string): Promise<{ ok: boolean; body: string }> {
   const cam = camOf(camera);
   const account = accountFor(tool, cam);
-  const { args, stdin } = curlRequest({ ...cam, user: account.user }, passwords[account.credKey]!, path, { outFile });
+  const { args, stdin } = curlRequest({ ...cam, user: account.user }, passwords[account.credKey]!, path, { outFile, invocationId: currentInvocationId() });
   const p = Bun.spawnSync(args, { stdin: Buffer.from(stdin) });
   return { ok: p.exitCode === 0, body: p.stdout.toString() };
 }
@@ -186,7 +187,7 @@ async function vapix(tool: string, camera: string, path: string, outFile?: strin
 async function vapixPost(tool: string, camera: string, path: string, body: unknown): Promise<{ ok: boolean; body: string }> {
   const cam = camOf(camera);
   const account = accountFor(tool, cam);
-  const { args, stdin } = curlRequest({ ...cam, user: account.user }, passwords[account.credKey]!, path, { jsonBody: body, maxTime: 15 });
+  const { args, stdin } = curlRequest({ ...cam, user: account.user }, passwords[account.credKey]!, path, { jsonBody: body, maxTime: 15, invocationId: currentInvocationId() });
   const p = Bun.spawnSync(args, { stdin: Buffer.from(stdin) });
   return { ok: p.exitCode === 0, body: p.stdout.toString() };
 }
@@ -249,6 +250,7 @@ async function soap(tool: string, camera: string, body: string): Promise<{ ok: b
   const cam = camOf(camera);
   const account = accountFor(tool, cam);
   const { args, stdin } = curlRequest({ ...cam, user: account.user }, passwords[account.credKey]!, "/onvif/services", {
+    invocationId: currentInvocationId(),
     soapBody: `<?xml version="1.0"?><s:Envelope xmlns:s="http://www.w3.org/2003/05/soap-envelope"><s:Body>${body}</s:Body></s:Envelope>`,
   });
   const p = Bun.spawnSync(args, { stdin: Buffer.from(stdin) });
@@ -328,6 +330,7 @@ async function emitAar(tool: string, camera: string, actionName: "camera.stream.
 }
 
 const server = new McpServer({ name: "onvif-mcp", version: "0.1.0" });
+withInvocations(server);
 registerCommission(server, { root: ROOT, agent: AGENT, policy, policyBytes, cameras, privateKey: PRIV, vapix, vapixPost, observeEvents, configParams, parseParams, inGroup, sha256, receipt, lastReceipt, snapshot, checkSnapshot: () => rateDenied("snapshot"), checkActuation: () => rateDenied("actuation"), clockCheck: (tool, camera) => clockCheck(tool, camera, { now: Date.now, vapixPost }) });
 
 server.tool("list_cameras", "List cameras this agent may access, with live device info", {}, async () => {

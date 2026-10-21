@@ -10,7 +10,7 @@ export function curlRequest(
   cam: { base: string; user: string; pin?: string },
   password: string,
   path: string,
-  opts: { outFile?: string; jsonBody?: unknown; soapBody?: string; maxTime?: number } = {},
+  opts: { outFile?: string; jsonBody?: unknown; soapBody?: string; maxTime?: number; invocationId?: string } = {},
 ): { args: string[]; stdin: string } {
   const url = `${cam.base}${path}`;
   const credentials = `${cam.user}:${password}`.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
@@ -22,6 +22,10 @@ export function curlRequest(
   }
   if (opts.jsonBody !== undefined) args.push("-H", "content-type: application/json", "--data-raw", JSON.stringify(opts.jsonBody));
   if (opts.soapBody !== undefined) args.push("-H", "Content-Type: application/soap+xml", "--data-raw", opts.soapBody);
+  if (opts.invocationId !== undefined) {
+    if (typeof opts.invocationId !== "string" || !/^[0-9a-f]{32}$/.test(opts.invocationId)) throw new Error("invalid invocation ID");
+    args.push("-H", `X-AAR-Invocation-ID: ${opts.invocationId}`);
+  }
   args.push(url);
   if (opts.outFile) args.push("-o", opts.outFile);
   return { args, stdin: `user = "${credentials}"\n` };

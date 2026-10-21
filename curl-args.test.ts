@@ -6,6 +6,29 @@ const password = "camera-secret-password";
 const jsonBody = { method: "getConfiguration" };
 const soapBody = '<?xml version="1.0"?><s:Envelope><s:Body/></s:Envelope>';
 
+describe("invocation header", () => {
+  const invocationId = "0123456789abcdef0123456789abcdef";
+  for (const [name, opts] of [
+    ["GET", {}], ["JSON-body", { jsonBody }], ["SOAP", { soapBody }], ["outFile", { outFile: "/tmp/snapshot.jpg" }],
+  ] as const) {
+    test(`${name} carries exactly one invocation header before the URL, only when set`, () => {
+      const { args } = curlRequest(cam, password, "/request", { ...opts, invocationId });
+      const header = `X-AAR-Invocation-ID: ${invocationId}`;
+      expect(args.filter(arg => arg.startsWith("X-AAR-Invocation-ID:"))).toEqual([header]);
+      expect(args[args.indexOf(header) - 1]).toBe("-H");
+      expect(args.indexOf(header)).toBeLessThan(args.indexOf(`${cam.base}/request`));
+      const unset = curlRequest(cam, password, "/request", opts);
+      expect(unset.args.some(arg => /x-aar-/i.test(arg))).toBe(false);
+    });
+  }
+  test.each([
+    invocationId.toUpperCase(), invocationId.slice(1), invocationId + "0",
+    invocationId + "\r", invocationId + "\n", invocationId + "\r\nX-Injected: yes", "",
+  ])("rejects malformed invocation ID %j", invocationId => {
+    expect(() => curlRequest(cam, password, "/request", { invocationId })).toThrow("invalid invocation ID");
+  });
+});
+
 let canListen = false;
 try {
   const server = Bun.serve({ hostname: "127.0.0.1", port: 0, fetch: () => new Response() });
