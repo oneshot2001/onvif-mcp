@@ -150,6 +150,7 @@ function receipt(tool: string, params: unknown, decision: "allow" | "deny", deta
   appendLocked(LOG, (prev) => {
     const body = {
       seq: prev.seq + 1, ts: new Date().toISOString(),
+      invocation_id: currentInvocationId() ?? null,
       profile: "aar-0.2-draft-alignment",
       principal: { role: "agent", type: "service", id: AGENT },
       enforcement_point: "onvif-mcp/0.1.0",

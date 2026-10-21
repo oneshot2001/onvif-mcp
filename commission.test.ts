@@ -7,6 +7,7 @@ import { parsePtzPosition, readCommissionSpec, registerCommission, verifyHandoff
 import { makeLimiter } from "./rate-limit";
 import { deviceText } from "./device-text";
 import type { ClockResult } from "./clock";
+import { currentInvocationId, withInvocations } from "./invocation";
 
 const fakeClock: Extract<ClockResult, { state: "ok" }> = {
   state: "ok", camera_time: "2026-10-17T00:09:40.000Z",
@@ -27,7 +28,7 @@ function harness(options: { ptz?: boolean; aoa?: boolean; aoaInstalled?: boolean
   const state: Record<string, string> = { "Time.NTP.Server": "old", "Image.I0.Appearance.Rotation": "0" };
   const writes: string[] = [];
   const posts: unknown[] = [];
-  const receipts: Array<{ tool: string; decision: string; detail: string; resultHash?: string; evidence?: string }> = [];
+  const receipts: Array<{ tool: string; decision: string; detail: string; resultHash?: string; evidence?: string; invocationId?: string }> = [];
   const presets = new Set<string>();
   let aoa = { devices: [{ id: 1 }], scenarios: [{ id: 4, name: "keep-me", type: "motion", devices: [{ id: 1 }], triggers: [{ type: "includeArea", vertices: [[-0.5, -0.5], [0.5, -0.5], [0.5, 0.5]] }], objectClassifications: [{ type: "vehicle" }] }] };
   let seq = 0;
@@ -53,7 +54,7 @@ function harness(options: { ptz?: boolean; aoa?: boolean; aoaInstalled?: boolean
     clockCheck: async () => structuredClone(fakeClock),
     checkSnapshot: () => null,
     snapshot: async (_tool, _camera, file) => { copyFileSync(join(import.meta.dir, "fixtures/scene/synthetic-8x8.jpg"), file); return true; },
-    receipt: (tool, _params, decision, detail, resultHash, evidence) => { seq++; receipts.push({ tool, decision, detail, resultHash, evidence }); },
+    receipt: (tool, _params, decision, detail, resultHash, evidence) => { seq++; receipts.push({ tool, decision, detail, resultHash, evidence, invocationId: currentInvocationId() }); },
     configParams: async (_tool, _camera, groups) => ({ ok: true, params: Object.fromEntries(Object.entries(state).filter(([param]) => groups.some((group) => param === group || param.startsWith(`${group}.`)))) }),
     vapix: async (_tool, _camera, path) => {
       if (path.includes("Brand.ProdShortName")) return { ok: true, body: "root.Brand.ProdShortName=AXIS TEST\nroot.Properties.Firmware.Version=1.2.3\nroot.Properties.System.SerialNumber=serial\n" };
@@ -83,6 +84,7 @@ function harness(options: { ptz?: boolean; aoa?: boolean; aoaInstalled?: boolean
     },
     observeEvents: async (_tool, _camera, topics) => ({ events: topics.length ? [{ topic: topics[0]!, timestamp: 1_700_000_000_000, message: { data: { active: "1" } } }] : [], warnings: [] }),
   };
+  withInvocations(server as never);
   registerCommission(server as never, deps);
   return { root, state, writes, posts, receipts, presets, handlers, deps, aoa: () => aoa, privateKey, publicKey: publicKey.export({ type: "spki", format: "pem" }).toString() };
 }
@@ -96,6 +98,51 @@ describe("commission specs", () => {
   afterEach(() => {
     if (previousNodeEnv === undefined) delete process.env.NODE_ENV;
     else process.env.NODE_ENV = previousNodeEnv;
+  });
+
+  test("wrapped commission_apply shares one invocation across writes, scenarios and rollback; denial gets its own", async () => {
+    let callId: string | undefined;
+    const h = harness({ checkActuation: () => { callId = currentInvocationId(); return null; } });
+    writeFileSync(join(h.root, "specs", "invocation.yaml"), `spec: camspec/0.1
+name: invocation
+params:
+  Image.I0.Appearance.Rotation: '180'
+scenarios:
+  - name: lab-motion
+    type: motion
+    objects: [human]
+    area: [[-0.9,-0.9],[0.9,-0.9],[0.9,0.9],[-0.9,0.9]]
+  - name: lab-vehicle
+    type: motion
+    objects: [vehicle]
+    area: [[-0.5,-0.5],[0.5,-0.5],[0.5,0.5],[-0.5,0.5]]
+observe: { seconds: 0 }
+`);
+    process.env.COMMISSION_FAIL_PARAM = "Image.I0.Appearance.Rotation";
+    const result = JSON.parse((await h.handlers.commission_apply!({ camera: "cam", spec: "invocation", approve: true })).content[0]!.text);
+    expect(result.rolled_back).toBe(true);
+    expect(result.rollback_verified).toBe(true);
+    expect(callId).toMatch(/^[0-9a-f]{32}$/);
+    expect(h.receipts.map(r => r.detail)).toEqual([
+      "wrote Image.I0.Appearance.Rotation",
+      "deployed scenario lab-motion", "deployed scenario lab-vehicle",
+      "rolled back Image.I0.Appearance.Rotation", "restored prior AOA configuration",
+      "verification FAILED", expect.stringMatching(/^handoff /),
+    ]);
+    for (const receipt of h.receipts) expect(receipt.invocationId).toBe(callId);
+    expect(currentInvocationId()).toBeUndefined();
+
+    const count = h.receipts.length;
+    const writes = [...h.writes];
+    h.deps.policy["claude-main"]!.cameras = [];
+    const denied = await h.handlers.commission_apply!({ camera: "cam", spec: "invocation", approve: true });
+    expect(denied.content[0]!.text).toStartWith("DENIED:");
+    expect(h.writes).toEqual(writes);
+    expect(h.receipts).toHaveLength(count + 1);
+    expect(h.receipts[count]!.decision).toBe("deny");
+    expect(h.receipts[count]!.invocationId).toMatch(/^[0-9a-f]{32}$/);
+    expect(h.receipts[count]!.invocationId).not.toBe(callId);
+    expect(currentInvocationId()).toBeUndefined();
   });
 
   test("commission_plan does not parse failed device metadata", async () => {
