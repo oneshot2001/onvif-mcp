@@ -171,10 +171,11 @@ export function handoffHeads(dir: string): string[] {
   });
 }
 
-export function verifyHandoffs(root: string, publicKey: string): { count: number; bad: string[] } {
+export function verifyHandoffs(root: string, publicKey: string): { count: number; bad: string[]; heads: Array<{ file: string; chain_head_hash: string }> } {
   const dir = join(root, "handoff");
   const files = existsSync(dir) ? readdirSync(dir).filter((file) => file.endsWith(".json")) : [];
   const bad: string[] = [];
+  const heads: Array<{ file: string; chain_head_hash: string }> = [];
   for (const file of files) {
     try {
       const path = join(dir, file);
@@ -182,9 +183,10 @@ export function verifyHandoffs(root: string, publicKey: string): { count: number
       const { sig, ...body } = JSON.parse(readFileSync(path, "utf8"));
       const hash = new Bun.CryptoHasher("sha256").update(JSON.stringify(body)).digest("hex");
       if (typeof sig !== "string" || !edVerify(null, Buffer.from(hash), publicKey, Buffer.from(sig, "base64"))) bad.push(file);
+      else heads.push({ file, chain_head_hash: body.receipts?.chain_head_hash });
     } catch { bad.push(file); }
   }
-  return { count: files.length, bad };
+  return { count: files.length, bad, heads };
 }
 
 export function registerCommission(server: McpServer, d: CommissionDeps) {

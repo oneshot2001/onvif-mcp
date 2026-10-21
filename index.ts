@@ -5,7 +5,7 @@ import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js"
 import { z } from "zod";
 import { cameraId, presetName, paramName } from "./schemas";
 import { generateKeyPairSync, sign as edSign, createHash } from "node:crypto";
-import { existsSync, readFileSync, readdirSync, writeFileSync, mkdirSync, statSync } from "node:fs";
+import { existsSync, readFileSync, writeFileSync, mkdirSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { AarWireProducer, verifyBundleDir, type WireEmitInput } from "./receipts-aar/producer";
 import { checkAarJournal } from "./receipts-aar/journal";
@@ -48,16 +48,7 @@ if (process.argv.includes("--verify")) {
     } catch { /* Invalid JSON is already reported by verifyChain. */ }
   }
   const handoffs = verifyHandoffs(ROOT, publicKey);
-  const handoffDir = join(ROOT, "handoff");
-  const heads: Array<{ file: string; chain_head_hash: string }> = [];
-  if (existsSync(handoffDir)) {
-    for (const file of readdirSync(handoffDir).filter((file) => file.endsWith(".json"))) {
-      if (handoffs.bad.includes(file)) continue;
-      const handoff = JSON.parse(readFileSync(join(handoffDir, file), "utf8"));
-      heads.push({ file, chain_head_hash: handoff.receipts?.chain_head_hash });
-    }
-  }
-  const missing = missingHandoffHeads(chainHashes, heads);
+  const missing = missingHandoffHeads(chainHashes, handoffs.heads);
   if (missing.length) console.log(`handoff head missing — chain truncated? ${missing.join(", ")}`);
   const bad = chain.bad.length + handoffs.bad.length + missing.length;
   console.log(bad === 0 ? `chain OK — ${chain.count} receipts, every hash linked + signature valid; ${handoffs.count} handoff signatures valid, heads present` : `${bad} broken receipts or handoffs${handoffs.bad.length ? ` (${handoffs.bad.join(", ")})` : ""}`);

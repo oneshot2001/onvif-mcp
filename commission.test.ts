@@ -161,7 +161,7 @@ describe("commission specs", () => {
       const handoff = JSON.parse(readFileSync(result.handoff, "utf8"));
       expect(handoff.clock).toEqual(fakeClock);
       expect(handoff.artifact).toBe("camspec-handoff/0.1");
-      expect(verifyHandoffs(h.root, h.publicKey)).toEqual({ count: 1, bad: [] });
+      expect(verifyHandoffs(h.root, h.publicKey)).toMatchObject({ count: 1, bad: [] });
     }
     if (approve) {
       expect(result.passed).toBe(!rollback);
@@ -252,7 +252,7 @@ describe("commission specs", () => {
     const handoff = JSON.parse(readFileSync(result.handoff, "utf8"));
     expect(handoff.observation.warnings[0]).toBe(warning);
     expect(h.receipts).toContainEqual(expect.objectContaining({ detail: `observation FAILED: ${warning}`, evidence: undefined }));
-    expect(verifyHandoffs(h.root, h.publicKey)).toEqual({ count: 1, bad: [] });
+    expect(verifyHandoffs(h.root, h.publicKey)).toMatchObject({ count: 1, bad: [] });
   });
 
   test("approved apply shares the actuation budget and receipts rate denials; previews do not count", async () => {
@@ -351,7 +351,7 @@ describe("commission specs", () => {
     expect(h.state["Image.I0.Appearance.Rotation"]).toBe("0");
     expect(h.writes).toHaveLength(2);
     expect(JSON.parse(readFileSync(out.handoff, "utf8")).notes).toBe("Readback failed; rolled back.");
-    expect(verifyHandoffs(h.root, h.publicKey)).toEqual({ count: 1, bad: [] });
+    expect(verifyHandoffs(h.root, h.publicKey)).toMatchObject({ count: 1, bad: [] });
   });
 
   test.each(["commission_apply", "commission_verify"] as const)("%s awaits the clock before finishing and captures its receipts", async (tool) => {
@@ -375,7 +375,7 @@ describe("commission specs", () => {
     expect(Date.parse(handoff.run.finished)).toBeGreaterThanOrEqual(Date.parse(handoff.clock.host_after));
     expect(handoff.receipts.last_seq).toBe(h.receipts.length - 1);
     expect(handoff.receipts.chain_head_hash).toBe(`hash-${h.receipts.length - 1}`);
-    expect(verifyHandoffs(h.root, h.publicKey)).toEqual({ count: 1, bad: [] });
+    expect(verifyHandoffs(h.root, h.publicKey)).toMatchObject({ count: 1, bad: [] });
   });
 
   for (const tool of ["commission_apply", "commission_verify"] as const) {
@@ -392,7 +392,7 @@ describe("commission specs", () => {
       expect(handoff.clock).toEqual({ state: "failed", reason: "clock check threw" });
       expect(out.passed).toBe(passed);
       expect(handoff.verify).toEqual({ passed, failed: out.failed });
-      expect(verifyHandoffs(h.root, h.publicKey)).toEqual({ count: 1, bad: [] });
+      expect(verifyHandoffs(h.root, h.publicKey)).toMatchObject({ count: 1, bad: [] });
     });
 
     test.each(["sign", "write"])(`${tool} surfaces handoff %s errors after awaiting the clock`, async (failure) => {
@@ -418,7 +418,7 @@ describe("commission specs", () => {
     const handoff = JSON.parse(readFileSync(out.handoff, "utf8"));
     expect(handoff.notes).toBe(notes);
     expect(Object.keys(handoff)).toEqual(["artifact", "spec", "camera", "agent", "policy_sha256", "run", "plan", "applied", "verify", "rollback", "scenarios", "observation", "notes", "clock", "scene", "receipts", "scene_changes", "sig"]);
-    expect(verifyHandoffs(h.root, h.publicKey)).toEqual({ count: 1, bad: [] });
+    expect(verifyHandoffs(h.root, h.publicKey)).toMatchObject({ count: 1, bad: [] });
   });
 
   test("verify without notes records null", async () => {
@@ -427,7 +427,7 @@ describe("commission specs", () => {
     const result = await h.handlers.commission_verify!({ camera: "cam", spec: "verify" });
     const out = JSON.parse(result.content[0]!.text);
     expect(JSON.parse(readFileSync(out.handoff, "utf8")).notes).toBeNull();
-    expect(verifyHandoffs(h.root, h.publicKey)).toEqual({ count: 1, bad: [] });
+    expect(verifyHandoffs(h.root, h.publicKey)).toMatchObject({ count: 1, bad: [] });
   });
 
   test("verifyHandoffs promptly rejects FIFO and symlink JSON candidates beside a valid signed handoff", async () => {
@@ -435,14 +435,14 @@ describe("commission specs", () => {
     writeFileSync(join(h.root, "specs", "verify.yaml"), "spec: camspec/0.1\nname: verify\n");
     const result = await h.handlers.commission_verify!({ camera: "cam", spec: "verify" });
     const { handoff } = JSON.parse(result.content[0]!.text);
-    expect(verifyHandoffs(h.root, h.publicKey)).toEqual({ count: 1, bad: [] });
+    expect(verifyHandoffs(h.root, h.publicKey)).toMatchObject({ count: 1, bad: [] });
     expect(Bun.spawnSync(["mkfifo", join(h.root, "handoff", "fifo.json")]).exitCode).toBe(0);
     symlinkSync(handoff, join(h.root, "handoff", "symlink.json"));
 
     const started = performance.now();
     const verified = verifyHandoffs(h.root, h.publicKey);
     expect(performance.now() - started).toBeLessThan(1000);
-    expect({ ...verified, bad: verified.bad.sort() }).toEqual({ count: 3, bad: ["fifo.json", "symlink.json"] });
+    expect({ count: verified.count, bad: verified.bad.sort() }).toEqual({ count: 3, bad: ["fifo.json", "symlink.json"] });
   });
 
   test("verifies a legacy handoff signed without the notes or clock keys", () => {
@@ -460,7 +460,7 @@ describe("commission specs", () => {
     const sig = sign(null, Buffer.from(hash), h.privateKey).toString("base64");
     mkdirSync(join(h.root, "handoff"));
     writeFileSync(join(h.root, "handoff", "legacy.json"), JSON.stringify({ ...handoff, sig }, null, 2) + "\n");
-    expect(verifyHandoffs(h.root, h.publicKey)).toEqual({ count: 1, bad: [] });
+    expect(verifyHandoffs(h.root, h.publicKey)).toMatchObject({ count: 1, bad: [] });
   });
 
   test("rejects unsupported scenario types and missing AOA grants before device calls", async () => {
@@ -509,7 +509,7 @@ describe("commission specs", () => {
       expect(observation.warnings).toContain(warning);
       expect(observation.warnings.join("\n")).not.toContain("0 events in window");
     }
-    expect(verifyHandoffs(h.root, h.publicKey)).toEqual({ count: 1, bad: [] });
+    expect(verifyHandoffs(h.root, h.publicKey)).toMatchObject({ count: 1, bad: [] });
   });
 
   test.each([
@@ -536,7 +536,7 @@ describe("commission specs", () => {
     }
     expect(handoff.observation.warnings).toEqual([warning]);
     expect(h.receipts.some((receipt) => receipt.detail.startsWith("observed "))).toBeFalse();
-    expect(verifyHandoffs(h.root, h.publicKey)).toEqual({ count: 1, bad: [] });
+    expect(verifyHandoffs(h.root, h.publicKey)).toMatchObject({ count: 1, bad: [] });
   });
 
   test("a refused event subscription records no measured window", async () => {
@@ -557,7 +557,7 @@ describe("commission specs", () => {
     expect(handoff.observation.warnings).toEqual([warning]);
     expect(h.receipts).toContainEqual(expect.objectContaining({ tool: "commission_apply", detail: `observation FAILED: ${warning}`, evidence: undefined }));
     expect(h.receipts.some((receipt) => receipt.detail.startsWith("observed "))).toBeFalse();
-    expect(verifyHandoffs(h.root, h.publicKey)).toEqual({ count: 1, bad: [] });
+    expect(verifyHandoffs(h.root, h.publicKey)).toMatchObject({ count: 1, bad: [] });
   });
 
   test("an observed window with no events keeps the zero-event warning", async () => {
@@ -662,7 +662,7 @@ describe("scene reference", () => {
     expect(typeof output.handoff).toBe("string");
     const handoff = JSON.parse(readFileSync(output.handoff, "utf8"));
     expect(handoff.verify.passed).toBeTrue();
-    expect(verifyHandoffs(h.root, h.publicKey)).toEqual({ count: 1, bad: [] });
+    expect(verifyHandoffs(h.root, h.publicKey)).toMatchObject({ count: 1, bad: [] });
     return { handoff, file: output.handoff as string };
   };
 
@@ -807,7 +807,7 @@ describe("changes since previous handoff", () => {
       observed_offset_difference_s: 0.5,
       observed_offset_difference_allowance_s: 2.381,
     });
-    expect(verifyHandoffs(h.root, h.publicKey)).toEqual({ count: 2, bad: [] });
+    expect(verifyHandoffs(h.root, h.publicKey)).toMatchObject({ count: 2, bad: [] });
   });
 
   test("verify skips FIFO and symlink JSON candidates and compares the real signed handoff", async () => {

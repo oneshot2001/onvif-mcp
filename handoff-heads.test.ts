@@ -43,7 +43,7 @@ describe("startup handoff heads", () => {
       writeFileSync(join(dir, `${i}.json`), JSON.stringify({ ...body, sig }));
     }
     expect(verifyHandoffs(root, publicKey.export({ type: "spki", format: "pem" }).toString()))
-      .toEqual({ count: 2, bad: [] });
+      .toEqual({ count: 2, bad: [], heads: heads.map((chain_head_hash, i) => ({ file: `${i}.json`, chain_head_hash })) });
     expect(handoffHeads(dir).sort()).toEqual(heads);
   });
 
