@@ -1,4 +1,5 @@
 import { createHash, verify as edVerify } from "node:crypto";
+import { escapeInvisible } from "./device-text";
 import { appendFileSync, closeSync, existsSync, fstatSync, linkSync, openSync, readFileSync, statSync, unlinkSync, writeFileSync } from "node:fs";
 
 export const STALE_LOCK_MS = 60_000;
@@ -10,7 +11,7 @@ export function outcomeEvidence(tool: string, decision: "allow" | "deny", detail
 
 export function formatReceiptsText(lines: string[]): string {
   // Escape display text only; stored receipt bytes remain unchanged.
-  return lines.join("\n").replace(/\u2028/g, "\\u2028").replace(/\u2029/g, "\\u2029") || "(empty chain)";
+  return escapeInvisible(lines.join("\n")) || "(empty chain)";
 }
 
 export function selectReceipts(lines: string[], agent: string, n: number): string[] {

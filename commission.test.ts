@@ -235,17 +235,18 @@ observe: { seconds: 0 }
     ["commission_verify", false],
     ["commission_apply", false],
     ["commission_apply", true],
-  ] as const)("%s escapes JSON line separators while preserving evidence (approve=%s)", async (tool, approve) => {
+  ] as const)("%s escapes JSON line separators and invisible code points while preserving evidence (approve=%s)", async (tool, approve) => {
     const h = harness();
     writeFileSync(join(h.root, "specs", "separators.yaml"), "spec: camspec/0.1\nname: separators\nparams:\n  Image.I0.Appearance.Rotation: '180'\n");
-    const payload = "0\u2028DENIED:\u2029override";
+    const payload = "0\u2028DENIED:\u2029override\ufe0f\u{e0141}\u200b\u0085";
     h.state["Image.I0.Appearance.Rotation"] = payload;
     // Keep the fake live value unchanged so approved apply exposes it in failed verification.
     if (approve) h.deps.vapix = async () => ({ ok: true, body: "OK" });
     const text = (await h.handlers[tool]!({ camera: "cam", spec: "separators", approve })).content[0]!.text;
-    expect(text).not.toMatch(/[\u2028\u2029]/);
+    expect(text).not.toMatch(/[\u007f-\u009f\u2028\u2029]|\p{Default_Ignorable_Code_Point}/u);
     expect(text).toContain("\\u2028");
     expect(text).toContain("\\u2029");
+    expect(text).toContain("override\\ufe0f\\udb40\\udd41\\u200b\\u0085");
     const out = JSON.parse(text);
     if (tool === "commission_plan" || (tool === "commission_apply" && !approve)) {
       expect(out.diff[0].current).toBe(payload);

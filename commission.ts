@@ -1,7 +1,7 @@
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import { cameraId, specRef } from "./schemas";
-import { deviceText } from "./device-text";
+import { deviceText, escapeInvisible } from "./device-text";
 import type { ClockResult } from "./clock";
 import { createHash, createPublicKey, randomUUID, sign as edSign, verify as edVerify } from "node:crypto";
 import { existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, realpathSync, renameSync, rmSync, writeFileSync } from "node:fs";
@@ -515,7 +515,7 @@ export function registerCommission(server: McpServer, d: CommissionDeps) {
     return { content: [{ type: "text" as const, text }], isError: !deny };
   };
   // Display copies only: finish() and receipt hashes retain the raw evidence.
-  const jsonOutput = (value: unknown) => JSON.stringify(value, null, 2).replace(/\u2028/g, "\\u2028").replace(/\u2029/g, "\\u2029");
+  const jsonOutput = (value: unknown) => escapeInvisible(JSON.stringify(value, null, 2));
   const scenarioOutput = (scenarios: ScenarioResult[]) => scenarios.map((scenario) => ({ ...scenario, readback_diff: scenario.readback_diff.map((detail) => detail.startsWith("AOA ") ? deviceText(detail) : detail) }));
   const verifyOutput = (verify: { passed: boolean; failed: Failure[] }) => ({ ...verify, failed: verify.failed.map((failure) => failure.param.startsWith("scenario:") && failure.observed?.startsWith("AOA ") ? { ...failure, observed: deviceText(failure.observed) } : failure) });
   const observationOutput = (observation: Observation | null) => observation && ({ ...observation, warnings: observation.warnings.map((warning) => /^(event stream error:|event observation failed:)/.test(warning) ? deviceText(warning) : warning) });

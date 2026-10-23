@@ -22,6 +22,22 @@ describe("config_drift display", () => {
     expect(hash()).toBe(before);
   });
 
+  test("escapes invisible code points in drift names and drops them from values, preserving evidence", () => {
+    const param = "Image.I0.Text\u{e0149}\u{e0147}.String\u200d";
+    const diff = { changed: [], added: [{ param, live: "Lobby\ufe0f\u{e0100}" }], removed: [] };
+    const raw = JSON.stringify(diff);
+
+    expect(formatDriftLines(diff)).toEqual(['added Image.I0.Text\\udb40\\udd49\\udb40\\udd47.String\\u200d: "Lobby"']);
+    expect(JSON.stringify(diff)).toBe(raw);
+  });
+
+  test("keeps a real invisible key distinct from its literal backslash spelling", () => {
+    const added = ["Image.I0.Text\u200b.String", "Image.I0.Text\\u200b.String"].map((param) => ({ param, live: "new" }));
+    const [real, literal] = formatDriftLines({ changed: [], added, removed: [] });
+    expect(real).toBe('added Image.I0.Text\\u200b.String: "new"');
+    expect(literal).toBe('added Image.I0.Text\\\\u200b.String: "new"');
+  });
+
   test("replaces every control and Unicode line separator in all drift names without quoting", () => {
     const controls = Array.from({ length: 32 }, (_, i) => String.fromCharCode(i)).join("")
       + Array.from({ length: 33 }, (_, i) => String.fromCharCode(127 + i)).join("") + "\u2028\u2029";

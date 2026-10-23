@@ -1,4 +1,4 @@
-import { deviceText } from "./device-text";
+import { deviceText, escapeInvisible } from "./device-text";
 
 export type ConfigDiff = {
   changed: Array<{ param: string; baseline: string; live: string }>;
@@ -8,7 +8,7 @@ export type ConfigDiff = {
 
 // Keep names readable at the display boundary; evidence retains the raw keys.
 function displayParamName(param: string): string {
-  return param.replace(/[\u0000-\u001f\u007f-\u009f\u2028\u2029]/g, " ");
+  return escapeInvisible(param.replace(/[\u0000-\u001f\u007f-\u009f\u2028\u2029]/g, " ").replace(/\\/g, "\\\\"));
 }
 
 export function formatDriftLines(diff: ConfigDiff): string[] {

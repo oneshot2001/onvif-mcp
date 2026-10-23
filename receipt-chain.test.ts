@@ -65,6 +65,16 @@ describe("get_receipts text", () => {
     expect(lines[0]).toContain("\u2029");
   });
 
+  test("shows invisible code points as escapes while JSON still parses to the raw receipt", () => {
+    const detail = "dry-run: would set Image.I0.Text.String: Lobby\ufe0f\u{e0141}\u200b\u0085 → Lobby";
+    const receipt = { principal: { id: "caller" }, detail };
+    const text = formatReceiptsText([JSON.stringify(receipt)]);
+
+    expect(text).not.toMatch(/[\u007f-\u009f]|\p{Default_Ignorable_Code_Point}/u);
+    expect(text).toContain("Lobby\\ufe0f\\udb40\\udd41\\u200b\\u0085 →");
+    expect(JSON.parse(text)).toEqual(receipt);
+  });
+
   test("preserves ordinary JSONL and the empty-chain message", () => {
     const lines = ["one", "two"].map((detail) => JSON.stringify({ detail }));
     expect(formatReceiptsText(lines)).toBe(lines.join("\n"));
