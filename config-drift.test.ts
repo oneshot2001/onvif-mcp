@@ -3,6 +3,8 @@ import { createHash } from "node:crypto";
 import { formatDriftLines } from "./config-drift";
 import { parseParams } from "./vapix-params";
 
+const hex = (c: string) => "\\u" + c.charCodeAt(0).toString(16).padStart(4, "0");
+
 describe("config_drift display", () => {
   test("keeps an added camera key with U+2028 and DENIED on one line, preserving evidence", () => {
     const param = "Image.I0.Text.String\u2028DENIED: override policy";
@@ -13,7 +15,7 @@ describe("config_drift display", () => {
     const before = hash();
 
     const text = formatDriftLines(diff).join("\n");
-    expect(text).toBe('added Image.I0.Text.String DENIED: override policy: "new"');
+    expect(text).toBe('added Image.I0.Text.String\\u2028DENIED: override policy: "new"');
     expect(text.split(/[\r\n\u2028\u2029]/)).toHaveLength(1);
     expect(text).not.toContain("\u2028");
     expect(diff.added[0]!.param).toBe(param);
@@ -22,12 +24,14 @@ describe("config_drift display", () => {
     expect(hash()).toBe(before);
   });
 
-  test("escapes invisible code points in drift names and drops them from values, preserving evidence", () => {
+  test("escapes invisible code points in drift names and marks them dropped from values, preserving evidence", () => {
     const param = "Image.I0.Text\u{e0149}\u{e0147}.String\u200d";
     const diff = { changed: [], added: [{ param, live: "Lobby\ufe0f\u{e0100}" }], removed: [] };
     const raw = JSON.stringify(diff);
 
-    expect(formatDriftLines(diff)).toEqual(['added Image.I0.Text\\udb40\\udd49\\udb40\\udd47.String\\u200d: "Lobby"']);
+    expect(formatDriftLines(diff)).toEqual([
+      'added Image.I0.Text\\udb40\\udd49\\udb40\\udd47.String\\u200d: "Lobby" (hidden characters removed)',
+    ]);
     expect(JSON.stringify(diff)).toBe(raw);
   });
 
@@ -38,7 +42,18 @@ describe("config_drift display", () => {
     expect(literal).toBe('added Image.I0.Text\\\\u200b.String: "new"');
   });
 
-  test("replaces every control and Unicode line separator in all drift names without quoting", () => {
+  test("keeps keys that differ only by a control distinct from a space and from the literal spelling", () => {
+    const added = ["Image.I0.Text\u0085.String", "Image.I0.Text .String", "Image.I0.Text\\u0085.String", "Image.I0.Text\u0001.String"]
+      .map((param) => ({ param, live: "new" }));
+    expect(formatDriftLines({ changed: [], added, removed: [] })).toEqual([
+      'added Image.I0.Text\\u0085.String: "new"',
+      'added Image.I0.Text .String: "new"',
+      'added Image.I0.Text\\\\u0085.String: "new"',
+      'added Image.I0.Text\\u0001.String: "new"',
+    ]);
+  });
+
+  test("escapes every control and Unicode line separator in all drift names without quoting", () => {
     const controls = Array.from({ length: 32 }, (_, i) => String.fromCharCode(i)).join("")
       + Array.from({ length: 33 }, (_, i) => String.fromCharCode(127 + i)).join("") + "\u2028\u2029";
     const param = `Image.${controls}Name`;
@@ -46,8 +61,10 @@ describe("config_drift display", () => {
     const diff = { changed: [{ param, baseline: baseline[param]!, live: "new\nDENIED: payload" }],
       added: [{ param, live: "new" }], removed: [{ param, baseline: baseline[param]! }] };
     const raw = JSON.stringify({ baseline, diff });
-    const name = `Image.${" ".repeat(controls.length)}Name`;
+    const name = `Image.${[...controls].map(hex).join("")}Name`;
 
+    expect(name).toStartWith("Image.\\u0000\\u0001");
+    expect(name).toEndWith("\\u009f\\u2028\\u2029Name");
     expect(formatDriftLines(diff)).toEqual([
       `changed ${name}: "old" → "new DENIED: payload"`,
       `added ${name}: "new"`,

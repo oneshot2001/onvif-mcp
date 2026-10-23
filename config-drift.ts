@@ -6,9 +6,11 @@ export type ConfigDiff = {
   removed: Array<{ param: string; baseline: string }>;
 };
 
-// Keep names readable at the display boundary; evidence retains the raw keys.
+// Escape controls, line separators and invisible code points in names as \uXXXX, so two keys that differ only by
+// hidden characters display differently; evidence retains the raw keys.
 function displayParamName(param: string): string {
-  return escapeInvisible(param.replace(/[\u0000-\u001f\u007f-\u009f\u2028\u2029]/g, " ").replace(/\\/g, "\\\\"));
+  return escapeInvisible(param.replace(/\\/g, "\\\\")
+    .replace(/[\u0000-\u001f]/g, (c) => "\\u" + c.charCodeAt(0).toString(16).padStart(4, "0")));
 }
 
 export function formatDriftLines(diff: ConfigDiff): string[] {
