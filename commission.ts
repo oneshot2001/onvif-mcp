@@ -228,6 +228,13 @@ export function registerCommission(server: McpServer, d: CommissionDeps) {
     if (!data || typeof data !== "object" || Array.isArray(data) || !Array.isArray((data as { scenarios?: unknown }).scenarios)) throw new Error("AOA getConfiguration returned an invalid configuration");
     return data as AoaConfiguration;
   };
+  // Ids from the plan read are written back and ids from the readback name event topics, so a malformed one fails
+  // those reads; the rollback guard skips this, since it only restores the already-checked snapshot.
+  const checkScenarioIds = (config: AoaConfiguration): AoaConfiguration => {
+    const ids = config.scenarios.map((scenario) => (scenario as { id?: unknown } | null)?.id);
+    if (!ids.every((id) => Number.isSafeInteger(id) && (id as number) >= 0)) throw new Error("AOA getConfiguration returned an invalid scenario id");
+    return config;
+  };
   const guardAoaConfiguration = async (tool: string, camera: string, snapshot: AoaConfiguration, scenarios: Scenario[]) => {
     const current = await readAoaConfiguration(tool, camera);
     const managed = new Set(scenarios.map((scenario) => scenario.name));
@@ -256,12 +263,13 @@ export function registerCommission(server: McpServer, d: CommissionDeps) {
   };
   const buildAoa = (config: AoaConfiguration, scenarios: Scenario[]): Pick<PreparedAoa, "merged" | "desired" | "plan"> => {
     const existing = new Map(config.scenarios.map((scenario) => [scenario.name, scenario]));
-    const used = config.scenarios.map((scenario) => scenario.id).filter(Number.isFinite);
+    const used = config.scenarios.map((scenario) => scenario.id);
     let nextId = Math.max(0, ...used) + 1;
     const firstDevice = config.devices?.find((device) => typeof device.id === "number")?.id;
     const desired = scenarios.map((spec) => {
       const current = existing.get(spec.name);
       const id = current?.id ?? nextId++;
+      if (!Number.isSafeInteger(id)) throw new Error("AOA configuration has no safe scenario id left");
       const devices = Array.isArray(current?.devices) && current.devices.length ? current.devices : typeof firstDevice === "number" ? [{ id: firstDevice }] : null;
       if (!devices) throw new Error("AOA configuration has no device for a new scenario");
       const trigger = spec.type === "motion"
@@ -286,7 +294,7 @@ export function registerCommission(server: McpServer, d: CommissionDeps) {
     }
     const apiVersions = rpc.data && typeof rpc.data === "object" && Array.isArray((rpc.data as { apiVersions?: unknown }).apiVersions) ? (rpc.data as { apiVersions: unknown[] }).apiVersions.map(String) : [];
     if (!apiVersions.includes("1.0")) return { installed: false, warning: "AOA API 1.0 unavailable; scenarios skipped", config: null, merged: null, desired: [], plan: [] };
-    const config = await readAoaConfiguration(tool, camera);
+    const config = checkScenarioIds(await readAoaConfiguration(tool, camera));
     return { installed: true, warning: undefined, config, ...buildAoa(config, scenarios) };
   };
   const meta = async (tool: string, camera: string) => {
@@ -333,7 +341,7 @@ export function registerCommission(server: McpServer, d: CommissionDeps) {
     }
     else {
       let config: AoaConfiguration;
-      try { config = await readAoaConfiguration(tool, camera); } catch (e) {
+      try { config = checkScenarioIds(await readAoaConfiguration(tool, camera)); } catch (e) {
         for (const scenario of prepared.spec.scenarios) {
           const detail = e instanceof Error ? e.message : String(e);
           scenarios.push({ name: scenario.name, id: null, type: scenario.type, deployed: false, readback_diff: [detail] });

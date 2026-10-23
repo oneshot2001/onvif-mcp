@@ -274,6 +274,73 @@ observe: { seconds: 0 }
     expect(h.receipts.at(-1)!.detail).toBe(`FAILED: ${message}`);
   });
 
+  test("fails closed before any write when a device-reported scenario id is not a non-negative safe integer", async () => {
+    const scenario = (name: string, id: unknown) => ({ id, name, type: "motion", devices: [{ id: 1 }], triggers: [], objectClassifications: [] });
+    const cases: unknown[][] = [
+      ...["4", 4.5, -1, null, undefined, 2 ** 53, { id: 4 }].map((id) => [scenario("lab-motion", id)]),
+      [scenario("keep-me", "4")],
+      [null],
+    ];
+    for (const scenarios of cases) {
+      const h = harness();
+      writeFileSync(join(h.root, "specs", "ids.yaml"), "spec: camspec/0.1\nname: ids\nscenarios:\n  - name: lab-motion\n    type: motion\n    objects: [human]\n    area: [[-0.9,-0.9],[0.9,-0.9],[0.9,0.9],[-0.9,0.9]]\nobserve: { seconds: 0 }\n");
+      const post = h.deps.vapixPost;
+      h.deps.vapixPost = async (tool, camera, path, body) => (body as { method: string }).method === "getConfiguration"
+        ? { ok: true, body: JSON.stringify({ data: { devices: [{ id: 1 }], scenarios } }) } : post(tool, camera, path, body);
+      const result = await h.handlers.commission_apply!({ camera: "cam", spec: "ids", approve: true });
+      const message = "AOA getConfiguration returned an invalid scenario id";
+      expect(result.content[0]!.text).toBe(deviceText(message));
+      expect((result as { isError?: boolean }).isError).toBeTrue();
+      expect(h.receipts.at(-1)!.detail).toBe(`FAILED: ${message}`);
+      expect(h.writes).toEqual([]);
+    }
+  });
+
+  test("reuses a device-reported scenario id of 0", async () => {
+    const h = harness();
+    writeFileSync(join(h.root, "specs", "zero.yaml"), "spec: camspec/0.1\nname: zero\nscenarios:\n  - name: lab-motion\n    type: motion\n    objects: [human]\n    area: [[-0.9,-0.9],[0.9,-0.9],[0.9,0.9],[-0.9,0.9]]\nobserve: { seconds: 0 }\n");
+    const post = h.deps.vapixPost;
+    const scenarios = [{ id: 0, name: "lab-motion", type: "motion", devices: [{ id: 1 }], triggers: [], objectClassifications: [] }];
+    h.deps.vapixPost = async (tool, camera, path, body) => (body as { method: string }).method === "getConfiguration"
+      ? { ok: true, body: JSON.stringify({ data: { devices: [{ id: 1 }], scenarios } }) } : post(tool, camera, path, body);
+    const plan = JSON.parse((await h.handlers.commission_plan!({ camera: "cam", spec: "zero" })).content[0]!.text);
+    expect(plan.scenarios).toEqual([{ name: "lab-motion", id: 0, type: "motion", action: "deploy" }]);
+  });
+
+  test("a malformed id on readback fails verification and still restores the AOA snapshot", async () => {
+    const h = harness();
+    writeFileSync(join(h.root, "specs", "readback.yaml"), "spec: camspec/0.1\nname: readback\nscenarios:\n  - name: lab-motion\n    type: motion\n    objects: [human]\n    area: [[-0.9,-0.9],[0.9,-0.9],[0.9,0.9],[-0.9,0.9]]\nobserve: { seconds: 0 }\n");
+    const post = h.deps.vapixPost;
+    h.deps.vapixPost = async (tool, camera, path, body) => {
+      const r = await post(tool, camera, path, body);
+      if ((body as { method: string }).method !== "getConfiguration") return r;
+      const rpc = JSON.parse(r.body);
+      rpc.data.scenarios = rpc.data.scenarios.map((scenario: { name: string }) => scenario.name === "lab-motion" ? { ...scenario, id: "bad" } : scenario);
+      return { ...r, body: JSON.stringify(rpc) };
+    };
+    const result = JSON.parse((await h.handlers.commission_apply!({ camera: "cam", spec: "readback", approve: true })).content[0]!.text);
+    expect(result.passed).toBeFalse();
+    expect(result.scenarios[0].readback_diff).toEqual([deviceText("AOA getConfiguration returned an invalid scenario id")]);
+    expect(result.rolled_back).toBeTrue();
+    expect(result.rollback_verified).toBeTrue();
+    expect(h.receipts.some((receipt) => receipt.detail === "restored prior AOA configuration")).toBeTrue();
+    expect(h.aoa().scenarios.map((scenario) => scenario.name)).toEqual(["keep-me"]);
+  });
+
+  test("fails before any write when the next scenario id would pass the safe-integer range", async () => {
+    const h = harness();
+    writeFileSync(join(h.root, "specs", "full.yaml"), "spec: camspec/0.1\nname: full\nscenarios:\n  - name: lab-motion\n    type: motion\n    objects: [human]\n    area: [[-0.9,-0.9],[0.9,-0.9],[0.9,0.9],[-0.9,0.9]]\nobserve: { seconds: 0 }\n");
+    const post = h.deps.vapixPost;
+    const scenarios = [{ id: Number.MAX_SAFE_INTEGER, name: "keep-me", type: "motion", devices: [{ id: 1 }], triggers: [], objectClassifications: [] }];
+    h.deps.vapixPost = async (tool, camera, path, body) => (body as { method: string }).method === "getConfiguration"
+      ? { ok: true, body: JSON.stringify({ data: { devices: [{ id: 1 }], scenarios } }) } : post(tool, camera, path, body);
+    const result = await h.handlers.commission_apply!({ camera: "cam", spec: "full", approve: true });
+    const message = "AOA configuration has no safe scenario id left";
+    expect(result.content[0]!.text).toBe(deviceText(message));
+    expect(h.receipts.at(-1)!.detail).toBe(`FAILED: ${message}`);
+    expect(h.writes).toEqual([]);
+  });
+
   test("quotes AOA write errors in responses and preserves handoff and receipt evidence", async () => {
     const h = harness();
     writeFileSync(join(h.root, "specs", "error.yaml"), "spec: camspec/0.1\nname: error\nscenarios:\n  - name: lab-motion\n    type: motion\n    objects: [human]\n    area: [[-0.9,-0.9],[0.9,-0.9],[0.9,0.9],[-0.9,0.9]]\nobserve: { seconds: 0 }\n");
