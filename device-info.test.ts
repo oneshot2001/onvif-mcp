@@ -1,5 +1,27 @@
 import { describe, expect, test } from "bun:test";
-import { formatDeviceInfo, parseDeviceMeta, parseSnapshotUri } from "./device-info";
+import { formatDeviceInfo, parseDeviceMeta, parseSnapshotUri, snapshotPath } from "./device-info";
+
+test.each([
+  ["@attacker.example/x.jpg", null],
+  [".attacker.example/x.jpg", null],
+  [":8443/x.jpg", null],
+  ["x.jpg", null],
+  ["", null],
+  ["//attacker.example/x.jpg", null],
+  ["ftp://attacker.example/x.jpg", null],
+  ["http://[invalid/x.jpg", null],
+  ["http://", null],
+  ["HTTP://attacker.example/x.jpg", "/x.jpg"],
+  ["hTtPs://attacker.example:8443/x.jpg", "/x.jpg"],
+  ["https://user:uri-password@attacker.example/x.jpg", "/x.jpg"],
+  ["/axis-cgi/jpg/image.cgi", "/axis-cgi/jpg/image.cgi"],
+  ["/x.jpg?a=1&b=2#fragment", "/x.jpg?a=1&b=2"],
+  ["http://attacker.example/x.jpg?a=1&b=2#fragment", "/x.jpg?a=1&b=2"],
+  ["http://attacker.example//other.example/x.jpg", "//other.example/x.jpg"],
+  ["http://attacker.example", "/"],
+])("snapshot origin: path extraction for %s", (uri, expected) => {
+  expect(snapshotPath(uri!)).toBe(expected);
+});
 
 describe("ONVIF snapshot URI", () => {
   test("failed request ignores a URI echoed in SOAP Fault detail", () => {

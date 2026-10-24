@@ -6,6 +6,17 @@ export function parseSnapshotUri(r: { ok: boolean; body: string }): string | nul
   return r.body.match(/<tt:Uri>([^<]+)/)?.[1]?.replace(/&amp;/g, "&") ?? null;
 }
 
+export function snapshotPath(uri: string): string | null {
+  if (uri.startsWith("/") && !uri.startsWith("//")) return uri.split("#")[0]!;
+  if (!/^https?:\/\//i.test(uri)) return null;
+  try {
+    const url = new URL(uri);
+    return url.pathname + url.search;
+  } catch {
+    return null;
+  }
+}
+
 export function formatDeviceInfo(protocol: "vapix" | "onvif", r: { ok: boolean; body: string }): string {
   if (!r.ok) return `device info unavailable (request failed) | protocol=${protocol}`;
   if (protocol === "onvif") {

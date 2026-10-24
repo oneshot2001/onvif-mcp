@@ -17,7 +17,7 @@ import { parseEventMessage } from "./event-parse";
 import { openEventWebSocket } from "./event-websocket";
 import { deviceText } from "./device-text";
 import { clockCheck, clockReceipt, formatClock } from "./clock";
-import { formatDeviceInfo, parseDeviceMeta, parseSnapshotUri } from "./device-info";
+import { formatDeviceInfo, parseDeviceMeta, parseSnapshotUri, snapshotPath } from "./device-info";
 import { formatPresetRecall } from "./ptz-output";
 import { formatDriftLines, type ConfigDiff } from "./config-drift";
 import { appendLocked, emptyChainConflict, formatReceiptsText, lastReceiptFrom, missingHandoffHeads, outcomeEvidence, selectReceipts, verifyChain } from "./receipt-chain";
@@ -275,7 +275,8 @@ async function snapshot(tool: string, camera: string, outFile: string): Promise<
     const r = await soap(tool, camera, `<trt:GetSnapshotUri xmlns:trt="http://www.onvif.org/ver10/media/wsdl"><trt:ProfileToken>${cam.profile ?? "profile_1_jpeg"}</trt:ProfileToken></trt:GetSnapshotUri>`);
     const uri = parseSnapshotUri(r);
     if (!uri) return false;
-    const path = uri.replace(/^https?:\/\/[^/]+/, "");
+    const path = snapshotPath(uri);
+    if (path === null) return false;
     return (await vapix(tool, camera, path, outFile)).ok;
   }
   return (await vapix(tool, camera, "/axis-cgi/jpg/image.cgi", outFile)).ok;
