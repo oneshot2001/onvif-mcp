@@ -236,6 +236,20 @@ const sha256 = (value: unknown) => createHash("sha256").update(typeof value === 
 const inGroup = (param: string, groups: string[]) => groups.some((g) => param === g || param.startsWith(`${g}.`));
 const baselineFile = (camera: string) => join(BASELINES, `${camera}.json`);
 
+function readBaseline(file: string): Pick<Baseline, "groups" | "params"> | null {
+  try {
+    if (!statSync(file).isFile()) return null;
+    const baseline = JSON.parse(readFileSync(file, "utf8"));
+    if (!baseline || typeof baseline !== "object" || Array.isArray(baseline)
+      || !Array.isArray(baseline.groups) || !baseline.groups.every((g: unknown) => typeof g === "string")
+      || !baseline.params || typeof baseline.params !== "object" || Array.isArray(baseline.params)
+      || !Object.values(baseline.params).every((value) => typeof value === "string")) return null;
+    return baseline;
+  } catch {
+    return null;
+  }
+}
+
 function configDenied(tool: string, camera: string, approve = false): string | null {
   return policyConfigDenied(policy, AGENT, tool, camera, approve);
 }
@@ -464,7 +478,8 @@ server.tool("config_drift", "Compare live VAPIX parameters with the saved config
   if (deny) { receipt("config_drift", params, "deny", deny); return { content: [{ type: "text", text: `DENIED: ${deny}` }] }; }
   const file = baselineFile(camera);
   if (!existsSync(file)) { receipt("config_drift", params, "allow", "no baseline"); return { content: [{ type: "text", text: "no baseline — run config_baseline" }] }; }
-  const baseline: Baseline = JSON.parse(readFileSync(file, "utf8"));
+  const baseline = readBaseline(file);
+  if (!baseline) { receipt("config_drift", params, "allow", "baseline unreadable"); return { content: [{ type: "text", text: "baseline unreadable" }] }; }
   const groups = baseline.groups.filter((g) => policy[AGENT]!.config!.groups.includes(g));
   const base = Object.fromEntries(Object.entries(baseline.params).filter(([param]) => inGroup(param, groups)));
   const live = await configParams("config_drift", camera, groups);
@@ -493,7 +508,8 @@ server.tool("config_remediate", "Restore one drifted VAPIX parameter to its base
   if (reason) { receipt("config_remediate", params, "deny", reason); return { content: [{ type: "text", text: `DENIED: ${reason}` }] }; }
   const file = baselineFile(camera);
   if (!existsSync(file)) { const reason = "no baseline"; receipt("config_remediate", params, "deny", reason); return { content: [{ type: "text", text: `DENIED: ${reason}` }] }; }
-  const baseline: Baseline = JSON.parse(readFileSync(file, "utf8"));
+  const baseline = readBaseline(file);
+  if (!baseline) { receipt("config_remediate", params, "deny", "baseline unreadable"); return { content: [{ type: "text", text: "baseline unreadable" }] }; }
   if (!(param in baseline.params)) { const reason = `param '${param}' not in baseline`; receipt("config_remediate", params, "deny", reason); return { content: [{ type: "text", text: `DENIED: ${reason}` }] }; }
   const live = await configParams("config_remediate", camera, [param]);
   if (!live.ok) { receipt("config_remediate", params, "allow", "read FAILED"); return { content: [{ type: "text", text: "live config read failed" }] }; }
