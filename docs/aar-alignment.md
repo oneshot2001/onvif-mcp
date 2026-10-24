@@ -20,7 +20,7 @@ Receipt bodies use AAR v0.2 vocabulary:
 `profile: "aar-0.2-draft-alignment"` marks these receipts as vocabulary-aligned,
 **explicitly not conformance-claiming**.
 
-AOA event stream observation (`observe:`) is outside the transport witness's view and uses `wss://…/vapix/ws-data-stream` with `rejectUnauthorized: false` and Basic auth; pinned cameras refuse it outright, so every observation that actually happens uses unverified TLS and is unwitnessed, including camera traffic behind a `commission_verify` handoff tagged `independently_sensed`.
+AOA event stream observation (`observe:`) is outside the transport witness's view and uses `wss://…/vapix/ws-data-stream` with `rejectUnauthorized: false` and Basic auth; pinned cameras refuse it outright, so every observation that actually happens uses unverified TLS and is unwitnessed, including the camera traffic behind a `commission_apply` observation window (receipted `device_acknowledged`).
 
 ## What conformance requires (the gap — build packet for the systems lane)
 
