@@ -6,6 +6,18 @@ const password = "camera-secret-password";
 const jsonBody = { method: "getConfiguration" };
 const soapBody = '<?xml version="1.0"?><s:Envelope><s:Body/></s:Envelope>';
 
+for (const [name, opts] of [
+  ["GET", {}], ["JSON-body", { jsonBody }], ["SOAP", { soapBody }], ["outFile", { outFile: "/tmp/snapshot.jpg" }],
+] as const) {
+  test(`curl globoff: ${name} disables globbing before the literal URL`, () => {
+    const path = "/snap[1-3].jpg";
+    const { args } = curlRequest(cam, password, path, opts);
+    expect(args).toContain("--globoff");
+    expect(args).toContain(`${cam.base}${path}`);
+    expect(args.indexOf("--globoff")).toBeLessThan(args.indexOf(`${cam.base}${path}`));
+  });
+}
+
 describe("invocation header", () => {
   const invocationId = "0123456789abcdef0123456789abcdef";
   for (const [name, opts] of [
@@ -132,7 +144,7 @@ describe("curl request", () => {
   test("leaves requests without a pin unchanged", () => {
     const { args } = curlRequest(cam, password, "/request");
     expect(args).not.toContain("--pinnedpubkey");
-    expect(args).toEqual(["curl", "-sk", "--digest", "--fail", "--config", "-", "--max-time", "10", "https://camera.example/request"]);
+    expect(args).toEqual(["curl", "-sk", "--globoff", "--digest", "--fail", "--config", "-", "--max-time", "10", "https://camera.example/request"]);
   });
 
   test("rejects a pin with an HTTP base", () => {
@@ -149,7 +161,7 @@ describe("curl request", () => {
 
   test("leaves HTTP requests without a pin unchanged", () => {
     const { args, stdin } = curlRequest({ ...cam, base: "http://camera.example" }, password, "/request");
-    expect(args).toEqual(["curl", "-sk", "--digest", "--fail", "--config", "-", "--max-time", "10", "http://camera.example/request"]);
+    expect(args).toEqual(["curl", "-sk", "--globoff", "--digest", "--fail", "--config", "-", "--max-time", "10", "http://camera.example/request"]);
     expect(stdin).toBe(`user = "root:${password}"\n`);
   });
 

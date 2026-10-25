@@ -14,7 +14,7 @@ export function curlRequest(
 ): { args: string[]; stdin: string } {
   const url = `${cam.base}${path}`;
   const credentials = `${cam.user}:${password}`.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
-  const args = ["curl", "-sk", "--digest", "--fail", "--config", "-", "--max-time", String(opts.maxTime ?? CURL_TIMEOUT_SECONDS)];
+  const args = ["curl", "-sk", "--globoff", "--digest", "--fail", "--config", "-", "--max-time", String(opts.maxTime ?? CURL_TIMEOUT_SECONDS)];
   if (cam.pin !== undefined) {
     validatePin(cam.pin);
     if (!url.startsWith("https://")) throw new Error("camera pin requires an https:// URL");
