@@ -18,30 +18,36 @@ const code = new Bun.Transpiler({ loader: "ts" }).transformSync(helpers + regist
 export function configHarness(root: string, options: {
   statSync?: typeof fs.statSync;
   readFileSync?: typeof fs.readFileSync;
+  policy?: Policy;
+  rateDenied?: (kind: string) => string | null;
+  liveParams?: Record<string, string>;
 } = {}) {
   const chain: any[][] = [], calls: any[][] = [];
   const handlers: Record<string, (input: any) => Promise<any>> = {};
-  const policy: Policy = { test: {
+  const policy: Policy = structuredClone(options.policy ?? { test: {
     tools: ["config_baseline", "config_drift", "config_remediate"], cameras: ["cam"],
     config: { groups: ["Image"], remediate: true },
-  } };
-  let value = "live";
+  } });
+  const liveParams = { ...(options.liveParams ?? { "Image.X": "live" }) };
   const dependencies = {
     ROOT: root, AGENT: "test", policy, join, createHash, z, cameraId, paramName,
     baselineDenied, policyConfigDenied, hardDenied, formatDriftLines, deviceText,
     existsSync: fs.existsSync, statSync: options.statSync ?? fs.statSync,
     readFileSync: options.readFileSync ?? fs.readFileSync,
     mkdirSync: fs.mkdirSync, writeFileSync: fs.writeFileSync,
-    rateDenied: () => null,
+    rateDenied: options.rateDenied ?? (() => null),
     receipt: (...args: any[]) => chain.push(args),
     server: { tool: (name: string, _description: string, _schema: unknown, handler: any) => { handlers[name] = handler; } },
-    configParams: async (...args: any[]) => {
-      calls.push(["configParams", ...args]);
-      return { ok: true, params: { "Image.X": value } };
+    configParams: async (tool: string, camera: string, groups: string[]) => {
+      calls.push(["configParams", tool, camera, [...groups]]);
+      return { ok: true, params: Object.fromEntries(Object.entries(liveParams)
+        .filter(([param]) => groups.some(g => param === g || param.startsWith(`${g}.`)))) };
     },
-    vapix: async (...args: any[]) => {
-      calls.push(["vapix", ...args]);
-      value = "saved";
+    vapix: async (tool: string, camera: string, path: string) => {
+      calls.push(["vapix", tool, camera, path]);
+      for (const [param, value] of new URL(path, "https://camera.invalid").searchParams) {
+        if (param !== "action") liveParams[param] = value;
+      }
       return { ok: true, body: "OK" };
     },
   };
