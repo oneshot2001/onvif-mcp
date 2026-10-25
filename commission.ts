@@ -235,8 +235,13 @@ export function registerCommission(server: McpServer, d: CommissionDeps) {
     if (!ids.every((id) => Number.isSafeInteger(id) && (id as number) >= 0)) throw new Error("AOA getConfiguration returned an invalid scenario id");
     return config;
   };
+  const checkScenarioNames = (config: AoaConfiguration): AoaConfiguration => {
+    const names = config.scenarios.map((scenario) => scenario.name);
+    if (new Set(names).size !== names.length) throw new Error("AOA getConfiguration returned duplicate scenario names");
+    return config;
+  };
   const guardAoaConfiguration = async (tool: string, camera: string, snapshot: AoaConfiguration, scenarios: Scenario[]) => {
-    const current = await readAoaConfiguration(tool, camera);
+    const current = checkScenarioNames(await readAoaConfiguration(tool, camera));
     const managed = new Set(scenarios.map((scenario) => scenario.name));
     const byName = (config: AoaConfiguration) => new Map(config.scenarios.filter((scenario) => !managed.has(scenario.name)).map((scenario) => [scenario.name, JSON.stringify(scenario)]));
     const before = byName(snapshot), now = byName(current);
@@ -294,7 +299,7 @@ export function registerCommission(server: McpServer, d: CommissionDeps) {
     }
     const apiVersions = rpc.data && typeof rpc.data === "object" && Array.isArray((rpc.data as { apiVersions?: unknown }).apiVersions) ? (rpc.data as { apiVersions: unknown[] }).apiVersions.map(String) : [];
     if (!apiVersions.includes("1.0")) return { installed: false, warning: "AOA API 1.0 unavailable; scenarios skipped", config: null, merged: null, desired: [], plan: [] };
-    const config = checkScenarioIds(await readAoaConfiguration(tool, camera));
+    const config = checkScenarioNames(checkScenarioIds(await readAoaConfiguration(tool, camera)));
     return { installed: true, warning: undefined, config, ...buildAoa(config, scenarios) };
   };
   const meta = async (tool: string, camera: string) => {
@@ -341,7 +346,7 @@ export function registerCommission(server: McpServer, d: CommissionDeps) {
     }
     else {
       let config: AoaConfiguration;
-      try { config = checkScenarioIds(await readAoaConfiguration(tool, camera)); } catch (e) {
+      try { config = checkScenarioNames(checkScenarioIds(await readAoaConfiguration(tool, camera))); } catch (e) {
         for (const scenario of prepared.spec.scenarios) {
           const detail = e instanceof Error ? e.message : String(e);
           scenarios.push({ name: scenario.name, id: null, type: scenario.type, deployed: false, readback_diff: [detail] });

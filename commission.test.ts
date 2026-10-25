@@ -296,6 +296,102 @@ observe: { seconds: 0 }
     }
   });
 
+  for (const tool of ["commission_plan", "commission_apply"] as const) {
+    test.each(["lab-motion", "keep-me"])(`duplicate AOA scenario name: ${tool} refuses duplicate %s at the plan read`, async (name) => {
+      const h = harness({ beforeAoaRead: (read) => {
+        if (read !== 1) return;
+        const scenarios = h.aoa().scenarios;
+        scenarios[0]!.name = name;
+        scenarios.push({ ...structuredClone(scenarios[0]!), id: 9 });
+      } });
+      writeFileSync(join(h.root, "specs", "duplicates.yaml"), "spec: camspec/0.1\nname: duplicates\nscenarios:\n  - name: lab-motion\n    type: motion\n    objects: [human]\n    area: [[-0.9,-0.9],[0.9,-0.9],[0.9,0.9],[-0.9,0.9]]\nobserve: { seconds: 0 }\n");
+      const result = await h.handlers[tool]!({ camera: "cam", spec: "duplicates", approve: true });
+      const message = "AOA getConfiguration returned duplicate scenario names";
+      expect(result.content[0]!.text).toBe(deviceText(message));
+      expect((result as { isError?: boolean }).isError).toBeTrue();
+      expect(h.receipts.at(-1)!.detail).toBe(`FAILED: ${message}`);
+      expect(h.posts.filter((post) => (post as { method: string }).method === "setConfiguration")).toHaveLength(0);
+      expect(h.writes).toEqual([]);
+    });
+  }
+
+  test("duplicate AOA scenario name: a duplicate prepended before the write guard refuses deployment", async () => {
+    let concurrentConfig: ReturnType<typeof h.aoa> | undefined;
+    const h = harness({ beforeAoaRead: (read) => {
+      if (read !== 2) return;
+      const scenarios = h.aoa().scenarios;
+      scenarios.unshift({ ...structuredClone(scenarios[0]!), id: 9 });
+      concurrentConfig = structuredClone(h.aoa());
+    } });
+    writeFileSync(join(h.root, "specs", "duplicates.yaml"), "spec: camspec/0.1\nname: duplicates\nscenarios:\n  - name: lab-motion\n    type: motion\n    objects: [human]\n    area: [[-0.9,-0.9],[0.9,-0.9],[0.9,0.9],[-0.9,0.9]]\nobserve: { seconds: 0 }\n");
+    const out = JSON.parse((await h.handlers.commission_apply!({ camera: "cam", spec: "duplicates", approve: true })).content[0]!.text);
+    const message = "AOA getConfiguration returned duplicate scenario names";
+    expect(out.passed).toBeFalse();
+    expect(out.failed).toContainEqual(expect.objectContaining({ param: "scenario:lab-motion", observed: deviceText(message) }));
+    expect(h.receipts).toContainEqual(expect.objectContaining({ detail: `scenario write FAILED lab-motion: ${message}`, evidence: "unknown" }));
+    expect(h.receipts).toContainEqual(expect.objectContaining({ detail: "verification FAILED" }));
+    expect(h.posts.filter((post) => (post as { method: string }).method === "setConfiguration")).toHaveLength(0);
+    expect(h.writes).toEqual([]);
+    expect(concurrentConfig).toBeDefined();
+    expect(h.aoa()).toEqual(concurrentConfig!);
+    const handoff = JSON.parse(readFileSync(out.handoff, "utf8"));
+    expect(handoff.verify.failed).toContainEqual(expect.objectContaining({ param: "scenario:lab-motion", observed: message }));
+  });
+
+  test.each(["lab-motion", "keep-me"])("duplicate AOA scenario name: duplicate %s at readback also blocks rollback", async (name) => {
+    let concurrentConfig: ReturnType<typeof h.aoa> | undefined;
+    const reads: number[] = [];
+    const h = harness({ beforeAoaRead: (read) => {
+      reads.push(read);
+      if (read !== 3) return;
+      const scenarios = h.aoa().scenarios;
+      scenarios.unshift({ ...structuredClone(scenarios.find((scenario) => scenario.name === name)!), id: 9 });
+      concurrentConfig = structuredClone(h.aoa());
+    } });
+    writeFileSync(join(h.root, "specs", "duplicates.yaml"), "spec: camspec/0.1\nname: duplicates\nscenarios:\n  - name: lab-motion\n    type: motion\n    objects: [human]\n    area: [[-0.9,-0.9],[0.9,-0.9],[0.9,0.9],[-0.9,0.9]]\nobserve: { seconds: 0 }\n");
+    const out = JSON.parse((await h.handlers.commission_apply!({ camera: "cam", spec: "duplicates", approve: true })).content[0]!.text);
+    const message = "AOA getConfiguration returned duplicate scenario names";
+    expect(out).toMatchObject({ passed: false, rolled_back: true, rollback_verified: false });
+    expect(out.scenarios[0].readback_diff).toEqual([deviceText(message)]);
+    expect(h.receipts).toContainEqual(expect.objectContaining({ detail: "deployed scenario lab-motion" }));
+    expect(h.receipts).toContainEqual(expect.objectContaining({ detail: "verification FAILED" }));
+    expect(h.receipts).toContainEqual(expect.objectContaining({ detail: `AOA rollback FAILED: ${message}`, evidence: "unknown" }));
+    expect(h.receipts.some((receipt) => receipt.detail === "restored prior AOA configuration")).toBeFalse();
+    expect(h.posts.filter((post) => (post as { method: string }).method === "setConfiguration")).toHaveLength(1);
+    expect(h.writes).toEqual(["AOA:setConfiguration"]);
+    expect(reads).toEqual([1, 2, 3, 4]);
+    expect(concurrentConfig).toBeDefined();
+    expect(h.aoa()).toEqual(concurrentConfig!);
+    const handoff = JSON.parse(readFileSync(out.handoff, "utf8"));
+    expect(handoff.verify.passed).toBeFalse();
+    expect(handoff.scenarios[0].readback_diff).toEqual([message]);
+    expect(handoff.rollback).toEqual({ performed: true, verified: false });
+    expect(h.receipts.find((receipt) => receipt.detail === "verification FAILED")!.resultHash).toBe(h.deps.sha256(handoff.verify));
+    expect(verifyHandoffs(h.root, h.publicKey)).toMatchObject({ count: 1, bad: [] });
+  });
+
+  test.each([1, 3])("duplicate AOA scenario name: malformed ids retain precedence on read %s", async (duplicateRead) => {
+    const h = harness({ beforeAoaRead: (read) => {
+      if (read !== duplicateRead) return;
+      const scenarios = h.aoa().scenarios;
+      scenarios.push({ ...structuredClone(scenarios[0]!), id: -1 });
+    } });
+    writeFileSync(join(h.root, "specs", "duplicates.yaml"), "spec: camspec/0.1\nname: duplicates\nscenarios:\n  - name: lab-motion\n    type: motion\n    objects: [human]\n    area: [[-0.9,-0.9],[0.9,-0.9],[0.9,0.9],[-0.9,0.9]]\nobserve: { seconds: 0 }\n");
+    const result = await h.handlers.commission_apply!({ camera: "cam", spec: "duplicates", approve: true });
+    const message = "AOA getConfiguration returned an invalid scenario id";
+    if (duplicateRead === 1) {
+      expect(result.content[0]!.text).toBe(deviceText(message));
+      expect(h.receipts.at(-1)!.detail).toBe(`FAILED: ${message}`);
+      expect(h.writes).toEqual([]);
+    } else {
+      const out = JSON.parse(result.content[0]!.text);
+      expect(out.passed).toBeFalse();
+      expect(out.scenarios[0].readback_diff).toEqual([deviceText(message)]);
+      const handoff = JSON.parse(readFileSync(out.handoff, "utf8"));
+      expect(handoff.scenarios[0].readback_diff).toEqual([message]);
+    }
+  });
+
   test("reuses a device-reported scenario id of 0", async () => {
     const h = harness();
     writeFileSync(join(h.root, "specs", "zero.yaml"), "spec: camspec/0.1\nname: zero\nscenarios:\n  - name: lab-motion\n    type: motion\n    objects: [human]\n    area: [[-0.9,-0.9],[0.9,-0.9],[0.9,0.9],[-0.9,0.9]]\nobserve: { seconds: 0 }\n");
