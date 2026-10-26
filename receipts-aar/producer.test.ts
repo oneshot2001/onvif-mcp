@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { decodeCbor, encodeCbor, fromHex, toHex } from "aar-kat-harness/harness/cbor";
 import { hash } from "aar-kat-harness/harness/crypto";
-import { AarWireProducer, verifyBundleDir, type WireEmitInput } from "./producer";
+import { AarWireProducer, commandDigestHex, verifyBundleDir, type WireEmitInput } from "./producer";
 import { appendJournal, checkAarJournal } from "./journal";
 
 const repo = resolve(import.meta.dir, "..");
@@ -50,6 +50,31 @@ function key(e: any): Buffer {
 }
 function sorted(es: any[]) {
   for (let i = 1; i < es.length; i++) expect(Buffer.compare(key(es[i - 1]), key(es[i]))).toBeLessThan(0);
+}
+
+for (const actionName of ["camera.ptz.preset", "camera.stream.view"] as const) {
+  test(`W2a primitives: ${actionName} digest matches emitted commands across invocation IDs`, async () => {
+    const logical = { ...input(), actionName,
+      cameraPtz: actionName === "camera.ptz.preset", protocol: actionName === "camera.ptz.preset" ? "vapix" : "onvif",
+      parameters: actionName === "camera.ptz.preset" ? { preset: "Home" } : { snapshot: "test.jpg" } } as WireEmitInput;
+    const digest = commandDigestHex(logical);
+    expect(digest).toMatch(/^[0-9a-f]{64}$/);
+    const commands = [];
+    for (const byte of [1, 2]) {
+      const invocationId = new Uint8Array(16).fill(byte);
+      const result = await producer.emit({ ...logical, invocationId });
+      const command = receipts(result.dir).find(r => r.kind === "action_attempt").body.command;
+      expect(toHex(command.command_digest)).toBe(digest);
+      expect(toHex(command.idempotency_key)).toBe(toHex(invocationId));
+      commands.push(command);
+    }
+    expect(toHex(commands[0].command_digest)).toBe(toHex(commands[1].command_digest));
+    expect(toHex(commands[0].idempotency_key)).not.toBe(toHex(commands[1].idempotency_key));
+    expect(toHex(commands[0].command_id)).not.toBe(toHex(commands[1].command_id));
+    expect(commandDigestHex({ ...logical, camera: "other-cam" })).not.toBe(digest);
+    expect(commandDigestHex({ ...logical, cameraPtz: !logical.cameraPtz })).not.toBe(digest);
+    expect(commandDigestHex({ ...logical, parameters: { changed: true } })).not.toBe(digest);
+  });
 }
 
 test("fast send is committed and durably reserved before dispatch, verifies with its own prior", async () => {

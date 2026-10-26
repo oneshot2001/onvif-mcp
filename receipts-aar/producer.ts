@@ -72,6 +72,22 @@ export interface WireEmitInput {
 
 const id16 = (label: string) => hash(new TextEncoder().encode(`onvif-mcp-id:${label}`)).slice(0, 16);
 
+type CommandInput = Pick<WireEmitInput, "actionName" | "camera" | "cameraPtz" | "parameters" | "protocol">;
+
+function commandManifest(input: CommandInput, invocationId: Uint8Array) {
+  return buildCommandManifest({
+    actionName: input.actionName,
+    targetId: id16(`camera:${input.camera}`),
+    targetLogicalName: (input.cameraPtz ? "ptz-primary" : "fixed-primary") as LogicalTargetName,
+    parameters: input.parameters,
+    invocationId,
+  }, input.protocol as AdapterId, "onvif-mcp/0.1.0");
+}
+
+export function commandDigestHex(input: CommandInput): string {
+  return toHex(commandManifest(input, new Uint8Array(16)).command_digest);
+}
+
 interface ProducerState { next_epoch: number }
 interface PriorState {
   prior_emissions: Array<{ issuer_kid: string; issuer_seq: number; epoch_owner_kid: string; epoch_id: number; epoch_seq: number; receipt_id: string; envelope_digest: string }>;
@@ -195,13 +211,7 @@ export class AarWireProducer {
       journalUnavailable = true;
       return { refusalReason: "journal/unavailable" as const };
     };
-    const command = buildCommandManifest({
-      actionName: input.actionName,
-      targetId: id16(`camera:${input.camera}`),
-      targetLogicalName: (input.cameraPtz ? "ptz-primary" : "fixed-primary") as LogicalTargetName,
-      parameters: input.parameters,
-      invocationId,
-    }, input.protocol as AdapterId, "onvif-mcp/0.1.0");
+    const command = commandManifest(input, invocationId);
 
     const wire = await buildDemoBundle({
       scenarioId: "S1",

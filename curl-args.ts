@@ -10,7 +10,7 @@ export function curlRequest(
   cam: { base: string; user: string; pin?: string },
   password: string,
   path: string,
-  opts: { outFile?: string; jsonBody?: unknown; soapBody?: string; maxTime?: number; invocationId?: string } = {},
+  opts: { outFile?: string; jsonBody?: unknown; soapBody?: string; maxTime?: number; invocationId?: string; commandDigest?: string } = {},
 ): { args: string[]; stdin: string } {
   const url = `${cam.base}${path}`;
   const credentials = `${cam.user}:${password}`.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
@@ -25,6 +25,10 @@ export function curlRequest(
   if (opts.invocationId !== undefined) {
     if (typeof opts.invocationId !== "string" || !/^[0-9a-f]{32}$/.test(opts.invocationId)) throw new Error("invalid invocation ID");
     args.push("-H", `X-AAR-Invocation-ID: ${opts.invocationId}`);
+  }
+  if (opts.commandDigest !== undefined) {
+    if (typeof opts.commandDigest !== "string" || !/^[0-9a-f]{64}$/.test(opts.commandDigest)) throw new Error("invalid command digest");
+    args.push("-H", "X-AAR-Action-Bearing: 1", "-H", `X-AAR-Command-Digest: ${opts.commandDigest}`);
   }
   args.push(url);
   if (opts.outFile) args.push("-o", opts.outFile);

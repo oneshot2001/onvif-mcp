@@ -3,7 +3,90 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { z } from "zod";
-import { claimInvocationForAar, currentInvocationId, runWithInvocation, withInvocations } from "./invocation";
+import { claimInvocationForAar, currentCommandDigest, currentInvocationId, runAsDispatch, runWithInvocation, withInvocations } from "./invocation";
+
+test("W2a primitives: nested dispatch scopes restore digests and share the invocation claim", () => {
+  const outer = "a".repeat(64), inner = "b".repeat(64), value = {};
+  expect(currentCommandDigest()).toBeUndefined();
+  runWithInvocation(() => {
+    const id = currentInvocationId()!;
+    expect(runAsDispatch(outer, () => {
+      expect(currentCommandDigest()).toBe(outer);
+      expect(currentInvocationId()).toBe(id);
+      runAsDispatch(inner, () => {
+        expect(currentCommandDigest()).toBe(inner);
+        expect(currentInvocationId()).toBe(id);
+        expect(claimInvocationForAar()).toBe(id);
+      });
+      expect(currentCommandDigest()).toBe(outer);
+      expect(currentInvocationId()).toBe(id);
+      expect(() => claimInvocationForAar()).toThrow("invocation already claimed for AAR emission");
+      return value;
+    })).toBe(value);
+    expect(currentCommandDigest()).toBeUndefined();
+    expect(currentInvocationId()).toBe(id);
+    expect(() => claimInvocationForAar()).toThrow("invocation already claimed for AAR emission");
+  });
+  expect(currentCommandDigest()).toBeUndefined();
+  expect(currentInvocationId()).toBeUndefined();
+});
+
+test("W2a primitives: throwing and rejecting dispatch scopes restore context without consuming claims", async () => {
+  const outer = "a".repeat(64), inner = "b".repeat(64);
+  await runWithInvocation(async () => {
+    const id = currentInvocationId()!;
+    await runAsDispatch(outer, async () => {
+      expect(() => runAsDispatch(inner, () => {
+        expect(currentCommandDigest()).toBe(inner);
+        expect(currentInvocationId()).toBe(id);
+        throw Error("sync failure");
+      })).toThrow("sync failure");
+      expect(currentCommandDigest()).toBe(outer);
+      await expect(runAsDispatch(inner, async () => {
+        await Promise.resolve();
+        expect(currentCommandDigest()).toBe(inner);
+        expect(currentInvocationId()).toBe(id);
+        throw Error("async failure");
+      })).rejects.toThrow("async failure");
+      expect(currentCommandDigest()).toBe(outer);
+      expect(currentInvocationId()).toBe(id);
+    });
+    expect(currentCommandDigest()).toBeUndefined();
+    expect(currentInvocationId()).toBe(id);
+    expect(claimInvocationForAar()).toBe(id);
+  });
+  expect(currentCommandDigest()).toBeUndefined();
+  expect(currentInvocationId()).toBeUndefined();
+});
+
+test("W2a primitives: interleaved dispatch scopes isolate digests and preserve one shared claim", async () => {
+  await runWithInvocation(async () => {
+    const id = currentInvocationId()!;
+    const started = Promise.withResolvers<void>(), claimed = Promise.withResolvers<void>();
+    const first = runAsDispatch("a".repeat(64), async () => {
+      await started.promise;
+      expect(currentCommandDigest()).toBe("a".repeat(64));
+      expect(currentInvocationId()).toBe(id);
+      try { expect(claimInvocationForAar()).toBe(id); }
+      finally { claimed.resolve(); }
+    });
+    expect(currentCommandDigest()).toBeUndefined();
+    const second = runAsDispatch("b".repeat(64), async () => {
+      started.resolve();
+      await claimed.promise;
+      expect(currentCommandDigest()).toBe("b".repeat(64));
+      expect(currentInvocationId()).toBe(id);
+      expect(() => claimInvocationForAar()).toThrow("invocation already claimed for AAR emission");
+    });
+    expect(currentCommandDigest()).toBeUndefined();
+    await Promise.all([first, second]);
+    expect(currentCommandDigest()).toBeUndefined();
+    expect(currentInvocationId()).toBe(id);
+    expect(() => claimInvocationForAar()).toThrow("invocation already claimed for AAR emission");
+  });
+  expect(currentCommandDigest()).toBeUndefined();
+  expect(currentInvocationId()).toBeUndefined();
+});
 
 test("real MCP calls retain distinct invocation IDs while interleaved", async () => {
   const server = new McpServer({ name: "invocation-test", version: "1" });

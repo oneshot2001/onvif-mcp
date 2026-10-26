@@ -4,6 +4,15 @@ import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 
 // Correlates camera traffic within one tool call; not proof of dispatch.
 const invocation = new AsyncLocalStorage<{ id: string; aarClaimed: boolean }>();
+const dispatch = new AsyncLocalStorage<string>();
+
+export function runAsDispatch<T>(commandDigest: string, fn: () => T): T {
+  return dispatch.run(commandDigest, fn);
+}
+
+export function currentCommandDigest(): string | undefined {
+  return dispatch.getStore();
+}
 
 export function runWithInvocation<T>(fn: () => T): T {
   return invocation.run({ id: randomBytes(16).toString("hex"), aarClaimed: false }, fn);
