@@ -53,6 +53,8 @@ export interface WireSendResult {
 }
 
 export interface WireEmitInput {
+  // Trusted internal correlation ID, never an MCP argument.
+  readonly invocationId?: Uint8Array;
   readonly agentId: string;
   readonly camera: string;
   readonly cameraPtz: boolean;
@@ -135,7 +137,12 @@ export class AarWireProducer {
   }
 
   emit(input: WireEmitInput): Promise<{ dir: string; bundlePath: string; evaluatedAt: number }> {
-    const result = emissionQueue.then(() => this.emitOne(input));
+    const invocationId = input.invocationId;
+    if (invocationId !== undefined && invocationId.length !== 16) {
+      return Promise.reject(new Error("invocationId must be 16 bytes"));
+    }
+    const queued = { ...input, invocationId: invocationId === undefined ? undefined : Uint8Array.from(invocationId) };
+    const result = emissionQueue.then(() => this.emitOne(queued));
     emissionQueue = result.catch(() => {});
     return result;
   }
@@ -180,7 +187,7 @@ export class AarWireProducer {
     const prior = this.readJson<PriorState>(this.priorFile(), { prior_emissions: [], entries: [] });
     sortPrior(prior);
 
-    const invocationId = new Uint8Array(randomBytes(16));
+    const invocationId = input.invocationId ?? new Uint8Array(randomBytes(16));
     const journal = join(this.aarDir, "journal.jsonl");
     let journalUnavailable = false;
     const refuseJournal = () => {

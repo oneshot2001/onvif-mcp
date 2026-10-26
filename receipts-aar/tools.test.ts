@@ -2,8 +2,8 @@ import { afterEach, beforeEach, expect, spyOn, test } from "bun:test";
 import * as fs from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
-import { createHash } from "node:crypto";
-import { decodeCbor } from "aar-kat-harness/harness/cbor";
+import { createHash, generateKeyPairSync, sign as edSign } from "node:crypto";
+import { decodeCbor, toHex } from "aar-kat-harness/harness/cbor";
 import { AarWireProducer, verifyBundleDir } from "./producer";
 import { sendPreset, sendSnapshot } from "./actions";
 import { cameraId, presetName } from "../schemas";
@@ -13,7 +13,10 @@ import { curlRequest } from "../curl-args";
 import { z } from "zod";
 import { allowed as policyAllowed, ptzBound, type Policy } from "../policy-check";
 import { clockReceipt, formatClock, type ClockResult } from "../clock";
-import { formatReceiptsText, selectReceipts } from "../receipt-chain";
+import { appendLocked, outcomeEvidence, verifyChain, formatReceiptsText, selectReceipts } from "../receipt-chain";
+
+import { claimInvocationForAar, currentInvocationId, runWithInvocation } from "../invocation";
+import { checkAarJournal } from "./journal";
 
 // Execute the actual index.ts wrapper and registrations with fake transports.
 // Importing index.ts itself would fetch credentials, create .keys and connect MCP.
@@ -21,7 +24,8 @@ const repo = resolve(import.meta.dir, "..");
 const source = fs.readFileSync(join(repo, "index.ts"), "utf8");
 const wrapper = source.slice(source.indexOf("const aarProducer ="), source.indexOf("const server = new McpServer"));
 const registrations = source.slice(source.indexOf('server.tool("get_snapshot"'), source.indexOf('server.tool("ptz_move"'));
-const code = new Bun.Transpiler({ loader: "ts" }).transformSync(wrapper + registrations);
+const writer = source.slice(source.indexOf("const NODE_KIND:"), source.indexOf("function allowed("));
+const code = new Bun.Transpiler({ loader: "ts" }).transformSync(writer + wrapper + registrations);
 const gateCode = new Bun.Transpiler({ loader: "ts" }).transformSync(
   source.slice(source.indexOf('server.tool("list_cameras"'), source.indexOf('server.tool("get_snapshot"'))
   + source.slice(source.indexOf('server.tool("ptz_move"'), source.indexOf('server.tool("config_baseline"'))
@@ -56,8 +60,37 @@ afterEach(() => {
 });
 function harness(mode: string, password = "fake-password", options: HarnessOptions = {}) {
   const policy = options.policy ?? freshPolicy();
-  const calls: string[] = [], chain: any[] = [];
+  const calls: string[] = [];
+  const log = join(root, "chain.jsonl");
+  const { privateKey, publicKey } = generateKeyPairSync("ed25519");
+  const lines = () => fs.existsSync(log) ? fs.readFileSync(log, "utf8").trim().split("\n") : [];
+  const signedReceipts = () => lines().map(line => JSON.parse(line));
+  const durable = new Set<string>();
+  let journalFd: number | undefined;
+  const open = fs.openSync, sync = fs.fsyncSync;
+  spies.push(spyOn(fs, "openSync").mockImplementation((...args: Parameters<typeof open>) => {
+    const fd = open(...args);
+    if (args[0] === join(root, "receipts", "aar", "journal.jsonl")) journalFd = fd;
+    return fd;
+  }));
+  spies.push(spyOn(fs, "fsyncSync").mockImplementation(fd => {
+    sync(fd);
+    if (journalFd === fd) {
+      for (const record of journalRecords()) {
+        if (record.event === "attempt_committed") durable.add(record.invocation_id);
+      }
+      journalFd = undefined;
+    }
+  }));
+  const assertCommitted = () => {
+    const id = currentInvocationId()!;
+    expect(id).toMatch(/^[0-9a-f]{32}$/);
+    const records = fs.readFileSync(join(root, "receipts", "aar", "journal.jsonl"), "utf8").trim().split("\n").map(line => JSON.parse(line));
+    expect(records.some(r => r.event === "attempt_committed" && r.invocation_id === id)).toBe(true);
+    expect(durable.has(id)).toBe(true);
+  };
   const handlers: Record<string, (input: any) => Promise<any>> = {};
+  const rawHandlers: typeof handlers = {};
   const credentialChannel = (path: string) => {
     const request = curlRequest({ base: "https://camera.invalid", user: "test" }, password, path);
     expect(request.args.join(" ")).not.toContain(password);
@@ -65,15 +98,16 @@ function harness(mode: string, password = "fake-password", options: HarnessOptio
   };
   const dependencies = {
     AarWireProducer, sendPreset, sendSnapshot, createHash, join, cameraId, presetName, formatPresetRecall, snapshotContent,
+    claimInvocationForAar, currentInvocationId, appendLocked, outcomeEvidence, edSign, LOG: log, PRIV: privateKey,
     ROOT: root, AGENT: "test-agent", policyBytes: Buffer.from("policy"),
     cameras: { cam: { ptz: true, protocol: "vapix" } }, policy,
     existsSync: fs.existsSync, readFileSync: fs.readFileSync,
     allowed: (tool: string, camera?: string) => mode === "deny" ? "agent has no grant" : policyAllowed(policy, agent, tool, camera),
     rateDenied: options.rateDenied ?? (() => null),
     deviceMeta: async () => { calls.push("metadata"); return { manufacturer: "AXIS", model: "test", firmware: "0" }; },
-    receipt: (...args: any[]) => chain.push(args),
-    server: { tool: (name: string, _description: string, _schema: unknown, handler: any) => { handlers[name] = handler; } },
+    server: { tool: (name: string, _description: string, _schema: unknown, handler: any) => { rawHandlers[name] = handler; handlers[name] = input => runWithInvocation(() => handler(input)); } },
     snapshot: async (_tool: string, _camera: string, path: string) => {
+      assertCommitted();
       calls.push("snapshot");
       credentialChannel("/axis-cgi/jpg/image.cgi");
       if (mode === "throws") throw Error("stand-in-camera-password");
@@ -85,8 +119,7 @@ function harness(mode: string, password = "fake-password", options: HarnessOptio
       credentialChannel(path);
       const readback = path.includes("query=position");
       calls.push(readback ? "readback" : "recall");
-      const journal = fs.readFileSync(join(root, "receipts", "aar", "journal.jsonl"), "utf8");
-      expect(journal).toContain('"event":"attempt_committed"');
+      assertCommitted();
       if (mode === "throws") throw Error("stand-in-camera-password");
       if (mode === "overrun") now += 61_000;
       if (mode === "backwards") now -= 1000;
@@ -94,8 +127,11 @@ function harness(mode: string, password = "fake-password", options: HarnessOptio
       return { ok: true, body: readback ? "pan=1" : "OK" };
     },
   };
-  new Function(...Object.keys(dependencies), code)(...Object.values(dependencies));
-  return { handlers, calls, chain };
+  const emitAar = new Function(...Object.keys(dependencies), code + "\nreturn emitAar;")(...Object.values(dependencies));
+  return { handlers, rawHandlers, calls, emitAar, lines, signedReceipts, assertCommitted,
+    publicKey: publicKey.export({ type: "spki", format: "pem" }).toString(),
+    get chain(): any[][] { return signedReceipts().map(r => [r.action.tool, r.action.params, r.decision, r.detail]); },
+  };
 }
 function bundle(output: any) {
   const text = output.content.filter((c: any) => c.type === "text").map((c: any) => c.text).join("\n");
@@ -103,6 +139,7 @@ function bundle(output: any) {
   expect(dir).toBeDefined();
   const result = verifyBundleDir(repo, dir!);
   expect(result.output).toContain("Result: conformant");
+  expect(result.conformant).toBe(true);
   const wire = decodeCbor(fs.readFileSync(join(dir!, "bundle.cbor"))) as any;
   return wire.artifacts.receipts.map((e: any[]) => decodeCbor(e[0] as Uint8Array)) as any[];
 }
@@ -133,7 +170,7 @@ function gateHarness(options: HarnessOptions = {}, caller = agent) {
       chain.push(args);
       fs.appendFileSync(log, JSON.stringify({ principal: { id: caller }, tool: args[0], decision: args[2] }) + "\n");
     },
-    server: { tool: (name: string, _description: string, _schema: unknown, handler: any) => { handlers[name] = handler; } },
+    server: { tool: (name: string, _description: string, _schema: unknown, handler: any) => { handlers[name] = input => runWithInvocation(() => handler(input)); } },
   };
   new Function(...Object.keys(dependencies), gateCode)(...Object.values(dependencies));
   return { handlers, calls, chain, log };
@@ -200,7 +237,7 @@ for (const tool of ["ptz_preset", "get_snapshot"]) {
     expect(outputText(output)).not.toContain("DENIED:");
     expect(h.calls).toEqual(tool === "ptz_preset" ? ["metadata", "recall", "readback", "readback"] : ["metadata", "snapshot"]);
     expect(h.chain).toHaveLength(1);
-    expect(h.chain[0].slice(0, 3)).toEqual([tool, tool === "ptz_preset" ? { camera: "cam", preset: "Home" } : { camera: "cam" }, "allow"]);
+    expect(h.chain[0]!.slice(0, 3)).toEqual([tool, tool === "ptz_preset" ? { camera: "cam", preset: "Home" } : { camera: "cam" }, "allow"]);
     expect(bundle(output).find(r => r.kind === "dispatch")).toBeDefined();
   });
 }
@@ -304,7 +341,7 @@ test("actual denial handlers never query metadata or send, and both verify", asy
 
 test("actual handler on journal append failure does metadata only and writes refusal", async () => {
   const h = harness("ok");
-  spies.push(spyOn(fs, "appendFileSync").mockImplementation(() => { throw Error("unavailable"); }));
+  failJournal("attempt_envelope");
   const output = await h.handlers.get_snapshot!({ camera: "cam" });
   expect(h.calls).toEqual(["metadata"]);
   expect(bundle(output).find(r => r.kind === "action_attempt").body).toMatchObject({ disposition: "not_dispatched", refusal_reason: "journal/unavailable" });
@@ -312,7 +349,7 @@ test("actual handler on journal append failure does metadata only and writes ref
 
 test("actual preset handler on journal failure never recalls or records transport error", async () => {
   const h = harness("ok");
-  spies.push(spyOn(fs, "appendFileSync").mockImplementation(() => { throw Error("unavailable"); }));
+  failJournal("attempt_envelope");
   const output = await h.handlers.ptz_preset!({ camera: "cam", preset: "Home" });
   expect(h.calls).toEqual(["metadata"]);
   expect(JSON.stringify(h.chain)).not.toContain("transport error");
@@ -322,7 +359,7 @@ test("actual preset handler on journal failure never recalls or records transpor
 
 test("actual preset handler late journal refusal fails loudly with JSONL aar_emit and no send", async () => {
   const h = harness("ok");
-  spies.push(spyOn(fs, "appendFileSync").mockImplementation(() => { now += 1000; throw Error("unavailable"); }));
+  failJournal("attempt_envelope", true);
   const output = await h.handlers.ptz_preset!({ camera: "cam", preset: "Home" });
   expect(h.calls).toEqual(["metadata"]);
   expect(JSON.stringify(output)).toContain("aar-emit FAILED: invalid real-clock timeline: journal refusal decided after T0");
@@ -363,4 +400,121 @@ test("stand-in camera password stays out of journal, all bundle files, metadata 
     expect(fs.readFileSync(path).includes(Buffer.from("stand-in-camera-password"))).toBe(false);
   }
   expect(JSON.stringify(h.chain)).not.toContain("stand-in-camera-password");
+});
+
+function failJournal(event: string, late = false) {
+  const append = fs.appendFileSync;
+  spies.push(spyOn(fs, "appendFileSync").mockImplementation((...args: Parameters<typeof append>) => {
+    if (String(args[1]).includes(`"event":"${event}"`)) {
+      if (late) now += 1000;
+      throw Error("journal unavailable");
+    }
+    return append(...args);
+  }));
+}
+
+function producerTree(path = join(root, "receipts", "aar")): unknown {
+  if (!fs.statSync(path).isDirectory()) return fs.readFileSync(path).toString("hex");
+  return Object.fromEntries(fs.readdirSync(path).sort().map(name => [name, producerTree(join(path, name))]));
+}
+function journalRecords(): any[] {
+  const path = join(root, "receipts", "aar", "journal.jsonl");
+  return fs.existsSync(path) ? fs.readFileSync(path, "utf8").trim().split("\n").filter(Boolean).map(line => JSON.parse(line)) : [];
+}
+function assertSigned(h: ReturnType<typeof harness>, id: string | null) {
+  expect(h.lines().length).toBeGreaterThan(0);
+  expect(verifyChain(h.lines(), h.publicKey)).toEqual({ count: h.lines().length, bad: [] });
+  for (const r of h.signedReceipts()) expect(r.invocation_id).toBe(id);
+}
+
+for (const tool of ["get_snapshot", "ptz_preset"]) {
+  for (const mode of ["ok", "deny", "journal-unavailable"]) {
+    test(`W2b invocation binding: ${tool} ${mode} binds signed chain, bundle and journal`, async () => {
+      const h = harness(mode);
+      // Fail the marker after the envelope was written, so the refusal path
+      // exercises both a written attempt and refusal_persisted with this ID.
+      if (mode === "journal-unavailable") failJournal("attempt_committed");
+      await runWithInvocation(async () => {
+        const id = currentInvocationId()!;
+        const output = await h.rawHandlers[tool]!({ camera: "cam", preset: "Home" });
+        const rs = bundle(output); // Decodes bundle.cbor and verifies with pyref.
+        expect(outputText(output).match(/aar-bundle: (.+)/)![1]!.endsWith(id.slice(0, 8))).toBe(true);
+        for (const r of rs) expect(toHex(r.freshness.invocation_id)).toBe(id);
+        const attempt = rs.find(r => r.kind === "action_attempt");
+        expect(toHex(attempt.body.command.idempotency_key)).toBe(id);
+        const dispatch = rs.find(r => r.kind === "dispatch");
+        if (mode === "ok") {
+          expect(toHex(dispatch.body.adapter_invocation_id)).toBe(id);
+          expect(journalRecords().map(r => r.event)).toEqual(["attempt_envelope", "attempt_committed", "dispatch_completed"]);
+        } else {
+          expect(dispatch).toBeUndefined();
+          expect(attempt.body.disposition).toBe("not_dispatched");
+          expect(h.calls).toEqual(mode === "deny" ? [] : ["metadata"]);
+          if (mode === "deny") expect(fs.existsSync(join(root, "receipts", "aar", "journal.jsonl"))).toBe(false);
+          else expect(journalRecords().map(r => r.event)).toEqual(["attempt_envelope", "refusal_persisted"]);
+        }
+        for (const record of journalRecords()) expect(record.invocation_id).toBe(id);
+        assertSigned(h, id);
+      });
+    });
+  }
+}
+
+for (const mode of ["ok", "throws", "throws-pending", "completion-failure"]) {
+  test(`W2b invocation binding: actual emitAar rejects a second claim after ${mode} without producer changes`, async () => {
+    const h = harness("ok");
+    if (mode === "completion-failure") failJournal("dispatch_completed");
+    // If the ambiguous marker itself cannot be written, recovery must retain
+    // the original pending attempt; a successful ambiguity marker closes it.
+    if (mode === "throws-pending") failJournal("dispatch_ambiguous");
+    await runWithInvocation(async () => {
+      const id = currentInvocationId()!;
+      let sends = 0;
+      const send = async () => {
+        h.assertCommitted();
+        sends++;
+        expect(journalRecords().at(-1)).toMatchObject({ event: "attempt_committed", invocation_id: id });
+        if (mode.startsWith("throws")) throw Error("transport failed");
+        return { dispatch: { status: 200, responseBody: Buffer.from("ok"), observation: Buffer.from("position"),
+          outcomeLevel: "device_acknowledged", outcomeState: "unknown" }, dispatchedAt: now / 1000, outcomeObservedAt: now / 1000 };
+      };
+      const emit = () => h.emitAar("ptz_preset", "cam", "camera.ptz.preset", { preset: "Home" }, now / 1000, { send });
+      const first = await emit();
+      expect(first).toContain(mode === "ok" ? "aar-bundle:" : "aar-emit FAILED:");
+      if (mode === "ok") bundle({ content: [{ type: "text", text: first }] });
+      const before = producerTree();
+      const receiptCount = h.signedReceipts().length;
+      const second = await emit();
+      expect(second).toBe("\naar-emit FAILED: invocation already claimed for AAR emission");
+      expect(h.calls).toEqual(["metadata"]);
+      expect(sends).toBe(1);
+      expect(producerTree()).toEqual(before);
+      expect(h.signedReceipts()).toHaveLength(receiptCount + 1);
+      expect(h.signedReceipts().at(-1)).toMatchObject({ action: { tool: "aar_emit" }, decision: "allow",
+        detail: "wire emission FAILED: invocation already claimed for AAR emission" });
+      assertSigned(h, id);
+      for (const record of journalRecords()) expect(record.invocation_id).toBe(id);
+      const warning = spyOn(console, "error").mockImplementation(() => {});
+      spies.push(warning);
+      checkAarJournal(join(root, "receipts", "aar", "journal.jsonl"));
+      if (mode === "throws-pending" || mode === "completion-failure") {
+        expect(warning.mock.calls.flat().join(" ")).toContain(`invocation ${id} has no completion`);
+      } else expect(warning).not.toHaveBeenCalled();
+    });
+  });
+}
+
+test("W2b invocation binding: actual emitAar outside a run signs a null-ID failure without metadata or producer changes", async () => {
+  const h = harness("ok");
+  const before = producerTree();
+  expect(currentInvocationId()).toBeUndefined();
+  const output = await h.emitAar("get_snapshot", "cam", "camera.stream.view", {}, now / 1000, {
+    send: async () => { throw Error("unexpected send"); },
+  });
+  expect(output).toBe("\naar-emit FAILED: no invocation context");
+  expect(h.calls).toEqual([]);
+  expect(producerTree()).toEqual(before);
+  expect(h.signedReceipts()).toHaveLength(1);
+  expect(h.signedReceipts()[0]).toMatchObject({ action: { tool: "aar_emit" }, decision: "allow", detail: "wire emission FAILED: no invocation context" });
+  assertSigned(h, null);
 });

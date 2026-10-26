@@ -368,3 +368,60 @@ test("completion journal failure keeps the attempt and never retries", async () 
   expect(records().at(-1).event).toBe("attempt_committed");
   expect(fs.readdirSync(aar()).some(f => fs.existsSync(join(aar(), f, "bundle.cbor")))).toBe(false);
 });
+
+// Includes directories and bytes, including keys and all producer state.
+function tree(path: string): unknown {
+  if (!fs.existsSync(path)) return null;
+  if (!fs.statSync(path).isDirectory()) return fs.readFileSync(path).toString("hex");
+  return Object.fromEntries(fs.readdirSync(path).sort().map(name => [name, tree(join(path, name))]));
+}
+
+for (const populated of [false, true]) {
+  for (const length of [15, 17]) {
+    test(`W2b invocation binding: ${length}-byte ID rejects without changes on ${populated ? "populated" : "fresh"} producer`, async () => {
+      if (populated) await producer.emit(input());
+      const before = tree(root); // Construction has already created receipts/aar.
+      let sent = false;
+      const result = producer.emit({ ...input(async () => { sent = true; throw Error("unexpected send"); }), invocationId: new Uint8Array(length) });
+      expect(result).toBeInstanceOf(Promise);
+      await expect(result).rejects.toThrow("invocationId must be 16 bytes");
+      expect(sent).toBe(false);
+      expect(tree(root)).toEqual(before);
+    });
+  }
+}
+
+for (const mutation of ["buffer", "property"]) {
+  test(`W2b invocation binding: queued ID owns its bytes despite caller ${mutation} mutation`, async () => {
+    const gate = Promise.withResolvers<void>(), entered = Promise.withResolvers<void>();
+    const first = producer.emit(input(async () => {
+      entered.resolve();
+      await gate.promise;
+      return { dispatch, dispatchedAt: now / 1000, outcomeObservedAt: now / 1000 };
+    }));
+    await entered.promise;
+    const bytes = new Uint8Array(16).fill(42);
+    const expected = toHex(bytes);
+    const queued = { ...input(), invocationId: bytes };
+    const second = producer.emit(queued);
+    if (mutation === "buffer") bytes.fill(99);
+    else queued.invocationId = new Uint8Array(17).fill(99);
+    gate.resolve();
+    const results = await Promise.all([first, second]);
+    const rs = receipts(results[1]!.dir);
+    for (const r of rs) expect(toHex(r.freshness.invocation_id)).toBe(expected);
+    expect(toHex(rs.find(r => r.kind === "action_attempt").body.command.idempotency_key)).toBe(expected);
+    expect(toHex(rs.find(r => r.kind === "dispatch").body.adapter_invocation_id)).toBe(expected);
+    expect(results[1]!.dir.endsWith(expected.slice(0, 8))).toBe(true);
+    expect(records().slice(3).every(r => r.invocation_id === expected)).toBe(true);
+    verify(results[1]!.dir);
+  });
+}
+
+test("W2b invocation binding: omitted IDs remain independently random", async () => {
+  const first = await producer.emit(input());
+  const second = await producer.emit(input());
+  const ids = [first, second].map(result => toHex(receipts(result.dir)[0].freshness.invocation_id));
+  for (const id of ids) expect(id).toMatch(/^[0-9a-f]{32}$/);
+  expect(ids[0]).not.toBe(ids[1]);
+});

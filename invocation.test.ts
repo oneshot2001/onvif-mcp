@@ -3,7 +3,7 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { z } from "zod";
-import { currentInvocationId, runWithInvocation, withInvocations } from "./invocation";
+import { claimInvocationForAar, currentInvocationId, runWithInvocation, withInvocations } from "./invocation";
 
 test("real MCP calls retain distinct invocation IDs while interleaved", async () => {
   const server = new McpServer({ name: "invocation-test", version: "1" });
@@ -100,4 +100,24 @@ test("runWithInvocation returns values and restores context after nesting and th
     return value;
   })).toBe(value);
   expect(currentInvocationId()).toBeUndefined();
+});
+
+
+test("W2b invocation binding: claims require context and survive nesting, awaits and failures", async () => {
+  expect(() => claimInvocationForAar()).toThrow("no invocation context");
+  await Promise.all([1, 2].map(() => runWithInvocation(async () => {
+    const id = currentInvocationId()!;
+    expect(claimInvocationForAar()).toBe(id);
+    await runWithInvocation(async () => {
+      expect(currentInvocationId()).not.toBe(id);
+      expect(claimInvocationForAar()).toBe(currentInvocationId()!);
+      await Promise.resolve();
+      expect(() => claimInvocationForAar()).toThrow("invocation already claimed for AAR emission");
+    });
+    await expect(Promise.reject(Error("emission failed"))).rejects.toThrow("emission failed");
+    expect(currentInvocationId()).toBe(id);
+    expect(() => claimInvocationForAar()).toThrow("invocation already claimed for AAR emission");
+  })));
+  expect(currentInvocationId()).toBeUndefined();
+  expect(() => claimInvocationForAar()).toThrow("no invocation context");
 });

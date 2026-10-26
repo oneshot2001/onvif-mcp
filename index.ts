@@ -22,7 +22,7 @@ import { formatPresetRecall } from "./ptz-output";
 import { formatDriftLines, type ConfigDiff } from "./config-drift";
 import { appendLocked, emptyChainConflict, formatReceiptsText, lastReceiptFrom, missingHandoffHeads, outcomeEvidence, selectReceipts, verifyChain } from "./receipt-chain";
 import { curlRequest } from "./curl-args";
-import { currentInvocationId, withInvocations } from "./invocation";
+import { claimInvocationForAar, currentInvocationId, withInvocations } from "./invocation";
 import { cameraPinProblem } from "./camera-pins";
 import { accountFor, type CameraAccounts } from "./account-for";
 import { keyModeProblem } from "./key-perms";
@@ -326,6 +326,7 @@ async function emitAar(tool: string, camera: string, actionName: "camera.stream.
   parameters: Record<string, string | number | boolean>, startedAt: number,
   outcome: { send: NonNullable<WireEmitInput["send"]> } | { refusal: string }): Promise<string> {
   try {
+    const invocationId = Buffer.from(claimInvocationForAar(), "hex");
     const cam = cameras[camera];
     const deviceMetadata = "refusal" in outcome
       ? { manufacturer: "not-queried", model: cam ? camera : `unknown:${camera}`, firmware: "not-queried" }
@@ -333,7 +334,7 @@ async function emitAar(tool: string, camera: string, actionName: "camera.stream.
     const observedAt = Math.floor(Date.now() / 1000);
     const { dir } = await aarProducer.emit({
       agentId: AGENT, camera, cameraPtz: cam?.ptz ?? false, protocol: cam?.protocol ?? "vapix",
-      deviceMetadata, observedAt, actionName, parameters, startedAt, ...outcome,
+      invocationId, deviceMetadata, observedAt, actionName, parameters, startedAt, ...outcome,
     });
     return `\naar-bundle: ${dir}`;
   } catch (error) {
