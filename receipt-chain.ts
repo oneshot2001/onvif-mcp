@@ -108,6 +108,7 @@ export function verifyChain(lines: string[], publicKeyPem: string): { count: num
     const { hash, sig, ...body } = r;
     const expected = createHash("sha256").update(JSON.stringify(body)).digest("hex");
     const reasons: string[] = [];
+    if (line !== JSON.stringify(r)) reasons.push("non-canonical encoding");
     if (expected !== hash) reasons.push("hash mismatch");
     let okSig = false;
     if (typeof hash === "string" && typeof sig === "string") {

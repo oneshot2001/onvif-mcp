@@ -40,7 +40,7 @@ describe("startup handoff heads", () => {
       };
       const hash = createHash("sha256").update(JSON.stringify(body)).digest("hex");
       const sig = sign(null, Buffer.from(hash), privateKey).toString("base64");
-      writeFileSync(join(dir, `${i}.json`), JSON.stringify({ ...body, sig }));
+      writeFileSync(join(dir, `${i}.json`), JSON.stringify({ ...body, sig }, null, 2) + "\n");
     }
     expect(verifyHandoffs(root, publicKey.export({ type: "spki", format: "pem" }).toString()))
       .toEqual({ count: 2, bad: [], heads: heads.map((chain_head_hash, i) => ({ file: `${i}.json`, chain_head_hash })) });

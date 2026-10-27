@@ -40,8 +40,10 @@ attempt.
 - **Fail-closed per-agent policy** — tool allowlist, camera allowlist, PTZ step
   bounds per agent identity; unknown agents get nothing
 - **Signed receipts on every call** — hash-chained JSONL, ed25519-signed,
-  produced frames content-hashed into the receipt; one altered byte is detected
-  at the exact sequence number
+  produced frames content-hashed into the receipt; verification detects changes
+  to signed receipt content at the affected sequence number. Verifiers also
+  require each receipt line to equal `JSON.stringify(parsed)` and each handoff
+  file to equal `JSON.stringify(parsed, null, 2) + "\n"` (parsed key order).
 - **Dual transport** — AXIS VAPIX and ONVIF SOAP behind one tool contract,
   selected per camera
 - **No secrets on disk** — camera credentials resolve from a local credential

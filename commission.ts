@@ -180,7 +180,10 @@ export function verifyHandoffs(root: string, publicKey: string): { count: number
     try {
       const path = join(dir, file);
       if (!lstatSync(path).isFile()) { bad.push(file); continue; }
-      const { sig, ...body } = JSON.parse(readFileSync(path, "utf8"));
+      const text = readFileSync(path, "utf8");
+      const parsed = JSON.parse(text);
+      if (text !== JSON.stringify(parsed, null, 2) + "\n") { bad.push(file); continue; }
+      const { sig, ...body } = parsed;
       const hash = new Bun.CryptoHasher("sha256").update(JSON.stringify(body)).digest("hex");
       if (typeof sig !== "string" || !edVerify(null, Buffer.from(hash), publicKey, Buffer.from(sig, "base64"))) bad.push(file);
       else heads.push({ file, chain_head_hash: body.receipts?.chain_head_hash });

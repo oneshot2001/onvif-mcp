@@ -25,10 +25,38 @@ beforeEach(() => {
 afterEach(() => rmSync(root, { recursive: true, force: true }));
 
 function signedHandoff(file: string, chainHead = head) {
-  const body = { receipts: { chain_head_hash: chainHead } };
+  const body = { verdict: { status: "FAIL", passed: false }, receipts: { chain_head_hash: chainHead } };
   const hash = createHash("sha256").update(JSON.stringify(body)).digest("hex");
-  writeFileSync(join(dir, file), JSON.stringify({ ...body, sig: signature(hash) }));
+  writeFileSync(join(dir, file), JSON.stringify({ ...body, sig: signature(hash) }, null, 2) + "\n");
 }
+
+test.each(["duplicate key", "compact JSON", "extra space"])("non-canonical encoding: rejects handoff %s without a head", (kind) => {
+  signedHandoff("valid.json");
+  const original = readFileSync(join(dir, "valid.json"), "utf8");
+  expect(verifyHandoffs(root, pem)).toEqual({
+    count: 1, bad: [], heads: [{ file: "valid.json", chain_head_hash: head }],
+  });
+  const variant = kind === "duplicate key"
+    ? original.replace('"passed": false', '"passed": true, "passed": false')
+    : kind === "compact JSON" ? JSON.stringify(JSON.parse(original)) + "\n"
+    : original.replace('"passed": false', '"passed":  false');
+  expect(variant).not.toBe(original);
+  expect(JSON.parse(variant)).toEqual(JSON.parse(original));
+  writeFileSync(join(dir, "variant.json"), variant);
+  expect(verifyHandoffs(root, pem)).toEqual({
+    count: 2, bad: ["variant.json"], heads: [{ file: "valid.json", chain_head_hash: head }],
+  });
+});
+
+test("non-canonical encoding: committed handoffs match writeHandoff format", () => {
+  const committedDir = join(import.meta.dir, "handoff");
+  const files = readdirSync(committedDir).filter((file) => file.endsWith(".json"));
+  expect(files.length).toBeGreaterThan(0);
+  for (const file of files) {
+    const text = readFileSync(join(committedDir, file), "utf8");
+    expect(text).toBe(JSON.stringify(JSON.parse(text), null, 2) + "\n");
+  }
+});
 
 function runVerify(afterVerify?: () => void) {
   const output: string[] = [];
