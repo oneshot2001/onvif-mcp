@@ -1,4 +1,4 @@
-import { appendFileSync, closeSync, existsSync, fstatSync, fsyncSync, openSync, readFileSync, readSync } from "node:fs";
+import { appendFileSync, closeSync, existsSync, fstatSync, fsyncSync, openSync, readFileSync, readSync, statSync } from "node:fs";
 import { dirname } from "node:path";
 import { fromHex, toHex } from "aar-kat-harness/harness/cbor";
 import { hash } from "aar-kat-harness/harness/crypto";
@@ -18,6 +18,7 @@ export type JournalRecord =
 function pendingAttempts(path: string): Set<string> {
   const pending = new Set<string>();
   if (!existsSync(path)) return pending;
+  if (!statSync(path).isFile()) throw Error(`aar journal corrupt: not a regular file (${path})`);
   const text = readFileSync(path, "utf8");
   try {
     if (text && !text.endsWith("\n")) throw Error("torn last line");
