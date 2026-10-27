@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { createHash, generateKeyPairSync, sign as edSign } from "node:crypto";
 import { decodeCbor, toHex } from "aar-kat-harness/harness/cbor";
-import { AarWireProducer, verifyBundleDir } from "./producer";
+import { AarWireProducer, commandDigestHex, verifyBundleDir } from "./producer";
 import { sendPreset, sendSnapshot } from "./actions";
 import { cameraId, presetName } from "../schemas";
 import { formatPresetRecall } from "../ptz-output";
@@ -15,7 +15,7 @@ import { allowed as policyAllowed, ptzBound, type Policy } from "../policy-check
 import { clockReceipt, formatClock, type ClockResult } from "../clock";
 import { appendLocked, outcomeEvidence, verifyChain, formatReceiptsText, selectReceipts } from "../receipt-chain";
 
-import { claimInvocationForAar, currentInvocationId, runWithInvocation } from "../invocation";
+import { claimInvocationForAar, currentCommandDigest, currentInvocationId, runAsDispatch, runWithInvocation } from "../invocation";
 import { checkAarJournal } from "./journal";
 
 // Execute the actual index.ts wrapper and registrations with fake transports.
@@ -41,6 +41,7 @@ function freshPolicy(): Policy {
 type HarnessOptions = {
   policy?: Policy;
   rateDenied?: (key: "snapshot" | "actuation") => string | null;
+  camera?: { ptz: boolean; protocol: string };
 };
 let root: string, now: number;
 const home = process.env.HOME;
@@ -61,6 +62,11 @@ afterEach(() => {
 function harness(mode: string, password = "fake-password", options: HarnessOptions = {}) {
   const policy = options.policy ?? freshPolicy();
   const calls: string[] = [];
+  const dispatchScopes: Array<{ call: string; digest: string | undefined }> = [];
+  const recordCall = (call: string) => {
+    calls.push(call);
+    dispatchScopes.push({ call, digest: currentCommandDigest() });
+  };
   const log = join(root, "chain.jsonl");
   const { privateKey, publicKey } = generateKeyPairSync("ed25519");
   const lines = () => fs.existsSync(log) ? fs.readFileSync(log, "utf8").trim().split("\n") : [];
@@ -92,23 +98,25 @@ function harness(mode: string, password = "fake-password", options: HarnessOptio
   const handlers: Record<string, (input: any) => Promise<any>> = {};
   const rawHandlers: typeof handlers = {};
   const credentialChannel = (path: string) => {
-    const request = curlRequest({ base: "https://camera.invalid", user: "test" }, password, path);
+    const request = curlRequest({ base: "https://camera.invalid", user: "test" }, password, path, {
+      invocationId: currentInvocationId(), commandDigest: currentCommandDigest(),
+    });
     expect(request.args.join(" ")).not.toContain(password);
-    expect(request.stdin).toContain("user ="); // Fake transport consumes stdin; no process/network.
+    expect(request.stdin).toContain(password.replace(/\\/g, "\\\\").replace(/"/g, '\\"')); // Only credential channel; no process/network.
   };
   const dependencies = {
-    AarWireProducer, sendPreset, sendSnapshot, createHash, join, cameraId, presetName, formatPresetRecall, snapshotContent,
+    AarWireProducer, commandDigestHex, runAsDispatch, sendPreset, sendSnapshot, createHash, join, cameraId, presetName, formatPresetRecall, snapshotContent,
     claimInvocationForAar, currentInvocationId, appendLocked, outcomeEvidence, edSign, LOG: log, PRIV: privateKey,
     ROOT: root, AGENT: "test-agent", policyBytes: Buffer.from("policy"),
-    cameras: { cam: { ptz: true, protocol: "vapix" } }, policy,
+    cameras: { cam: options.camera ?? { ptz: true, protocol: "vapix" } }, policy,
     existsSync: fs.existsSync, readFileSync: fs.readFileSync,
     allowed: (tool: string, camera?: string) => mode === "deny" ? "agent has no grant" : policyAllowed(policy, agent, tool, camera),
     rateDenied: options.rateDenied ?? (() => null),
-    deviceMeta: async () => { calls.push("metadata"); return { manufacturer: "AXIS", model: "test", firmware: "0" }; },
+    deviceMeta: async () => { recordCall("metadata"); return { manufacturer: "AXIS", model: "test", firmware: "0" }; },
     server: { tool: (name: string, _description: string, _schema: unknown, handler: any) => { rawHandlers[name] = handler; handlers[name] = input => runWithInvocation(() => handler(input)); } },
     snapshot: async (_tool: string, _camera: string, path: string) => {
       assertCommitted();
-      calls.push("snapshot");
+      recordCall("snapshot");
       credentialChannel("/axis-cgi/jpg/image.cgi");
       if (mode === "throws") throw Error("stand-in-camera-password");
       if (mode === "snapshot-failure") return false;
@@ -118,7 +126,7 @@ function harness(mode: string, password = "fake-password", options: HarnessOptio
     vapix: async (_tool: string, _camera: string, path: string) => {
       credentialChannel(path);
       const readback = path.includes("query=position");
-      calls.push(readback ? "readback" : "recall");
+      recordCall(readback ? "readback" : "recall");
       assertCommitted();
       if (mode === "throws") throw Error("stand-in-camera-password");
       if (mode === "overrun") now += 61_000;
@@ -128,7 +136,7 @@ function harness(mode: string, password = "fake-password", options: HarnessOptio
     },
   };
   const emitAar = new Function(...Object.keys(dependencies), code + "\nreturn emitAar;")(...Object.values(dependencies));
-  return { handlers, rawHandlers, calls, emitAar, lines, signedReceipts, assertCommitted,
+  return { handlers, rawHandlers, calls, dispatchScopes, emitAar, lines, signedReceipts, assertCommitted,
     publicKey: publicKey.export({ type: "spki", format: "pem" }).toString(),
     get chain(): any[][] { return signedReceipts().map(r => [r.action.tool, r.action.params, r.decision, r.detail]); },
   };
@@ -142,6 +150,48 @@ function bundle(output: any) {
   expect(result.conformant).toBe(true);
   const wire = decodeCbor(fs.readFileSync(join(dir!, "bundle.cbor"))) as any;
   return wire.artifacts.receipts.map((e: any[]) => decodeCbor(e[0] as Uint8Array)) as any[];
+}
+
+for (const [tool, protocol, ptz, preset] of [
+  ["get_snapshot", "vapix", false, "Home"],
+  ["get_snapshot", "onvif", true, "Home"],
+  ["ptz_preset", "vapix", true, "Home"],
+  ["ptz_preset", "vapix", true, "Side & Gate"],
+] as const) {
+  test(`W2a dispatch wiring: ${tool} ${protocol} ${preset} scopes the bundle's exact command digest`, async () => {
+    const password = "stand-in-w2a-camera-password";
+    const h = harness("ok", password, { camera: { protocol, ptz } });
+    const output = await h.handlers[tool]!({ camera: "cam", preset });
+    const receipts = bundle(output); // Actual bundle.cbor decoded and pyref-conformant.
+    const attempt = receipts.find(r => r.kind === "action_attempt");
+    const digest = toHex(attempt.body.command.command_digest);
+    expect(digest).toMatch(/^[0-9a-f]{64}$/);
+    expect(h.dispatchScopes).toEqual(tool === "get_snapshot" ? [
+      { call: "metadata", digest: undefined }, { call: "snapshot", digest },
+    ] : [
+      { call: "metadata", digest: undefined }, { call: "recall", digest },
+      { call: "readback", digest: undefined }, { call: "readback", digest: undefined },
+    ]);
+    const file = fs.readdirSync(join(root, "receipts")).find(name => name.endsWith(".jpg"));
+    if (tool === "get_snapshot") expect(file).toMatch(/^snap-cam-\d+\.jpg$/);
+    expect(digest).toBe(commandDigestHex({
+      actionName: tool === "get_snapshot" ? "camera.stream.view" : "camera.ptz.preset",
+      camera: "cam", cameraPtz: ptz, protocol,
+      parameters: tool === "get_snapshot" ? { file: file! } : { preset },
+    }));
+    expect(currentCommandDigest()).toBeUndefined();
+    expect(JSON.stringify(output)).not.toContain(password);
+    expect(h.lines().join("\n")).not.toContain(password);
+    expect(verifyChain(h.lines(), h.publicKey).bad).toEqual([]);
+    const checkFiles = (dir: string) => {
+      for (const name of fs.readdirSync(dir)) {
+        const path = join(dir, name);
+        if (fs.statSync(path).isDirectory()) checkFiles(path);
+        else expect(fs.readFileSync(path).includes(Buffer.from(password))).toBe(false);
+      }
+    };
+    checkFiles(join(root, "receipts"));
+  });
 }
 
 function gateHarness(options: HarnessOptions = {}, caller = agent) {

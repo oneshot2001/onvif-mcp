@@ -12,10 +12,23 @@ Receipt bodies use AAR v0.2 vocabulary:
 | `principal {role: "agent", type: "service", id}` | principal-role / principal-type |
 | `enforcement_point` | principal-role `enforcement_point` (this server) |
 | `invocation_id` | groups one tool call's camera requests and receipts for the witness join; the same ID is the bundle's `invocation_id` for the two wire-emitted actions (`get_snapshot` and `ptz_preset`). Correlation, not proof of dispatch. `null` outside a tool invocation; absent in older receipts. |
+| `X-AAR-Action-Bearing` / `X-AAR-Command-Digest` | mark raw command-correlated HTTP exchanges for snapshot image fetches and preset recalls. Metadata, configuration reads, SOAP and preset readback carry no marks. Correlation, not proof of dispatch; see the curl Digest limitation below. |
 | `node_kind` | `observation` (snapshot/list) · `action_attempt` (ptz) · `authorization` (denials) |
 | `outcome_evidence` | outcome-evidence-level: `device_acknowledged` (VAPIX/ONVIF 200 on move, or the commanded device's own frame / params / events read back) · `unknown` · none for locally computed artifacts (plans, verify summaries, handoffs). `independently_sensed` is never emitted: it needs an observer outside the commanded device. JSONL receipts written before 2026-10-15 used `independently_sensed` for content-hashed read-backs; read those as `device_acknowledged`. |
 | `result_sha256` | digest binding of the produced artifact |
 | `prev`/`hash`/`sig` | draft transport chain (NOT the AAR wire) |
+
+curl `--digest` sends both marks on the initial 401 challenge request and the
+authenticated exchange. The witness log's `attributableDispatches` returns
+both raw entries: these counts are not action or execution counts. A 401 entry
+is an authentication rejection and never evidence of execution. The witness
+README's statement that "a Digest challenge is logged as non-action-bearing"
+(`../aar/demo/witness/README.md`) does not hold for this curl path. AAR's own
+VAPIX adapter owns its Digest handshake and marks only the authenticated request.
+The witness's response-withholding fault (`../aar/demo/witness/proxy.ts`) is
+incompatible with this curl path: it withholds any marked command-bound response,
+so the 401 never reaches curl and no authenticated dispatch follows. These marks
+provide correlation, not proof of dispatch.
 
 `profile: "aar-0.2-draft-alignment"` marks these receipts as vocabulary-aligned,
 **explicitly not conformance-claiming**.

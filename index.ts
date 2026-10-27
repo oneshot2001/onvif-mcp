@@ -7,7 +7,7 @@ import { cameraId, presetName, paramName } from "./schemas";
 import { generateKeyPairSync, sign as edSign, createHash } from "node:crypto";
 import { existsSync, readFileSync, writeFileSync, mkdirSync, statSync } from "node:fs";
 import { join } from "node:path";
-import { AarWireProducer, verifyBundleDir, type WireEmitInput } from "./receipts-aar/producer";
+import { AarWireProducer, commandDigestHex, verifyBundleDir, type WireEmitInput } from "./receipts-aar/producer";
 import { checkAarJournal } from "./receipts-aar/journal";
 import { sendPreset, sendSnapshot } from "./receipts-aar/actions";
 import { handoffHeads, hardDenied, registerCommission, verifyHandoffs } from "./commission";
@@ -22,7 +22,7 @@ import { formatPresetRecall } from "./ptz-output";
 import { formatDriftLines, type ConfigDiff } from "./config-drift";
 import { appendLocked, emptyChainConflict, formatReceiptsText, lastReceiptFrom, missingHandoffHeads, outcomeEvidence, selectReceipts, verifyChain } from "./receipt-chain";
 import { curlRequest } from "./curl-args";
-import { claimInvocationForAar, currentInvocationId, withInvocations } from "./invocation";
+import { claimInvocationForAar, currentCommandDigest, currentInvocationId, runAsDispatch, withInvocations } from "./invocation";
 import { cameraPinProblem } from "./camera-pins";
 import { accountFor, type CameraAccounts } from "./account-for";
 import { keyModeProblem } from "./key-perms";
@@ -180,7 +180,7 @@ function camOf(id: string) {
 async function vapix(tool: string, camera: string, path: string, outFile?: string): Promise<{ ok: boolean; body: string }> {
   const cam = camOf(camera);
   const account = accountFor(tool, cam);
-  const { args, stdin } = curlRequest({ ...cam, user: account.user }, passwords[account.credKey]!, path, { outFile, invocationId: currentInvocationId() });
+  const { args, stdin } = curlRequest({ ...cam, user: account.user }, passwords[account.credKey]!, path, { outFile, invocationId: currentInvocationId(), commandDigest: currentCommandDigest() });
   const p = Bun.spawnSync(args, { stdin: Buffer.from(stdin) });
   return { ok: p.exitCode === 0, body: p.stdout.toString() };
 }
@@ -381,12 +381,17 @@ server.tool("get_snapshot", "Capture a JPEG snapshot from a camera; returns the 
     return { content: [{ type: "text", text: `DENIED: ${deny}${aar}` }] };
   }
   const file = join(ROOT, "receipts", `snap-${camera}-${Date.now()}.jpg`);
+  const parameters = { file: file.split("/").pop()! };
+  const cam = cameras[camera];
   let jpeg: Buffer | undefined;
   let sent = false;
-  const aar = await emitAar("get_snapshot", camera, "camera.stream.view", { file: file.split("/").pop()! }, startedAt, { send: async () => {
+  const aar = await emitAar("get_snapshot", camera, "camera.stream.view", parameters, startedAt, { send: async () => {
     sent = true;
     return sendSnapshot(async () => {
-      const ok = await snapshot("get_snapshot", camera, file);
+      const ok = await runAsDispatch(commandDigestHex({
+        actionName: "camera.stream.view", camera, cameraPtz: cam?.ptz ?? false,
+        protocol: cam?.protocol ?? "vapix", parameters,
+      }), () => snapshot("get_snapshot", camera, file));
       if (ok && existsSync(file)) jpeg = readFileSync(file);
       return jpeg;
     });
@@ -416,10 +421,14 @@ server.tool("ptz_preset", "Send a PTZ camera to a named preset (VAPIX cameras on
   }
   let result: Awaited<ReturnType<typeof sendPreset>> | undefined;
   let sent = false;
-  const aar = await emitAar("ptz_preset", camera, "camera.ptz.preset", { preset }, startedAt, { send: async (t0) => {
+  const parameters = { preset };
+  const aar = await emitAar("ptz_preset", camera, "camera.ptz.preset", parameters, startedAt, { send: async (t0) => {
     sent = true;
     result = await sendPreset(t0,
-      () => vapix("ptz_preset", camera, `/axis-cgi/com/ptz.cgi?gotoserverpresetname=${encodeURIComponent(preset)}`),
+      () => runAsDispatch(commandDigestHex({
+        actionName: "camera.ptz.preset", camera, cameraPtz: cam?.ptz ?? false,
+        protocol: cam?.protocol ?? "vapix", parameters,
+      }), () => vapix("ptz_preset", camera, `/axis-cgi/com/ptz.cgi?gotoserverpresetname=${encodeURIComponent(preset)}`)),
       () => vapix("ptz_preset", camera, "/axis-cgi/com/ptz.cgi?query=position"));
     return result;
   } });
