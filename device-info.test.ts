@@ -62,6 +62,15 @@ test("successful VAPIX device info preserves formatted param.cgi output", () => 
   expect(formatDeviceInfo("vapix", r)).toBe('"root.Brand.ProdShortName=AXIS Q6358-LE  root.Properties.PTZ.PTZ=yes" | protocol=vapix');
 });
 
+test.each([
+  ["leading", "\uFEFFroot.Brand.ProdNbr=Q6358-LE"],
+  ["trailing", "root.Brand.ProdNbr=Q6358-LE\uFEFF"],
+])("U3 trim hidden: VAPIX device info flags %s U+FEFF", (_, body) => {
+  const r = { ok: true, body: body! };
+  expect(formatDeviceInfo("vapix", r)).toBe('"root.Brand.ProdNbr=Q6358-LE" (hidden characters removed) | protocol=vapix');
+  expect(r.body).toBe(body!);
+});
+
 test("successful VAPIX metadata preserves parsed param.cgi values", () => {
   const r = { ok: true, body: "root.Brand.ProdNbr=Q6358-LE\r\nroot.Properties.Firmware.Version=12.6.1\r\n" };
   expect(parseDeviceMeta("vapix", "camera-id", r)).toEqual({

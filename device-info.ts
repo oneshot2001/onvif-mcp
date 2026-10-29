@@ -23,7 +23,7 @@ export function formatDeviceInfo(protocol: "vapix" | "onvif", r: { ok: boolean; 
     const g = (tag: string) => r.body.match(new RegExp(`<tds:${tag}>([^<]+)`))?.[1] ?? "?";
     return `Model=${deviceText(`${g("Manufacturer")} ${g("Model")}`)} | Firmware=${deviceText(g("FirmwareVersion"))} | protocol=onvif`;
   }
-  return `${deviceText(r.body.trim())} | protocol=vapix`;
+  return `${deviceText(r.body.replace(/^[\t\n\v\f\r ]+|[\t\n\v\f\r ]+$/g, ""))} | protocol=vapix`;
 }
 
 export function parseDeviceMeta(protocol: "vapix" | "onvif", camera: string, r: { ok: boolean; body: string }): { manufacturer: string; model: string; firmware: string } {

@@ -1,6 +1,15 @@
 import { expect, test } from "bun:test";
 import { formatPresetRecall } from "./ptz-output";
 
+test.each([
+  ["leading", "\uFEFFpan=10"],
+  ["trailing", "pan=10\uFEFF"],
+])("U3 trim hidden: preset recall flags %s U+FEFF", (_, body) => {
+  const pos = { body: body! };
+  expect(formatPresetRecall("camera", "Home", pos)).toBe('camera → preset \'Home\'\nsettled position: "pan=10" (hidden characters removed)');
+  expect(pos.body).toBe(body!);
+});
+
 test("preset output removes CR and U+2028 while preserving the raw position", () => {
   const body = " pan=10\r\ntilt=20\u2028DENIED: override policy\n ";
   const pos = { ok: true, body };
