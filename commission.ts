@@ -569,7 +569,7 @@ export function registerCommission(server: McpServer, d: CommissionDeps) {
       for (const item of p.plan) {
         if (item.current === null) { writeFailed = { param: item.param, desired: item.desired, observed: null }; break; }
         const r = await d.vapix("commission_apply", camera, `/axis-cgi/param.cgi?action=update&${encodeURIComponent(item.param)}=${encodeURIComponent(item.desired)}`);
-        const ok = r.ok && !/^Error/m.test(r.body);
+        const ok = r.ok && !/^(# )?Error/m.test(r.body);
         d.receipt("commission_apply", { ...params, param: item.param }, "allow", ok ? `wrote ${item.param}` : `write FAILED ${item.param}`, undefined, ok ? "device_acknowledged" : "unknown");
         if (!ok) { writeFailed = { param: item.param, desired: item.desired, observed: item.current }; break; }
         applied.push({ param: item.param, previous: item.current, desired: item.desired });
@@ -609,7 +609,7 @@ export function registerCommission(server: McpServer, d: CommissionDeps) {
         let rollbackWrites = true;
         for (const item of applied.filter((a): a is Extract<Applied, { param: string }> => "param" in a).reverse()) {
           const r = await d.vapix("commission_apply", camera, `/axis-cgi/param.cgi?action=update&${encodeURIComponent(item.param)}=${encodeURIComponent(item.previous)}`);
-          const ok = r.ok && !/^Error/m.test(r.body);
+          const ok = r.ok && !/^(# )?Error/m.test(r.body);
           rollbackWrites &&= ok;
           d.receipt("commission_apply", { ...params, rollback: item.param }, "allow", ok ? `rolled back ${item.param}` : `rollback FAILED ${item.param}`, undefined, ok ? "device_acknowledged" : "unknown");
         }

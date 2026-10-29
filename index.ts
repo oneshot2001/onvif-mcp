@@ -537,9 +537,10 @@ server.tool("config_remediate", "Restore one drifted VAPIX parameter to its base
     return { content: [{ type: "text", text: `remediated ${displayChange}` }] };
   }
   const value = after.ok ? after.params[param] ?? "(missing)" : "(read failed)";
-  const detail = write.ok ? `write acked but postcondition FAILED (live=${value})` : `write FAILED (live=${value})`;
-  receipt("config_remediate", params, "allow", detail, undefined, write.ok ? "device_acknowledged" : "unknown");
-  return { content: [{ type: "text", text: write.ok ? `write acked but postcondition FAILED (live=${deviceText(value)})` : `write FAILED (live=${deviceText(value)})` }] };
+  const acknowledged = write.ok && !/^(# )?Error/m.test(write.body);
+  const detail = acknowledged ? `write acked but postcondition FAILED (live=${value})` : `write FAILED (live=${value})`;
+  receipt("config_remediate", params, "allow", detail, undefined, acknowledged ? "device_acknowledged" : "unknown");
+  return { content: [{ type: "text", text: acknowledged ? `write acked but postcondition FAILED (live=${deviceText(value)})` : `write FAILED (live=${deviceText(value)})` }] };
 });
 
 server.tool("get_receipts", "Return the caller's last N signed receipts from the chain",

@@ -21,6 +21,8 @@ export function configHarness(root: string, options: {
   policy?: Policy;
   rateDenied?: (kind: string) => string | null;
   liveParams?: Record<string, string>;
+  writeReply?: { ok: boolean; body: string };
+  writeSticks?: boolean;
 } = {}) {
   const chain: any[][] = [], calls: any[][] = [];
   const handlers: Record<string, (input: any) => Promise<any>> = {};
@@ -46,9 +48,9 @@ export function configHarness(root: string, options: {
     vapix: async (tool: string, camera: string, path: string) => {
       calls.push(["vapix", tool, camera, path]);
       for (const [param, value] of new URL(path, "https://camera.invalid").searchParams) {
-        if (param !== "action") liveParams[param] = value;
+        if (param !== "action" && (options.writeSticks ?? true)) liveParams[param] = value;
       }
-      return { ok: true, body: "OK" };
+      return options.writeReply ?? { ok: true, body: "OK" };
     },
   };
   new Function(...Object.keys(dependencies), code)(...Object.values(dependencies));

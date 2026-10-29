@@ -100,6 +100,74 @@ describe("commission specs", () => {
     else process.env.NODE_ENV = previousNodeEnv;
   });
 
+  for (const [name, reply, sticks] of [
+    ["documented rejection", { ok: true, body: "# Error: Error setting 'Image.I0.Appearance.Rotation' to '180'!" }, false],
+    ["plain rejection on a later line", { ok: true, body: "response\nError: x" }, false],
+    ["transport failure", { ok: false, body: "OK" }, false],
+    ["OK", { ok: true, body: "OK" }, true],
+  ] as const) {
+    test(`param.cgi error body: commission apply ${name} records only acknowledged writes`, async () => {
+      const h = harness();
+      const param = "Image.I0.Appearance.Rotation";
+      writeFileSync(join(h.root, "specs", "param-error.yaml"), `spec: camspec/0.1\nname: param-error\nparams:\n  ${param}: '180'\n`);
+      const vapix = h.deps.vapix;
+      h.deps.vapix = async (tool, camera, path) => {
+        if (!path.includes("action=update")) return vapix(tool, camera, path);
+        if (sticks) await vapix(tool, camera, path);
+        else h.writes.push(path);
+        return reply;
+      };
+      const out = JSON.parse((await h.handlers.commission_apply!({ camera: "cam", spec: "param-error", approve: true })).content[0]!.text);
+      const handoff = JSON.parse(readFileSync(out.handoff, "utf8"));
+      expect(h.receipts).toContainEqual(expect.objectContaining({
+        detail: `${sticks ? "wrote" : "write FAILED"} ${param}`, evidence: sticks ? "device_acknowledged" : "unknown",
+      }));
+      expect(handoff.applied).toEqual(sticks ? [{ param, previous: "0", desired: "180" }] : []);
+      expect(out.passed).toBe(sticks);
+      expect(handoff.verify.passed).toBe(sticks);
+      expect(h.writes).toEqual([`/axis-cgi/param.cgi?action=update&${param}=180`]);
+      expect(h.state[param]).toBe(sticks ? "180" : "0");
+      if (!sticks) {
+        expect(h.receipts.some(r => r.detail.startsWith("wrote "))).toBeFalse();
+        expect(h.receipts.some(r => /^(rolled back|rollback FAILED) /.test(r.detail))).toBeFalse();
+        expect(out.failed).toContainEqual({ param, desired: "180", observed: "0" });
+        expect(handoff.verify.failed).toEqual(out.failed);
+      }
+    });
+  }
+
+  for (const [name, reply, acknowledged] of [
+    ["documented rejection", { ok: true, body: "# Error: Error setting 'Image.I0.Appearance.Rotation' to '0'!" }, false],
+    ["transport failure", { ok: false, body: "OK" }, false],
+    ["OK", { ok: true, body: "OK" }, true],
+  ] as const) {
+    test(`param.cgi error body: commission rollback ${name} requires acknowledgement`, async () => {
+      const h = harness();
+      const param = "Image.I0.Appearance.Rotation";
+      writeFileSync(join(h.root, "specs", "param-error.yaml"), `spec: camspec/0.1\nname: param-error\nparams:\n  ${param}: '180'\n`);
+      process.env.COMMISSION_FAIL_PARAM = param;
+      const vapix = h.deps.vapix;
+      h.deps.vapix = async (tool, camera, path) => {
+        if (!path.includes(`action=update&${param}=0`)) return vapix(tool, camera, path);
+        if (acknowledged) await vapix(tool, camera, path);
+        else h.writes.push(path);
+        return reply;
+      };
+      const out = JSON.parse((await h.handlers.commission_apply!({ camera: "cam", spec: "param-error", approve: true })).content[0]!.text);
+      expect(out).toMatchObject({ passed: false, rolled_back: true, rollback_verified: acknowledged });
+      expect(h.receipts).toContainEqual(expect.objectContaining({
+        detail: `${acknowledged ? "rolled back" : "rollback FAILED"} ${param}`, evidence: acknowledged ? "device_acknowledged" : "unknown",
+      }));
+      expect(h.receipts).toContainEqual(expect.objectContaining({ detail: `wrote ${param}`, evidence: "device_acknowledged" }));
+      expect(h.writes).toEqual([
+        `/axis-cgi/param.cgi?action=update&${param}=180`, `/axis-cgi/param.cgi?action=update&${param}=0`,
+      ]);
+      expect(h.state[param]).toBe(acknowledged ? "0" : "180");
+      const handoff = JSON.parse(readFileSync(out.handoff, "utf8"));
+      expect(handoff.rollback).toEqual({ performed: true, verified: acknowledged });
+    });
+  }
+
   test("wrapped commission_apply shares one invocation across writes, scenarios and rollback; denial gets its own", async () => {
     let callId: string | undefined;
     const h = harness({ checkActuation: () => { callId = currentInvocationId(); return null; } });
