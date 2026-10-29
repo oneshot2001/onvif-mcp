@@ -291,7 +291,8 @@ export class AarWireProducer {
       anchorObservedAt: evaluatedAt,
     });
 
-    const dir = join(this.aarDir, `${evaluatedAt}-${input.actionName.replaceAll(".", "-")}-${input.camera}-${toHex(invocationId).slice(0, 8)}`);
+    const cameraLabel = input.camera.replace(/[^A-Za-z0-9_-]/g, "_");
+    const dir = join(this.aarDir, `${evaluatedAt}-${input.actionName.replaceAll(".", "-")}-${cameraLabel}-${toHex(invocationId).slice(0, 8)}`);
     mkdirSync(dir, { recursive: true });
     // First-ever snapshot is empty; subsequent snapshots preserve all history.
     writeFileSync(join(dir, "prior-state.json"), `${JSON.stringify(prior, null, 2)}\n`);

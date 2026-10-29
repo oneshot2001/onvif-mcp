@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, expect, spyOn, test } from "bun:test";
 import * as fs from "node:fs";
 import { tmpdir } from "node:os";
-import { join, resolve } from "node:path";
+import { basename, dirname, join, resolve, sep } from "node:path";
 import { createHash, generateKeyPairSync, sign as edSign } from "node:crypto";
 import { decodeCbor, toHex } from "aar-kat-harness/harness/cbor";
 import { AarWireProducer, commandDigestHex, verifyBundleDir } from "./producer";
@@ -232,6 +232,52 @@ function outputText(output: any): string {
 function denial(h: { chain: any[][] }, output: any, tool: string, params: object, reason: string) {
   expect(outputText(output).split("\n")[0]).toBe(`DENIED: ${reason}`);
   expect(h.chain).toEqual([[tool, params, "deny", reason]]);
+}
+
+for (const tool of ["get_snapshot", "ptz_preset"] as const) {
+  for (const camera of ["/../../../escaped", "a/b", ".."]) {
+    test(`bundle dir containment: ${tool} denies ${camera} with raw identity preserved`, async () => {
+      // Refuse an out-of-tree mkdir even when mutation-testing the producer.
+      const mkdir = fs.mkdirSync;
+      spies.push(spyOn(fs, "mkdirSync").mockImplementation((...args: Parameters<typeof mkdir>) => {
+        expect(resolve(String(args[0])).startsWith(root + sep)).toBe(true);
+        return mkdir(...args);
+      }));
+      const h = harness("ok");
+      const params = tool === "get_snapshot" ? { camera } : { camera, preset: "Home" };
+      const output = await h.handlers[tool]!(params);
+      denial(h, output, tool, params, `camera '${camera}' not allowlisted for agent '${agent}'`);
+      expect(h.calls).toEqual([]);
+      const dir = outputText(output).match(/aar-bundle: (.+)/)?.[1];
+      expect(dir).toBeDefined();
+      expect(dirname(dir!)).toBe(join(root, "receipts", "aar"));
+      expect(basename(dir!)).toMatch(/^\d+-camera-(stream-view|ptz-preset)-[A-Za-z0-9_-]+-[0-9a-f]{8}$/);
+      expect(fs.readdirSync(root).sort()).toEqual(["chain.jsonl", "home", "receipts"]);
+      expect(JSON.parse(fs.readFileSync(join(dir!, "meta.json"), "utf8")).camera).toBe(camera);
+      const attempt = bundle(output).find(r => r.kind === "action_attempt");
+      expect(attempt.body.disposition).toBe("not_dispatched");
+      expect(toHex(attempt.body.command.command_digest)).toBe(commandDigestHex({
+        actionName: tool === "get_snapshot" ? "camera.stream.view" : "camera.ptz.preset",
+        camera, cameraPtz: false, protocol: "vapix",
+        parameters: tool === "get_snapshot" ? {} : { preset: "Home" },
+      }));
+    });
+  }
+
+  test(`bundle dir containment: ${tool} keeps the allowlisted cam directory name`, async () => {
+    const h = harness("ok");
+    const evaluatedAt = now / 1000 + 1;
+    const output = await h.handlers[tool]!({ camera: "cam", preset: "Home" });
+    expect(outputText(output)).not.toContain("DENIED:");
+    const dir = outputText(output).match(/aar-bundle: (.+)/)?.[1];
+    expect(dir).toBeDefined();
+    const action = tool === "get_snapshot" ? "camera-stream-view" : "camera-ptz-preset";
+    const meta = JSON.parse(fs.readFileSync(join(dir!, "meta.json"), "utf8"));
+    const invocationId = h.signedReceipts()[0].invocation_id;
+    expect(dir).toBe(join(root, "receipts", "aar", `${evaluatedAt}-${action}-cam-${invocationId.slice(0, 8)}`));
+    expect(meta.camera).toBe("cam");
+    expect(bundle(output).find(r => r.kind === "dispatch")).toBeDefined();
+  });
 }
 
 test("tool gate wiring: ptz_move enforces maxStep before dispatch", async () => {
