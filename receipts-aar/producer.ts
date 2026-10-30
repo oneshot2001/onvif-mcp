@@ -66,7 +66,7 @@ export interface WireEmitInput {
   readonly observedAt: number; // clock reading after device metadata was read
   // Exactly one of: a deferred send, or a policy refusal reason (denial —
   // wire-emitted as authorization decision "deny", attempt not_dispatched).
-  readonly send?: (t0: number) => Promise<WireSendResult>;
+  readonly send?: (t0: number, commandDigest: string) => Promise<WireSendResult>;
   readonly refusal?: string;
 }
 
@@ -252,7 +252,7 @@ export class AarWireProducer {
           throw Error("invalid real-clock timeline before send");
         }
         let sent: WireSendResult;
-        try { sent = await input.send!(evaluatedAt); }
+        try { sent = await input.send!(evaluatedAt, toHex(command.command_digest)); }
         catch {
           try { appendJournal(journal, { event: "dispatch_ambiguous", invocation_id: entry.invocation_id, observed_at: seconds() }); }
           catch { /* Keep the durable eligible attempt; recovery will warn. */ }

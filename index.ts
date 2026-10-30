@@ -7,7 +7,7 @@ import { cameraId, presetName, paramName } from "./schemas";
 import { generateKeyPairSync, sign as edSign, createHash } from "node:crypto";
 import { existsSync, readFileSync, writeFileSync, mkdirSync, statSync } from "node:fs";
 import { join } from "node:path";
-import { AarWireProducer, commandDigestHex, verifyBundleDir, type WireEmitInput } from "./receipts-aar/producer";
+import { AarWireProducer, verifyBundleDir, type WireEmitInput } from "./receipts-aar/producer";
 import { checkAarJournal } from "./receipts-aar/journal";
 import { sendPreset, sendSnapshot } from "./receipts-aar/actions";
 import { handoffHeads, hardDenied, registerCommission, verifyHandoffs } from "./commission";
@@ -383,16 +383,12 @@ server.tool("get_snapshot", "Capture a JPEG snapshot from a camera; returns the 
   }
   const file = join(ROOT, "receipts", `snap-${camera}-${Date.now()}.jpg`);
   const parameters = { file: file.split("/").pop()! };
-  const cam = cameras[camera];
   let jpeg: Buffer | undefined;
   let sent = false;
-  const aar = await emitAar("get_snapshot", camera, "camera.stream.view", parameters, startedAt, { send: async () => {
+  const aar = await emitAar("get_snapshot", camera, "camera.stream.view", parameters, startedAt, { send: async (_t0, commandDigest) => {
     sent = true;
     return sendSnapshot(async () => {
-      const ok = await runAsDispatch(commandDigestHex({
-        actionName: "camera.stream.view", camera, cameraPtz: cam?.ptz ?? false,
-        protocol: cam?.protocol ?? "vapix", parameters,
-      }), () => snapshot("get_snapshot", camera, file));
+      const ok = await runAsDispatch(commandDigest, () => snapshot("get_snapshot", camera, file));
       if (ok && existsSync(file)) jpeg = readFileSync(file);
       return jpeg;
     });
@@ -423,13 +419,10 @@ server.tool("ptz_preset", "Send a PTZ camera to a named preset (VAPIX cameras on
   let result: Awaited<ReturnType<typeof sendPreset>> | undefined;
   let sent = false;
   const parameters = { preset };
-  const aar = await emitAar("ptz_preset", camera, "camera.ptz.preset", parameters, startedAt, { send: async (t0) => {
+  const aar = await emitAar("ptz_preset", camera, "camera.ptz.preset", parameters, startedAt, { send: async (t0, commandDigest) => {
     sent = true;
     result = await sendPreset(t0,
-      () => runAsDispatch(commandDigestHex({
-        actionName: "camera.ptz.preset", camera, cameraPtz: cam?.ptz ?? false,
-        protocol: cam?.protocol ?? "vapix", parameters,
-      }), () => vapix("ptz_preset", camera, `/axis-cgi/com/ptz.cgi?gotoserverpresetname=${encodeURIComponent(preset)}`)),
+      () => runAsDispatch(commandDigest, () => vapix("ptz_preset", camera, `/axis-cgi/com/ptz.cgi?gotoserverpresetname=${encodeURIComponent(preset)}`)),
       () => vapix("ptz_preset", camera, "/axis-cgi/com/ptz.cgi?query=position"));
     return result;
   } });
