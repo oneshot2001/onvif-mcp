@@ -48,6 +48,38 @@
       "rate": {
         "snapshotPerMin": 30
       }
+    },
+    "codex-main": {
+      "tools": [
+        "list_cameras",
+        "clock_check",
+        "get_snapshot",
+        "get_receipts"
+      ],
+      "cameras": [
+        "q6358",
+        "q6325",
+        "p3285"
+      ],
+      "rate": {
+        "snapshotPerMin": 30
+      }
+    },
+    "agy-main": {
+      "tools": [
+        "list_cameras",
+        "clock_check",
+        "get_snapshot",
+        "get_receipts"
+      ],
+      "cameras": [
+        "q6358",
+        "q6325",
+        "p3285"
+      ],
+      "rate": {
+        "snapshotPerMin": 30
+      }
     }
   }
 }

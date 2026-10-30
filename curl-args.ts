@@ -10,11 +10,18 @@ export function curlRequest(
   cam: { base: string; user: string; pin?: string },
   password: string,
   path: string,
-  opts: { outFile?: string; jsonBody?: unknown; soapBody?: string; maxTime?: number; invocationId?: string; commandDigest?: string } = {},
+  opts: { outFile?: string; jsonBody?: unknown; soapBody?: string; maxTime?: number; invocationId?: string; commandDigest?: string; unixSocket?: string } = {},
 ): { args: string[]; stdin: string } {
   const url = `${cam.base}${path}`;
   const credentials = `${cam.user}:${password}`.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
   const args = ["curl", "-sk", "--globoff", "--digest", "--fail", "--config", "-", "--max-time", String(opts.maxTime ?? CURL_TIMEOUT_SECONDS)];
+  if (opts.unixSocket !== undefined) {
+    // Gateway mode: the witness is the only path. It owns TLS and the pin; the
+    // URL names the camera by id and the request-target is passed unchanged.
+    if (cam.pin !== undefined) throw new Error("camera pin belongs to the witness in gateway mode");
+    if (!url.startsWith("http://")) throw new Error("gateway mode requires an http://<camera-id> base");
+    args.push("--unix-socket", opts.unixSocket);
+  }
   if (cam.pin !== undefined) {
     validatePin(cam.pin);
     if (!url.startsWith("https://")) throw new Error("camera pin requires an https:// URL");

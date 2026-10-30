@@ -2,10 +2,12 @@
 // Every tool call — allowed or denied — emits a hash-chained, ed25519-signed receipt.
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
+import { gatewayConfigFromEnv, serveGateway } from "./gateway-listen";
+import { createVaultClient, curlVaultCall, VaultWithheld, type Signer } from "./vault-client";
 import { z } from "zod";
 import { cameraId, presetName, paramName } from "./schemas";
 import { generateKeyPairSync, sign as edSign, createHash } from "node:crypto";
-import { existsSync, readFileSync, writeFileSync, mkdirSync, statSync } from "node:fs";
+import { existsSync, readFileSync, writeFileSync, mkdirSync, statSync, openSync, appendFileSync, fsyncSync, closeSync } from "node:fs";
 import { join } from "node:path";
 import { AarWireProducer, verifyBundleDir, type WireEmitInput } from "./receipts-aar/producer";
 import { checkAarJournal } from "./receipts-aar/journal";
@@ -22,7 +24,7 @@ import { formatPresetRecall } from "./ptz-output";
 import { formatDriftLines, type ConfigDiff } from "./config-drift";
 import { appendLocked, emptyChainConflict, formatReceiptsText, lastReceiptFrom, missingHandoffHeads, outcomeEvidence, selectReceipts, verifyChain } from "./receipt-chain";
 import { curlRequest } from "./curl-args";
-import { claimInvocationForAar, currentCommandDigest, currentInvocationId, runAsDispatch, withInvocations } from "./invocation";
+import { claimInvocationForAar, currentCommandDigest, currentInvocationId, runAsDispatch, setInvocationRecorder, withInvocations } from "./invocation";
 import { cameraPinProblem } from "./camera-pins";
 import { accountFor, type CameraAccounts } from "./account-for";
 import { keyModeProblem } from "./key-perms";
@@ -96,6 +98,40 @@ if (pinProblem !== null) {
   console.error(pinProblem);
   process.exit(1);
 }
+// Gateway mode (P1): GATEWAY_LISTEN=<port> serves Streamable HTTP behind a
+// bearer token bound to AGENT_ID. Camera calls then go through the witness's
+// unix socket (it owns TLS and the pins; the URL names the camera by id) and
+// credentials plus receipt signing come from the vault's unix socket.
+const gateway = gatewayConfigFromEnv(process.env);
+const WITNESS = gateway === null ? undefined : process.env.GATEWAY_WITNESS_SOCKET;
+const VAULT = gateway === null ? undefined : process.env.GATEWAY_VAULT_SOCKET;
+if (gateway !== null && (!WITNESS || !VAULT)) {
+  console.error("gateway mode needs GATEWAY_WITNESS_SOCKET and GATEWAY_VAULT_SOCKET");
+  process.exit(1);
+}
+if (WITNESS !== undefined) {
+  for (const [id, cam] of Object.entries(cameras)) { cam.base = `http://${id}`; delete cam.pin; }
+}
+// Stdio must never inherit a stray witness socket: the helpers read it inline.
+if (gateway === null) delete process.env.GATEWAY_WITNESS_SOCKET;
+const vault = VAULT === undefined ? null : createVaultClient(curlVaultCall(VAULT));
+// Gateway mode: the actor's ownership claim is durable before the tool runs (C4).
+// If the record cannot be written the tool body never runs and no receipt is
+// written either: that call left no trace by design, and the gateway's drift
+// check stops the listener when the receipts volume is unwritable.
+const INVOCATIONS = join(ROOT, "receipts", "invocations.jsonl");
+if (gateway !== null) {
+  // The journal and its directory entry are durable before the first call:
+  // a first-record fsync alone does not persist a freshly created file name.
+  mkdirSync(join(ROOT, "receipts"), { recursive: true });
+  closeSync(openSync(INVOCATIONS, "a", 0o640));
+  const dir = openSync(join(ROOT, "receipts"), "r");
+  try { fsyncSync(dir); } finally { closeSync(dir); }
+  setInvocationRecorder((entry) => {
+    const fd = openSync(INVOCATIONS, "a", 0o640);
+    try { appendFileSync(fd, `${JSON.stringify({ ...entry, agent: AGENT })}\n`); fsyncSync(fd); } finally { closeSync(fd); }
+  });
+}
 // Raw bytes kept: the AAR producer signs the digest of the EXACT policy the
 // server evaluates (parsed once here) — never a fresh disk read (TOCTOU).
 const policyBytes = readFileSync(join(ROOT, "policy.json"));
@@ -107,13 +143,34 @@ function rateDenied(key: "actuation" | "snapshot"): string | null {
   return perMinute === undefined ? null : limiter.check(key, perMinute);
 }
 
-// --- credentials: fetched from the cred store at startup, never persisted ---
+// --- credentials: fetched at startup, never persisted. Stdio: the cred store.
+// Gateway: the vault, per tier; a withheld tier (admin until P4) is recorded by
+// reason and every tool that needs it gets a receipted deny instead.
 const credentials = Object.entries(cameras).flatMap(([id, cam]) =>
-  [cam, ...Object.values(cam.accounts ?? {})].map(({ credKey }) => ({ id, credKey })));
+  [{ id, credKey: cam.credKey, tier: "admin" as const },
+   ...(["viewer", "operator"] as const).flatMap((tier) => cam.accounts?.[tier] ? [{ id, credKey: cam.accounts[tier]!.credKey, tier }] : [])]);
 const passwords: Record<string, string> = Object.create(null);
-for (const credKey of new Set(credentials.map((account) => account.credKey))) {
-  const p = Bun.spawnSync([`${process.env.HOME}/.claude/bin/cred`, "get", credKey]);
-  passwords[credKey] = p.stdout.toString().trim();
+const withheld: Record<string, string> = Object.create(null);
+if (vault === null) {
+  for (const credKey of new Set(credentials.map((account) => account.credKey))) {
+    const p = Bun.spawnSync([`${process.env.HOME}/.claude/bin/cred`, "get", credKey]);
+    passwords[credKey] = p.stdout.toString().trim();
+  }
+} else {
+  for (const { id, credKey, tier } of credentials) {
+    if (passwords[credKey] !== undefined || withheld[credKey] !== undefined) continue;
+    try { passwords[credKey] = vault.credential(id, tier); }
+    catch (error) {
+      if (!(error instanceof VaultWithheld)) { console.error(error instanceof Error ? error.message : String(error)); process.exit(1); }
+      withheld[credKey] = error.message;
+    }
+  }
+}
+function tierDenied(tool: string, camera: string): string | null {
+  const cam = cameras[camera];
+  if (!cam) return null;
+  const reason = withheld[accountFor(tool, cam).credKey];
+  return reason === undefined ? null : `credential tier for '${tool}' withheld by the vault: ${reason}`;
 }
 const missing = missingPasswords(passwords);
 if (missing.length > 0) {
@@ -121,21 +178,41 @@ if (missing.length > 0) {
   process.exit(1);
 }
 
-// --- receipts: hash chain + ed25519 signature ---
+// --- receipts: hash chain + ed25519 signature. Stdio: a local key. Gateway:
+// the vault signs, and only receipts the witness log does not contradict.
 mkdirSync(KEYDIR, { recursive: true });
 mkdirSync(join(ROOT, "receipts"), { recursive: true });
-if (!existsSync(join(KEYDIR, "receipt.key"))) {
-  const { privateKey, publicKey } = generateKeyPairSync("ed25519");
-  writeFileSync(join(KEYDIR, "receipt.key"), privateKey.export({ type: "pkcs8", format: "pem" }), { mode: 0o600 });
-  writeFileSync(join(KEYDIR, "receipt.pub"), publicKey.export({ type: "spki", format: "pem" }));
+let signer: Signer;
+let PRIV = "";
+if (vault === null) {
+  if (!existsSync(join(KEYDIR, "receipt.key"))) {
+    const { privateKey, publicKey } = generateKeyPairSync("ed25519");
+    writeFileSync(join(KEYDIR, "receipt.key"), privateKey.export({ type: "pkcs8", format: "pem" }), { mode: 0o600 });
+    writeFileSync(join(KEYDIR, "receipt.pub"), publicKey.export({ type: "spki", format: "pem" }));
+  }
+  PRIV = readFileSync(join(KEYDIR, "receipt.key"), "utf8");
+  const keyProblem = keyModeProblem(statSync(join(KEYDIR, "receipt.key")).mode);
+  if (keyProblem !== null) {
+    console.error(keyProblem);
+    process.exit(1);
+  }
+  const localKey = PRIV;
+  signer = {
+    publicKeyPem: readFileSync(join(KEYDIR, "receipt.pub"), "utf8"),
+    sign: (_kind, body) => edSign(null, Buffer.from(createHash("sha256").update(JSON.stringify(body)).digest("hex")), localKey).toString("base64"),
+  };
+} else {
+  signer = vault.signer();
+  // --verify reads the public key from here; the vault's is public. A ROOT that
+  // already holds a chain under another key must not be silently re-keyed.
+  const pubFile = join(KEYDIR, "receipt.pub");
+  if (existsSync(pubFile) && readFileSync(pubFile, "utf8") !== signer.publicKeyPem) {
+    console.error(`${pubFile} differs from the vault's public key; this ROOT holds a chain signed by another key. Use a fresh ROOT for gateway mode.`);
+    process.exit(1);
+  }
+  writeFileSync(pubFile, signer.publicKeyPem);
 }
-const PRIV = readFileSync(join(KEYDIR, "receipt.key"), "utf8");
-const keyProblem = keyModeProblem(statSync(join(KEYDIR, "receipt.key")).mode);
-if (keyProblem !== null) {
-  console.error(keyProblem);
-  process.exit(1);
-}
-const PUB = readFileSync(join(KEYDIR, "receipt.pub"), "utf8");
+const PUB = signer.publicKeyPem;
 
 function lastReceipt(): { seq: number; hash: string } {
   return lastReceiptFrom(existsSync(LOG) ? readFileSync(LOG, "utf8") : "");
@@ -161,13 +238,13 @@ function receipt(tool: string, params: unknown, decision: "allow" | "deny", deta
       result_sha256: resultHash ?? null, prev: prev.hash,
     };
     const hash = createHash("sha256").update(JSON.stringify(body)).digest("hex");
-    const sig = edSign(null, Buffer.from(hash), PRIV).toString("base64");
+    const sig = signer.sign("receipt", body);
     return JSON.stringify({ ...body, hash, sig });
   });
 }
 
 function allowed(tool: string, camera?: string): string | null {
-  return policyAllowed(policy, AGENT, tool, camera);
+  return policyAllowed(policy, AGENT, tool, camera) ?? (camera === undefined ? null : tierDenied(tool, camera));
 }
 
 function camOf(id: string) {
@@ -177,10 +254,14 @@ function camOf(id: string) {
 }
 
 // Digest auth via curl — it does the digest dance; native fetch can't.
+// GATEWAY_WITNESS_SOCKET (set only by the gateway unit) routes every call
+// through the witness's unix socket; read inline so the sliced test harnesses
+// see no new free name.
 async function vapix(tool: string, camera: string, path: string, outFile?: string): Promise<{ ok: boolean; body: string }> {
   const cam = camOf(camera);
   const account = accountFor(tool, cam);
-  const { args, stdin } = curlRequest({ ...cam, user: account.user }, passwords[account.credKey]!, path, { outFile, invocationId: currentInvocationId(), commandDigest: currentCommandDigest() });
+  if (passwords[account.credKey] === undefined) return { ok: false, body: "credential tier withheld by the vault" };
+  const { args, stdin } = curlRequest({ ...cam, user: account.user }, passwords[account.credKey]!, path, { outFile, invocationId: currentInvocationId(), commandDigest: currentCommandDigest(), unixSocket: process.env.GATEWAY_WITNESS_SOCKET });
   const p = Bun.spawnSync(args, { stdin: Buffer.from(stdin) });
   return { ok: p.exitCode === 0, body: p.stdout.toString() };
 }
@@ -188,7 +269,8 @@ async function vapix(tool: string, camera: string, path: string, outFile?: strin
 async function vapixPost(tool: string, camera: string, path: string, body: unknown): Promise<{ ok: boolean; body: string }> {
   const cam = camOf(camera);
   const account = accountFor(tool, cam);
-  const { args, stdin } = curlRequest({ ...cam, user: account.user }, passwords[account.credKey]!, path, { jsonBody: body, maxTime: 15, invocationId: currentInvocationId() });
+  if (passwords[account.credKey] === undefined) return { ok: false, body: "credential tier withheld by the vault" };
+  const { args, stdin } = curlRequest({ ...cam, user: account.user }, passwords[account.credKey]!, path, { jsonBody: body, maxTime: 15, invocationId: currentInvocationId(), unixSocket: process.env.GATEWAY_WITNESS_SOCKET });
   const p = Bun.spawnSync(args, { stdin: Buffer.from(stdin) });
   return { ok: p.exitCode === 0, body: p.stdout.toString() };
 }
@@ -197,6 +279,7 @@ async function observeEvents(tool: string, camera: string, topics: string[], sec
   const cam = camOf(camera);
   const events: Array<{ topic: string; timestamp?: string | number; message?: { data?: Record<string, unknown> } }> = [];
   const warnings: string[] = [];
+  if (process.env.GATEWAY_WITNESS_SOCKET !== undefined) return { events, warnings: ["event observation unavailable in gateway mode: the witness carries HTTP only (P1)"] };
   return await new Promise((resolve) => {
     let opened = false, done = false;
     let windowTimer: ReturnType<typeof setTimeout> | undefined;
@@ -264,8 +347,9 @@ async function configParams(tool: string, camera: string, groups: string[]): Pro
 async function soap(tool: string, camera: string, body: string): Promise<{ ok: boolean; body: string }> {
   const cam = camOf(camera);
   const account = accountFor(tool, cam);
+  if (passwords[account.credKey] === undefined) return { ok: false, body: "credential tier withheld by the vault" };
   const { args, stdin } = curlRequest({ ...cam, user: account.user }, passwords[account.credKey]!, "/onvif/services", {
-    invocationId: currentInvocationId(),
+    invocationId: currentInvocationId(), unixSocket: process.env.GATEWAY_WITNESS_SOCKET,
     soapBody: `<?xml version="1.0"?><s:Envelope xmlns:s="http://www.w3.org/2003/05/soap-envelope"><s:Body>${body}</s:Body></s:Envelope>`,
   });
   const p = Bun.spawnSync(args, { stdin: Buffer.from(stdin) });
@@ -349,7 +433,7 @@ async function emitAar(tool: string, camera: string, actionName: "camera.stream.
 
 const server = new McpServer({ name: "onvif-mcp", version: "0.1.0" });
 withInvocations(server);
-registerCommission(server, { root: ROOT, agent: AGENT, policy, policyBytes, cameras, privateKey: PRIV, vapix, vapixPost, observeEvents, configParams, parseParams, inGroup, sha256, receipt, lastReceipt, snapshot, checkSnapshot: () => rateDenied("snapshot"), checkActuation: () => rateDenied("actuation"), clockCheck: (tool, camera) => clockCheck(tool, camera, { now: Date.now, vapixPost }) });
+registerCommission(server, { root: ROOT, agent: AGENT, policy, policyBytes, cameras, privateKey: PRIV, signer, tierDenied, vapix, vapixPost, observeEvents, configParams, parseParams, inGroup, sha256, receipt, lastReceipt, snapshot, checkSnapshot: () => rateDenied("snapshot"), checkActuation: () => rateDenied("actuation"), clockCheck: (tool, camera) => clockCheck(tool, camera, { now: Date.now, vapixPost }) });
 
 server.tool("list_cameras", "List cameras this agent may access, with live device info", {}, async () => {
   const deny = allowed("list_cameras");
@@ -503,7 +587,7 @@ server.tool("config_drift", "Compare live VAPIX parameters with the saved config
 server.tool("config_remediate", "Restore one drifted VAPIX parameter to its baseline value",
   { camera: cameraId, param: paramName, approve: z.boolean().optional() }, async ({ camera, param, approve }) => {
   const params = { camera, param, approve };
-  const deny = configDenied("config_remediate", camera, approve) ?? (approve ? rateDenied("actuation") : null);
+  const deny = configDenied("config_remediate", camera, approve) ?? tierDenied("config_remediate", camera) ?? (approve ? rateDenied("actuation") : null);
   if (deny) { receipt("config_remediate", params, "deny", deny); return { content: [{ type: "text", text: `DENIED: ${deny}` }] }; }
   const groups = policy[AGENT]!.config!.groups;
   const offGroup = !inGroup(param, groups) ? `param '${param}' is outside allowed config groups` : null;
@@ -556,4 +640,7 @@ try {
   console.error(`${error instanceof Error ? error.message : String(error)} (${LOG})`);
   process.exit(1);
 }
-await server.connect(new StdioServerTransport());
+// Gateway mode (P1): GATEWAY_LISTEN=<port> serves Streamable HTTP behind a
+// bearer token bound to AGENT_ID; otherwise stdio as before.
+if (gateway !== null) serveGateway(server, gateway);
+else await server.connect(new StdioServerTransport());

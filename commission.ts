@@ -66,6 +66,10 @@ export type CommissionDeps = {
   policyBytes: Uint8Array;
   cameras: Record<string, Camera>;
   privateKey: string;
+  /** Gateway mode: signs with the vault; absent → privateKey (stdio). */
+  signer?: { sign(kind: "receipt" | "handoff", body: unknown): string; publicKeyPem: string };
+  /** Gateway mode: a credential tier the vault withholds for this tool. */
+  tierDenied?: (tool: string, camera: string) => string | null;
   vapix: (tool: string, camera: string, path: string) => Promise<{ ok: boolean; body: string }>;
   vapixPost: (tool: string, camera: string, path: string, body: unknown) => Promise<{ ok: boolean; body: string }>;
   observeEvents: (tool: string, camera: string, topics: string[], seconds: number) => Promise<{ events: EventNotification[]; warnings: string[] }>;
@@ -202,6 +206,7 @@ export function registerCommission(server: McpServer, d: CommissionDeps) {
     if (!d.cameras[camera]) return `unknown camera '${camera}'`;
     if (!p.config?.groups) return `agent '${d.agent}' has no config grant`;
     if (tool === "commission_apply" && approve && !p.config.remediate) return `agent '${d.agent}' has no config remediation grant`;
+    if (tool === "commission_apply") { const tier = d.tierDenied?.(tool, camera); if (tier) return tier; }
     return null;
   };
   const validateParams = (spec: Spec): string | null => {
@@ -406,7 +411,7 @@ export function registerCommission(server: McpServer, d: CommissionDeps) {
   };
   const sceneChanges = (camera: Handoff["camera"], firstSeq: number, scene: Scene, clock: Handoff["clock"]): SceneChanges | null => {
     const dir = join(d.root, "handoff");
-    const publicKey = createPublicKey(d.privateKey);
+    const publicKey = createPublicKey(d.signer ? d.signer.publicKeyPem : d.privateKey);
     let previous: { body: Partial<Handoff>; file: string; sha256: string; seq: number } | null = null;
     let tied = false;
     for (const file of existsSync(dir) ? readdirSync(dir).filter((file) => file.endsWith(".json")) : []) {
@@ -454,7 +459,7 @@ export function registerCommission(server: McpServer, d: CommissionDeps) {
   };
   const writeHandoff = (handoff: Handoff) => {
     const hash = d.sha256(handoff);
-    const signed = { ...handoff, sig: edSign(null, Buffer.from(hash), d.privateKey).toString("base64") };
+    const signed = { ...handoff, sig: d.signer ? d.signer.sign("handoff", handoff) : edSign(null, Buffer.from(hash), d.privateKey).toString("base64") };
     const bytes = JSON.stringify(signed, null, 2) + "\n";
     const dir = join(d.root, "handoff");
     mkdirSync(dir, { recursive: true });

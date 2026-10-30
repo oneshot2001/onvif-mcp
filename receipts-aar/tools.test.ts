@@ -107,6 +107,7 @@ function harness(mode: string, password = "fake-password", options: HarnessOptio
   const dependencies = {
     AarWireProducer, commandDigestHex, runAsDispatch, sendPreset, sendSnapshot, createHash, join, cameraId, presetName, formatPresetRecall, snapshotContent,
     claimInvocationForAar, currentInvocationId, appendLocked, outcomeEvidence, edSign, LOG: log, PRIV: privateKey,
+    signer: { sign: (_kind: string, body: unknown) => edSign(null, Buffer.from(createHash("sha256").update(JSON.stringify(body)).digest("hex")), privateKey).toString("base64") },
     ROOT: root, AGENT: "test-agent", policyBytes: Buffer.from("policy"),
     cameras: { cam: options.camera ?? { ptz: true, protocol: "vapix" } }, policy,
     existsSync: fs.existsSync, readFileSync: fs.readFileSync,

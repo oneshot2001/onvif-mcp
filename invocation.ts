@@ -31,13 +31,29 @@ export function claimInvocationForAar(): string {
   return context.id;
 }
 
+export type InvocationRecord = { invocation_id: string; tool: string; ts: string };
+let recorder: ((entry: InvocationRecord) => void) | undefined;
+
+/**
+ * Gateway mode: persist the actor's claim of ownership for each invocation
+ * BEFORE the tool body runs (C4: the custody report joins the witness sequence
+ * against this claim set). The recorder must be durable before it returns.
+ */
+export function setInvocationRecorder(record: ((entry: InvocationRecord) => void) | undefined): void {
+  recorder = record;
+}
+
 export function withInvocations(server: McpServer): void {
   const tool = server.tool;
   server.tool = function (this: McpServer, ...args: any[]) {
+    const name = args[0];
     const callback = args[args.length - 1];
     if (typeof callback !== "function") throw new Error("server.tool requires a final callback");
     args[args.length - 1] = function (this: unknown, ...handlerArgs: unknown[]) {
-      return runWithInvocation(() => callback.apply(this, handlerArgs));
+      return runWithInvocation(() => {
+        recorder?.({ invocation_id: currentInvocationId()!, tool: String(name), ts: new Date().toISOString() });
+        return callback.apply(this, handlerArgs);
+      });
     };
     return Reflect.apply(tool, this, args);
   } as McpServer["tool"];

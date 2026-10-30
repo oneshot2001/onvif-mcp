@@ -33,6 +33,7 @@ function harness(protocol: "vapix" | "onvif", reply: Reply) {
   const dependencies = {
     z, cameraId, ptzBound, policy, cameras, AGENT: "test",
     createHash, edSign, PRIV: privateKey, outcomeEvidence, LOG: "in-memory",
+    signer: { sign: (_kind: string, body: unknown) => edSign(null, Buffer.from(createHash("sha256").update(JSON.stringify(body)).digest("hex")), privateKey).toString("base64") },
     currentInvocationId: () => undefined,
     appendLocked: (_log: string, build: (prev: { seq: number; hash: string }) => string) => {
       const prev = lines.length ? JSON.parse(lines.at(-1)!) : { seq: 0, hash: "genesis" };

@@ -25,6 +25,7 @@ export function configHarness(root: string, options: {
   readFileSync?: typeof fs.readFileSync;
   policy?: Policy;
   rateDenied?: (kind: string) => string | null;
+  tierDenied?: (tool: string, camera: string) => string | null;
   liveParams?: Record<string, string>;
   readReply?: { ok: boolean; body: string };
   writeReply?: { ok: boolean; body: string };
@@ -44,6 +45,7 @@ export function configHarness(root: string, options: {
     readFileSync: options.readFileSync ?? fs.readFileSync,
     mkdirSync: fs.mkdirSync, writeFileSync: fs.writeFileSync,
     rateDenied: options.rateDenied ?? (() => null),
+    tierDenied: options.tierDenied ?? (() => null),
     receipt: (...args: any[]) => chain.push(args),
     server: { tool: (name: string, _description: string, _schema: unknown, handler: any) => { handlers[name] = handler; } },
     configParams: async (tool: string, camera: string, groups: string[]) => {

@@ -1244,3 +1244,19 @@ describe("changes since previous handoff", () => {
     expect(changes.ptz_coordinate_difference).toBeNull();
   });
 });
+
+describe("gateway tier denial", () => {
+  test("commission_apply is a receipted deny when the vault withholds the admin tier, plan mode included", async () => {
+    const h = harness();
+    h.deps.tierDenied = (tool, camera) => `credential tier for '${tool}' withheld by the vault: admin until P4 (${camera})`;
+    const vapix = h.deps.vapix;
+    const dispatched: string[] = [];
+    h.deps.vapix = async (tool, camera, path) => { dispatched.push(path); return vapix(tool, camera, path); };
+    for (const approve of [true, false]) {
+      const out = await h.handlers.commission_apply!({ camera: "cam", spec: "param-error", approve });
+      expect(out.content[0]!.text).toBe("DENIED: credential tier for 'commission_apply' withheld by the vault: admin until P4 (cam)");
+    }
+    expect(dispatched).toEqual([]);
+    expect(h.receipts.filter((r) => r.tool === "commission_apply").map((r) => r.decision)).toEqual(["deny", "deny"]);
+  });
+});

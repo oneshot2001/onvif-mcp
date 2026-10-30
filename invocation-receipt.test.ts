@@ -23,6 +23,7 @@ function harness() {
   const dependencies = {
     appendLocked, currentInvocationId, outcomeEvidence, createHash, edSign,
     LOG: log, PRIV: privateKey, AGENT: "test-agent",
+    signer: { sign: (_kind: string, body: unknown) => edSign(null, Buffer.from(createHash("sha256").update(JSON.stringify(body)).digest("hex")), privateKey).toString("base64") },
   };
   const receipt = new Function(...Object.keys(dependencies), code + "\nreturn receipt;")(...Object.values(dependencies));
   const lines = () => readFileSync(log, "utf8").trim().split("\n");
