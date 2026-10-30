@@ -7,6 +7,7 @@ import { baselineDenied, configDenied as policyConfigDenied, type Policy } from 
 import { hardDenied } from "./commission";
 import { formatDriftLines } from "./config-drift";
 import { deviceText } from "./device-text";
+import { parseParams } from "./vapix-params";
 
 // Run the actual helpers and registrations without importing index.ts (startup
 // would fetch credentials, touch .keys and connect MCP).
@@ -14,6 +15,10 @@ const source = fs.readFileSync(join(import.meta.dir, "index.ts"), "utf8");
 const helpers = source.slice(source.indexOf("type Baseline ="), source.indexOf("async function configParams("));
 const registrations = source.slice(source.indexOf('server.tool("config_baseline"'), source.indexOf('server.tool("get_receipts"'));
 const code = new Bun.Transpiler({ loader: "ts" }).transformSync(helpers + registrations);
+const configParamsStart = source.indexOf("async function configParams(");
+const configParamsEnd = source.indexOf("// ONVIF SOAP call.", configParamsStart);
+if (configParamsStart < 0 || configParamsEnd <= configParamsStart) throw new Error("configParams slice boundaries missing");
+const readCode = new Bun.Transpiler({ loader: "ts" }).transformSync(source.slice(configParamsStart, configParamsEnd));
 
 export function configHarness(root: string, options: {
   statSync?: typeof fs.statSync;
@@ -21,6 +26,7 @@ export function configHarness(root: string, options: {
   policy?: Policy;
   rateDenied?: (kind: string) => string | null;
   liveParams?: Record<string, string>;
+  readReply?: { ok: boolean; body: string };
   writeReply?: { ok: boolean; body: string };
   writeSticks?: boolean;
 } = {}) {
@@ -53,6 +59,15 @@ export function configHarness(root: string, options: {
       return options.writeReply ?? { ok: true, body: "OK" };
     },
   };
+  if (options.readReply) {
+    const readParams = new Function("vapix", "parseParams", `${readCode}\nreturn configParams;`)(
+      async (tool: string, camera: string, path: string) => {
+        calls.push(["vapix", tool, camera, path]);
+        return options.readReply;
+      }, parseParams,
+    );
+    dependencies.configParams = readParams;
+  }
   new Function(...Object.keys(dependencies), code)(...Object.values(dependencies));
-  return { handlers, chain, calls };
+  return { handlers, chain, calls, configParams: dependencies.configParams };
 }

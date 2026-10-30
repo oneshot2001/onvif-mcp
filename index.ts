@@ -257,7 +257,7 @@ function configDenied(tool: string, camera: string, approve = false): string | n
 async function configParams(tool: string, camera: string, groups: string[]): Promise<{ ok: boolean; params: Record<string, string> }> {
   if (!groups.length) return { ok: true, params: {} };
   const r = await vapix(tool, camera, `/axis-cgi/param.cgi?action=list&group=${groups.map(encodeURIComponent).join(",")}`);
-  return { ok: r.ok, params: parseParams(r.body) };
+  return { ok: r.ok && !/^(# )?Error/m.test(r.body), params: parseParams(r.body) };
 }
 
 // ONVIF SOAP call. AXIS serves every ONVIF service at /onvif/services (per GetServices).
