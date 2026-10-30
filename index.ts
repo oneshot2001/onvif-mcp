@@ -304,7 +304,8 @@ async function ptzMove(tool: string, camera: string, pan: number, tilt: number, 
     const r = await soap(tool, camera, `<tptz:RelativeMove xmlns:tptz="http://www.onvif.org/ver20/ptz/wsdl" xmlns:tt="http://www.onvif.org/ver10/schema"><tptz:ProfileToken>${cam.profile ?? "profile_1_jpeg"}</tptz:ProfileToken><tptz:Translation><tt:PanTilt x="${pan / 360}" y="${tilt / 360}"/><tt:Zoom x="${zoom / 100}"/></tptz:Translation></tptz:RelativeMove>`);
     return r.ok && r.body.includes("RelativeMoveResponse");
   }
-  return (await vapix(tool, camera, `/axis-cgi/com/ptz.cgi?rpan=${pan}&rtilt=${tilt}&rzoom=${zoom * 100}`)).ok;
+  const r = await vapix(tool, camera, `/axis-cgi/com/ptz.cgi?rpan=${pan}&rtilt=${tilt}&rzoom=${zoom * 100}`);
+  return r.ok && !/^Error/m.test(r.body);
 }
 
 // AXIS firmware version + product number for AAR source-device metadata.
