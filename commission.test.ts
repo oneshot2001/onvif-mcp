@@ -8,6 +8,7 @@ import { makeLimiter } from "./rate-limit";
 import { deviceText } from "./device-text";
 import type { ClockResult } from "./clock";
 import { currentInvocationId, withInvocations } from "./invocation";
+import { parseParams as parseVapixParams } from "./vapix-params";
 
 const fakeClock: Extract<ClockResult, { state: "ok" }> = {
   state: "ok", camera_time: "2026-10-17T00:09:40.000Z",
@@ -88,6 +89,113 @@ function harness(options: { ptz?: boolean; aoa?: boolean; aoaInstalled?: boolean
   registerCommission(server as never, deps);
   return { root, state, writes, posts, receipts, presets, handlers, deps, aoa: () => aoa, privateKey, publicKey: publicKey.export({ type: "spki", format: "pem" }).toString() };
 }
+
+describe("commission param.cgi reads", () => {
+  // Evaluate only the real configParams helper, never index.ts startup (credentials,
+  // keys and MCP). As in config-tools-harness, inject an entirely fake transport.
+  const source = readFileSync(join(import.meta.dir, "index.ts"), "utf8");
+  const start = source.indexOf("async function configParams(");
+  const end = source.indexOf("// ONVIF SOAP call.", start);
+  if (start < 0 || end <= start) throw new Error("configParams slice boundaries missing");
+  const readCode = new Bun.Transpiler({ loader: "ts" }).transformSync(source.slice(start, end));
+  const rotation = "Image.I0.Appearance.Rotation";
+  const text = "Image.I0.Text.String";
+  const desired = { [rotation]: "180", [text]: "Error in a value=allowed" };
+  const fetchFailure = { content: [{ type: "text", text: "live config fetch failed" }], isError: true };
+  const listing = (params: Record<string, string>) => Object.entries(params).map(([key, value]) => `root.${key}=${value}`).join("\r\n");
+  const listCall = (tool: string) => [tool, "cam", "/axis-cgi/param.cgi?action=list&group=Image"];
+  function setup(readReply?: (read: number) => { ok: boolean; body: string }) {
+    const h = harness();
+    Object.assign(h.state, desired);
+    writeFileSync(join(h.root, "specs/read-error.yaml"), `spec: camspec/0.1\nname: read-error\nparams:\n  ${rotation}: '180'\n  ${text}: 'Error in a value=allowed'\n`);
+    const reads: string[][] = [];
+    h.deps.configParams = new Function("vapix", "parseParams", `${readCode}\nreturn configParams;`)(
+      async (tool: string, camera: string, path: string) => {
+        reads.push([tool, camera, path]);
+        return readReply ? readReply(reads.length) : { ok: true, body: listing(h.state) };
+      }, parseVapixParams,
+    );
+    return { ...h, reads };
+  }
+
+  for (const [name, body] of [
+    ["documented error-only", "# Error: Error -1 getting param"],
+    ["plain error-only", "Error: Error -1 getting param"],
+    ["documented mixed", `root.${rotation}=180\r\n# Error: Error -1 getting param`],
+    ["plain mixed", `root.${rotation}=180\nError: Error -1 getting param`],
+  ] as const) {
+    // The backlog calls this commission_check; the registered checking tool is
+    // commission_verify. Exercise both its prepare and subsequent checkParams.
+    for (const tool of ["commission_plan", "commission_verify", "commission_apply"] as const) {
+      test(`commission param.cgi read error: ${name} ${tool} reports fetch failure without writes`, async () => {
+        const h = setup(() => ({ ok: true, body }));
+        const out = await h.handlers[tool]!({ camera: "cam", spec: "read-error", approve: true });
+        expect(out).toEqual(fetchFailure);
+        expect(h.receipts).toEqual([expect.objectContaining({ tool, decision: "allow", detail: "FAILED: live config fetch failed" })]);
+        expect(h.reads).toEqual([listCall(tool)]);
+        expect(h.writes).toEqual([]);
+        expect(h.posts).toEqual([]);
+        expect(readdirSync(h.root)).toEqual(["specs"]);
+      });
+    }
+    test(`commission param.cgi read error: ${name} verification read fails every spec param with observed null`, async () => {
+      const h = setup((read) => ({ ok: true, body: read === 1 ? listing(desired) : body }));
+      const out = JSON.parse((await h.handlers.commission_verify!({ camera: "cam", spec: "read-error" })).content[0]!.text);
+      const failed = Object.entries(desired).map(([param, value]) => ({ param, desired: value, observed: null }));
+      expect(out.passed).toBeFalse();
+      expect(out.failed).toEqual(failed);
+      expect(JSON.parse(readFileSync(out.handoff, "utf8")).verify).toEqual({ passed: false, failed });
+      expect(h.reads).toEqual([listCall("commission_verify"), listCall("commission_verify")]);
+      expect(h.writes).toEqual([]);
+    });
+  }
+
+  test("commission param.cgi read error: mixed listing with drift blocks even the available param write", async () => {
+    const h = setup(() => ({ ok: true, body: `root.${rotation}=0\n# Error: Error -1 getting param` }));
+    h.state[rotation] = "0";
+    const out = await h.handlers.commission_apply!({ camera: "cam", spec: "read-error", approve: true });
+    expect(h.writes).toEqual([]);
+    expect(out).toEqual(fetchFailure);
+    expect(h.reads).toEqual([listCall("commission_apply")]);
+  });
+
+  test("commission param.cgi read error: successful listing verifies both params unchanged", async () => {
+    const h = setup();
+    const out = JSON.parse((await h.handlers.commission_verify!({ camera: "cam", spec: "read-error" })).content[0]!.text);
+    expect(out.passed).toBeTrue();
+    expect(out.failed).toEqual([]);
+    expect(JSON.parse(readFileSync(out.handoff, "utf8"))).toMatchObject({ plan: [], verify: { passed: true, failed: [] } });
+    expect(h.reads).toEqual([listCall("commission_verify"), listCall("commission_verify")]);
+    expect(h.writes).toEqual([]);
+  });
+
+  test("commission param.cgi read error: successful partial listing fails only the missing param", async () => {
+    const h = setup(() => ({ ok: true, body: listing({ [rotation]: "180" }) }));
+    const out = JSON.parse((await h.handlers.commission_verify!({ camera: "cam", spec: "read-error" })).content[0]!.text);
+    expect(out.passed).toBeFalse();
+    expect(out.failed).toEqual([{ param: text, desired: desired[text], observed: null }]);
+    expect(h.reads).toEqual([listCall("commission_verify"), listCall("commission_verify")]);
+    expect(h.writes).toEqual([]);
+  });
+
+  test("commission param.cgi read error: successful listing preserves dry-run and approved apply", async () => {
+    const h = setup();
+    h.state[rotation] = "0";
+    const input = { camera: "cam", spec: "read-error" };
+    const plan = JSON.parse((await h.handlers.commission_apply!({ ...input, approve: false })).content[0]!.text);
+    expect(plan.diff).toEqual([{ param: rotation, current: "0", desired: "180" }]);
+    expect(h.writes).toEqual([]);
+    const out = JSON.parse((await h.handlers.commission_apply!({ ...input, approve: true })).content[0]!.text);
+    expect(out.passed).toBeTrue();
+    expect(out.failed).toEqual([]);
+    expect(out.rolled_back).toBeFalse();
+    expect(h.writes).toEqual([`/axis-cgi/param.cgi?action=update&${rotation}=180`]);
+    expect(JSON.parse(readFileSync(out.handoff, "utf8"))).toMatchObject({
+      applied: [{ param: rotation, previous: "0", desired: "180" }], verify: { passed: true, failed: [] },
+    });
+    expect(h.reads).toEqual(Array.from({ length: 3 }, () => listCall("commission_apply")));
+  });
+});
 
 describe("commission specs", () => {
   let previousNodeEnv: string | undefined;
