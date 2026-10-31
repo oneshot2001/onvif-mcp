@@ -91,7 +91,7 @@ catch (error) {
 }
 
 const AGENT = process.env.AGENT_ID ?? "unknown";
-const cameras: Record<string, CameraAccounts & { base: string; pin?: string; ptz: boolean; protocol: "vapix" | "onvif"; profile?: string }> =
+const cameras: Record<string, CameraAccounts & { base: string; pin?: string; auth?: "digest" | "any"; ptz: boolean; protocol: "vapix" | "onvif"; profile?: string }> =
   JSON.parse(readFileSync(join(ROOT, "cameras.json"), "utf8"));
 const pinProblem = cameraPinProblem(cameras);
 if (pinProblem !== null) {

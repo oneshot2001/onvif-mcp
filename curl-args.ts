@@ -7,17 +7,18 @@ export function validatePin(pin: unknown): void {
 }
 
 export function curlRequest(
-  cam: { base: string; user: string; pin?: string },
+  cam: { base: string; user: string; pin?: string; auth?: "digest" | "any" },
   password: string,
   path: string,
   opts: { outFile?: string; jsonBody?: unknown; soapBody?: string; maxTime?: number; invocationId?: string; commandDigest?: string; unixSocket?: string } = {},
 ): { args: string[]; stdin: string } {
   const url = `${cam.base}${path}`;
   const credentials = `${cam.user}:${password}`.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
-  // Direct: Digest only (plain HTTP must never carry Basic). Through the witness: the
-  // camera leg is pinned HTTPS and Axis offers only Basic over HTTPS on 12.9 firmware
-  // (Digest over HTTPS on the P3285), so curl negotiates whichever the camera offers.
-  const auth = opts.unixSocket !== undefined ? "--anyauth" : "--digest";
+  // Digest unless the camera is enrolled with auth "any" AND the call goes through the
+  // witness (pinned HTTPS leg). Axis 12.9 offers only Basic over HTTPS; a camera that
+  // does offer Digest keeps it, so a misbehaving witness cannot downgrade it to Basic
+  // and learn a reusable password. P2 switches the Basic-only cameras to Digest.
+  const auth = opts.unixSocket !== undefined && cam.auth === "any" ? "--anyauth" : "--digest";
   const args = ["curl", "-sk", "--globoff", auth, "--fail", "--config", "-", "--max-time", String(opts.maxTime ?? CURL_TIMEOUT_SECONDS)];
   if (opts.unixSocket !== undefined) {
     // Gateway mode: the witness is the only path. It owns TLS and the pin; the

@@ -11,13 +11,19 @@ import { createSessionRouter, type TokenRecord } from "./gateway-listen";
 
 describe("curl in gateway mode", () => {
   test("routes through the witness socket with the camera id as host and the request-target unchanged", () => {
-    const { args, stdin } = curlRequest({ base: "http://q6358", user: "gateway-view" }, "pw", "/axis-cgi/param.cgi?action=list&group=Brand", { unixSocket: "/run/gateway/witness/claude-main.sock" });
+    const { args, stdin } = curlRequest({ base: "http://q6358", user: "gateway-view", auth: "any" }, "pw", "/axis-cgi/param.cgi?action=list&group=Brand", { unixSocket: "/run/gateway/witness/claude-main.sock" });
     expect(args.slice(args.indexOf("--unix-socket"), args.indexOf("--unix-socket") + 2)).toEqual(["--unix-socket", "/run/gateway/witness/claude-main.sock"]);
     expect(args.at(-1)).toBe("http://q6358/axis-cgi/param.cgi?action=list&group=Brand");
     expect(args).not.toContain("--pinnedpubkey");
     expect(args).toContain("--anyauth");
     expect(args).not.toContain("--digest");
     expect(stdin).toBe('user = "gateway-view:pw"\n');
+    // a camera that offers Digest keeps Digest even through the witness: no downgrade to Basic
+    const digest = curlRequest({ base: "http://p3285", user: "gateway-view" }, "pw", "/x", { unixSocket: "/s" }).args;
+    expect(digest).toContain("--digest");
+    expect(digest).not.toContain("--anyauth");
+    // and "any" never applies to a direct (non-witness) call
+    expect(curlRequest({ base: "http://192.168.1.33", user: "u", auth: "any" }, "pw", "/x").args).toContain("--digest");
   });
 
   test("refuses a pin or an https base: TLS belongs to the witness", () => {
