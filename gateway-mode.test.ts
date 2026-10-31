@@ -15,6 +15,8 @@ describe("curl in gateway mode", () => {
     expect(args.slice(args.indexOf("--unix-socket"), args.indexOf("--unix-socket") + 2)).toEqual(["--unix-socket", "/run/gateway/witness/claude-main.sock"]);
     expect(args.at(-1)).toBe("http://q6358/axis-cgi/param.cgi?action=list&group=Brand");
     expect(args).not.toContain("--pinnedpubkey");
+    expect(args).toContain("--anyauth");
+    expect(args).not.toContain("--digest");
     expect(stdin).toBe('user = "gateway-view:pw"\n');
   });
 
@@ -26,6 +28,8 @@ describe("curl in gateway mode", () => {
   test("without a socket nothing changes", () => {
     const { args } = curlRequest({ base: "https://192.168.1.19", user: "u", pin: "sha256//AAAA" }, "pw", "/x");
     expect(args).toContain("--pinnedpubkey");
+    expect(args).toContain("--digest");
+    expect(args).not.toContain("--anyauth");
     expect(args).not.toContain("--unix-socket");
   });
 });

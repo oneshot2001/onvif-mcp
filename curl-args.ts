@@ -14,7 +14,11 @@ export function curlRequest(
 ): { args: string[]; stdin: string } {
   const url = `${cam.base}${path}`;
   const credentials = `${cam.user}:${password}`.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
-  const args = ["curl", "-sk", "--globoff", "--digest", "--fail", "--config", "-", "--max-time", String(opts.maxTime ?? CURL_TIMEOUT_SECONDS)];
+  // Direct: Digest only (plain HTTP must never carry Basic). Through the witness: the
+  // camera leg is pinned HTTPS and Axis offers only Basic over HTTPS on 12.9 firmware
+  // (Digest over HTTPS on the P3285), so curl negotiates whichever the camera offers.
+  const auth = opts.unixSocket !== undefined ? "--anyauth" : "--digest";
+  const args = ["curl", "-sk", "--globoff", auth, "--fail", "--config", "-", "--max-time", String(opts.maxTime ?? CURL_TIMEOUT_SECONDS)];
   if (opts.unixSocket !== undefined) {
     // Gateway mode: the witness is the only path. It owns TLS and the pin; the
     // URL names the camera by id and the request-target is passed unchanged.
