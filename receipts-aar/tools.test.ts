@@ -62,9 +62,11 @@ afterEach(() => {
 function harness(mode: string, password = "fake-password", options: HarnessOptions = {}) {
   const policy = options.policy ?? freshPolicy();
   const calls: string[] = [];
+  const toolCalls: Array<{ call: string; tool: string }> = [];
   const dispatchScopes: Array<{ call: string; digest: string | undefined }> = [];
-  const recordCall = (call: string) => {
+  const recordCall = (call: string, tool: string) => {
     calls.push(call);
+    toolCalls.push({ call, tool });
     dispatchScopes.push({ call, digest: currentCommandDigest() });
   };
   const log = join(root, "chain.jsonl");
@@ -113,21 +115,21 @@ function harness(mode: string, password = "fake-password", options: HarnessOptio
     existsSync: fs.existsSync, readFileSync: fs.readFileSync,
     allowed: (tool: string, camera?: string) => mode === "deny" ? "agent has no grant" : policyAllowed(policy, agent, tool, camera),
     rateDenied: options.rateDenied ?? (() => null),
-    deviceMeta: async () => { recordCall("metadata"); return { manufacturer: "AXIS", model: "test", firmware: "0" }; },
+    deviceMeta: async (tool: string) => { recordCall("metadata", tool); return { manufacturer: "AXIS", model: "test", firmware: "0" }; },
     server: { tool: (name: string, _description: string, _schema: unknown, handler: any) => { rawHandlers[name] = handler; handlers[name] = input => runWithInvocation(() => handler(input)); } },
-    snapshot: async (_tool: string, _camera: string, path: string) => {
+    snapshot: async (tool: string, _camera: string, path: string) => {
       assertCommitted();
-      recordCall("snapshot");
+      recordCall("snapshot", tool);
       credentialChannel("/axis-cgi/jpg/image.cgi");
       if (mode === "throws") throw Error("stand-in-camera-password");
       if (mode === "snapshot-failure") return false;
       fs.writeFileSync(path, Buffer.from([255, 216, 255, 217]));
       return true;
     },
-    vapix: async (_tool: string, _camera: string, path: string) => {
+    vapix: async (tool: string, _camera: string, path: string) => {
       credentialChannel(path);
       const readback = path.includes("query=position");
-      recordCall(readback ? "readback" : "recall");
+      recordCall(readback ? "readback" : "recall", tool);
       assertCommitted();
       if (mode === "throws") throw Error("stand-in-camera-password");
       if (mode === "overrun") now += 61_000;
@@ -137,7 +139,7 @@ function harness(mode: string, password = "fake-password", options: HarnessOptio
     },
   };
   const emitAar = new Function(...Object.keys(dependencies), code + "\nreturn emitAar;")(...Object.values(dependencies));
-  return { handlers, rawHandlers, calls, dispatchScopes, emitAar, lines, signedReceipts, assertCommitted,
+  return { handlers, rawHandlers, calls, toolCalls, dispatchScopes, emitAar, lines, signedReceipts, assertCommitted,
     publicKey: publicKey.export({ type: "spki", format: "pem" }).toString(),
     get chain(): any[][] { return signedReceipts().map(r => [r.action.tool, r.action.params, r.decision, r.detail]); },
   };
@@ -152,6 +154,30 @@ function bundle(output: any) {
   const wire = decodeCbor(fs.readFileSync(join(dir!, "bundle.cbor"))) as any;
   return wire.artifacts.receipts.map((e: any[]) => decodeCbor(e[0] as Uint8Array)) as any[];
 }
+
+// These fakes prove handler argument forwarding, not transport account selection
+// (covered by the A2c-1 transport account wiring tests).
+test("handler account wiring: get_snapshot forwards its tool name to metadata and capture", async () => {
+  const h = harness("ok");
+  const output = await h.handlers.get_snapshot!({ camera: "cam" });
+  expect(h.toolCalls, "get_snapshot metadata and capture tool names").toEqual([
+    { call: "metadata", tool: "get_snapshot" },
+    { call: "snapshot", tool: "get_snapshot" },
+  ]);
+  expect(bundle(output).find(r => r.kind === "dispatch")).toBeDefined();
+});
+
+test("handler account wiring: ptz_preset forwards its tool name to metadata, recall and every readback", async () => {
+  const h = harness("ok");
+  const output = await h.handlers.ptz_preset!({ camera: "cam", preset: "Home" });
+  expect(h.toolCalls, "ptz_preset metadata, recall and every readback tool names").toEqual([
+    { call: "metadata", tool: "ptz_preset" },
+    { call: "recall", tool: "ptz_preset" },
+    { call: "readback", tool: "ptz_preset" },
+    { call: "readback", tool: "ptz_preset" },
+  ]);
+  expect(bundle(output).find(r => r.kind === "dispatch")).toBeDefined();
+});
 
 for (const [tool, protocol, ptz, preset] of [
   ["get_snapshot", "vapix", false, "Home"],
