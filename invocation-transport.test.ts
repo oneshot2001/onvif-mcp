@@ -46,11 +46,11 @@ const accountCases = [
 ] as const;
 type CurlCall = { args: string[]; stdin: string };
 
-function accountTransports(body = "<Response/>") {
+function accountTransports(body = "<Response/>", camera = accountCamera) {
   const calls: CurlCall[] = [];
   const dependencies = {
     curlRequest, currentInvocationId, currentCommandDigest, accountFor, parseParams, parseSnapshotUri, snapshotPath,
-    camOf: () => accountCamera, passwords: accountPasswords,
+    camOf: () => camera, passwords: accountPasswords,
     process: { env: {} },
     Bun: { spawnSync(args: string[], opts: { stdin: Buffer }) {
       calls.push({ args: [...args], stdin: opts.stdin.toString() });
@@ -94,6 +94,23 @@ for (const transport of ["vapix", "vapixPost", "soap"] as const) {
 }
 
 for (const [tool, user, key] of accountCases.slice(0, 2)) {
+  test(`transport account wiring: VAPIX snapshot ${tool} selects viewer`, async () => {
+    const root = mkdtempSync(join(tmpdir(), "transport-account-"));
+    try {
+      const camera = { ...accountCamera, protocol: "vapix" };
+      const h = accountTransports("", camera);
+      const outFile = join(root, "snapshot.jpg");
+      const result = await h.snapshot(tool, "cam", outFile);
+      expect(result).toBe(true);
+      expect(h.calls).toHaveLength(1);
+      expect(h.calls[0]!.args[0]).toBe("curl");
+      expect(h.calls[0]!.args.slice(-3)).toEqual([`${camera.base}/axis-cgi/jpg/image.cgi`, "-o", outFile]);
+      expectAccountCall(h.calls[0]!, user, key, result);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   test(`transport account wiring: ONVIF snapshot ${tool} selects viewer at both stages`, async () => {
     const root = mkdtempSync(join(tmpdir(), "transport-account-"));
     try {
