@@ -12,8 +12,7 @@ import { outcomeEvidence, verifyChain } from "./receipt-chain";
 const source = readFileSync(join(import.meta.dir, "index.ts"), "utf8");
 function slice(start: string, end: string) {
   const from = source.indexOf(start), to = source.indexOf(end);
-  expect(from).toBeGreaterThanOrEqual(0);
-  expect(to).toBeGreaterThan(from);
+  if (from < 0 || to <= from) throw new Error(`slice boundaries missing: ${start} … ${end}`);
   return source.slice(from, to);
 }
 const code = new Bun.Transpiler({ loader: "ts" }).transformSync(

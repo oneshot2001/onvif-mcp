@@ -21,12 +21,11 @@ const snapshotCode = new Bun.Transpiler({ loader: "ts" }).transformSync(
 
 const eventStart = source.indexOf("async function observeEvents(");
 const eventEnd = source.indexOf("type Baseline =", eventStart);
-expect(eventStart).toBeGreaterThanOrEqual(0);
-expect(eventEnd).toBeGreaterThan(eventStart);
+if (eventStart < 0 || eventEnd <= eventStart) throw new Error("observeEvents slice boundaries missing");
 const eventSource = source.slice(eventStart, eventEnd);
-expect(eventSource.startsWith("async function observeEvents(")).toBe(true);
-expect(eventSource.trimEnd().endsWith("}")).toBe(true);
-expect(source.slice(eventEnd).startsWith("type Baseline =")).toBe(true);
+if (!eventSource.startsWith("async function observeEvents(")
+  || !eventSource.trimEnd().endsWith("}")
+  || !source.slice(eventEnd).startsWith("type Baseline =")) throw new Error("observeEvents slice boundaries invalid");
 const eventCode = new Bun.Transpiler({ loader: "ts" }).transformSync(eventSource);
 
 const accountCamera = {
