@@ -9,6 +9,7 @@ import { deviceText } from "./device-text";
 import type { ClockResult } from "./clock";
 import { currentInvocationId, withInvocations } from "./invocation";
 import { parseParams as parseVapixParams } from "./vapix-params";
+import { accountFor } from "./account-for";
 
 const fakeClock: Extract<ClockResult, { state: "ok" }> = {
   state: "ok", camera_time: "2026-10-17T00:09:40.000Z",
@@ -89,6 +90,100 @@ function harness(options: { ptz?: boolean; aoa?: boolean; aoaInstalled?: boolean
   registerCommission(server as never, deps);
   return { root, state, writes, posts, receipts, presets, handlers, deps, aoa: () => aoa, privateKey, publicKey: publicKey.export({ type: "spki", format: "pem" }).toString() };
 }
+
+describe("gateway event observation", () => {
+  // Execute the production helper without index.ts startup or real sockets/timers.
+  const source = readFileSync(join(import.meta.dir, "index.ts"), "utf8");
+  const start = source.indexOf("async function observeEvents(");
+  const end = source.indexOf("type Baseline =", start);
+  if (start < 0 || end <= start || !source.slice(start, end).trimEnd().endsWith("}")) throw new Error("observeEvents slice boundaries missing");
+  const code = new Bun.Transpiler({ loader: "ts" }).transformSync(source.slice(start, end));
+  const warning = "event observation unavailable in gateway mode: the witness carries HTTP only (P1)";
+
+  function setup(gateway: boolean) {
+    const h = harness();
+    writeFileSync(join(h.root, "specs", "aoa.yaml"), "spec: camspec/0.1\nname: aoa\nscenarios:\n  - name: lab-motion\n    type: motion\n    objects: [human]\n    area: [[-0.9,-0.9],[0.9,-0.9],[0.9,0.9],[-0.9,0.9]]\nobserve: { seconds: 30 }\n");
+    const camera = { base: "http://camera.invalid", user: "admin", credKey: "admin" };
+    const credentials: Array<{ user: string; password: string }> = [];
+    const socketCalls: unknown[] = [];
+    const sent: unknown[] = [];
+    const timerCalls: number[] = [];
+    const timers = new Map<number, () => void>();
+    const socket = new EventTarget();
+    let closes = 0;
+    const ws = {
+      readyState: 0,
+      close() { closes++; ws.readyState = 3; },
+      send(data: string) { sent.push(JSON.parse(data)); },
+      addEventListener(type: string, listener: EventListener) { socket.addEventListener(type, listener); },
+    };
+    const dependencies = {
+      accountFor, camOf: () => camera, passwords: { admin: "stand-in-password" },
+      process: { env: gateway ? { GATEWAY_WITNESS_SOCKET: "/stand-in/witness.sock" } : {} },
+      WebSocket: { OPEN: 1, CONNECTING: 0 },
+      openEventWebSocket(cam: typeof camera, credential: () => { user: string; password: string }) {
+        socketCalls.push(cam);
+        credentials.push(credential());
+        queueMicrotask(() => { ws.readyState = 1; socket.dispatchEvent(new Event("open")); });
+        return ws;
+      },
+      setTimeout(callback: () => void, ms: number) {
+        timerCalls.push(ms);
+        const id = timerCalls.length;
+        timers.set(id, callback);
+        // Finish the requested window immediately after the fake socket opens.
+        if (ms === 30_000) queueMicrotask(() => timers.get(id)?.());
+        return id;
+      },
+      clearTimeout(id: number) { timers.delete(id); },
+    };
+    const observeEvents: CommissionDeps["observeEvents"] = new Function(...Object.keys(dependencies), `${code}\nreturn observeEvents;`)(...Object.values(dependencies));
+    const calls: Parameters<CommissionDeps["observeEvents"]>[] = [];
+    h.deps.observeEvents = (...args) => { calls.push(args); return observeEvents(...args); };
+    return { ...h, calls, socketCalls, credentials, sent, timerCalls, timers, closes: () => closes };
+  }
+
+  for (const gateway of [true, false]) {
+    test(`gateway observation refusal: ${gateway ? "refusal records zero measured seconds without success evidence" : "successful observation control retains its measured window and evidence"}`, async () => {
+      const h = setup(gateway);
+      const out = JSON.parse((await h.handlers.commission_apply!({ camera: "cam", spec: "aoa", approve: true })).content[0]!.text);
+      const handoff = JSON.parse(readFileSync(out.handoff, "utf8"));
+      const topic = "tnsaxis:CameraApplicationPlatform/ObjectAnalytics/Device1Scenario5";
+      expect(h.calls).toEqual([["commission_apply", "cam", [topic], 30]]);
+      expect(h.writes).toEqual(["AOA:setConfiguration"]);
+      expect(out).toMatchObject({ passed: true, failed: [], rolled_back: false });
+      expect(handoff.verify).toEqual({ passed: true, failed: [] });
+      for (const result of [out, handoff]) {
+        expect(result.scenarios).toMatchObject([{ name: "lab-motion", id: 5, deployed: true, readback_diff: [] }]);
+        expect(result.observation.window_seconds).toBe(gateway ? 0 : 30);
+        expect(result.observation.fired).toEqual({ "lab-motion": { count: 0, first: null, last: null } });
+        expect(result.observation.warnings).toEqual(gateway ? [warning] : ["lab-motion: 0 events in window"]);
+        if (gateway) expect(result.observation.warnings.join("\n")).not.toContain("0 events in window");
+      }
+      expect(h.timers.size).toBe(0);
+      const failures = h.receipts.filter((receipt) => receipt.detail.startsWith("observation FAILED:"));
+      const successes = h.receipts.filter((receipt) => receipt.detail.startsWith("observed "));
+      if (gateway) {
+        expect(h.socketCalls).toEqual([]);
+        expect(h.credentials).toEqual([]);
+        expect(h.timerCalls).toEqual([]);
+        expect(h.sent).toEqual([]);
+        expect(h.closes()).toBe(0);
+        expect(failures).toEqual([expect.objectContaining({ tool: "commission_apply", decision: "allow", detail: `observation FAILED: ${warning}`, evidence: undefined, resultHash: undefined })]);
+        expect(successes).toEqual([]);
+      } else {
+        expect(h.socketCalls).toHaveLength(1);
+        expect(h.credentials).toEqual([{ user: "admin", password: "stand-in-password" }]);
+        expect(h.timerCalls).toEqual([10_000, 30_000]);
+        expect(h.sent).toEqual([{ apiVersion: "1.0", method: "events:configure", params: { eventFilterList: [{ topicFilter: topic }] } }]);
+        expect(h.closes()).toBe(1);
+        expect(failures).toEqual([]);
+        expect(successes).toEqual([expect.objectContaining({ detail: "observed 30s AOA event window", evidence: "device_acknowledged", resultHash: h.deps.sha256(handoff.observation) })]);
+      }
+      expect(verifyHandoffs(h.root, h.publicKey)).toMatchObject({ count: 1, bad: [] });
+    });
+  }
+});
 
 describe("commission param.cgi reads", () => {
   // Evaluate only the real configParams helper, never index.ts startup (credentials,
