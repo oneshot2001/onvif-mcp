@@ -1353,6 +1353,81 @@ describe("changes since previous handoff", () => {
   });
 });
 
+describe("tier denial wiring", () => {
+  function setup(seeded = false) {
+    const h = harness();
+    writeFileSync(join(h.root, "specs/tier.yaml"), "spec: camspec/0.1\nname: tier\nparams:\n  Image.I0.Appearance.Rotation: '0'\n");
+    const baseline = join(h.root, "baselines/cam.json");
+    const bytes = Buffer.from('{ "groups": ["Image"], "params": {} }\n');
+    if (seeded) { mkdirSync(join(h.root, "baselines")); writeFileSync(baseline, bytes); }
+    const spies = (["configParams", "vapix", "vapixPost", "snapshot", "clockCheck", "observeEvents"] as const).map(
+      name => spyOn(h.deps, name),
+    );
+    return { ...h, baseline, bytes, spies };
+  }
+
+  for (const tool of ["commission_plan", "commission_verify"] as const) {
+    for (const seeded of [false, true]) {
+      test(`tier denial wiring: ${tool} denies before transport with ${seeded ? "seeded" : "absent"} baseline`, async () => {
+        const h = setup(seeded);
+        try {
+          const tierCalls: string[][] = [];
+          const reason = `credential tier for '${tool}' withheld by the vault: admin until P4 (cam)`;
+          h.deps.tierDenied = (...args) => { tierCalls.push(args); return reason; };
+          expect((await h.handlers[tool]!({ camera: "cam", spec: "tier" })).content.map(c => c.text)).toEqual([`DENIED: ${reason}`]);
+          expect(h.receipts).toEqual([expect.objectContaining({ tool, decision: "deny", detail: reason })]);
+          expect(tierCalls).toEqual([[tool, "cam"]]);
+          for (const spy of h.spies) expect(spy).not.toHaveBeenCalled();
+          expect(readdirSync(h.root).sort()).toEqual(seeded ? ["baselines", "specs"] : ["specs"]);
+          if (seeded) {
+            expect(readdirSync(join(h.root, "baselines"))).toEqual(["cam.json"]);
+            expect(readFileSync(h.baseline)).toEqual(h.bytes);
+          }
+        } finally { for (const spy of h.spies) spy.mockRestore(); }
+      });
+    }
+
+    test(`tier denial wiring: ${tool} preserves output when tier is available`, async () => {
+      const h = setup();
+      try {
+        const tierCalls: string[][] = [];
+        h.deps.tierDenied = (...args) => { tierCalls.push(args); return null; };
+        const out = JSON.parse((await h.handlers[tool]!({ camera: "cam", spec: "tier" })).content[0]!.text);
+        if (tool === "commission_plan") {
+          expect(out).toEqual({ diff: [], presets: [], scenarios: [], warnings: [] });
+          expect(h.receipts).toEqual([expect.objectContaining({ tool, decision: "allow", detail: "planned 0 params, 0 presets, and 0 scenarios" })]);
+        } else {
+          expect(JSON.parse(readFileSync(out.handoff, "utf8")).verify).toEqual({ passed: true, failed: [] });
+          expect(out).toMatchObject({ passed: true, failed: [], scenarios: [], observation: null });
+          expect(typeof out.handoff).toBe("string");
+          expect(verifyHandoffs(h.root, h.publicKey).bad).toEqual([]);
+          expect(h.receipts).toHaveLength(2);
+          expect(h.receipts.every(r => r.tool === tool && r.decision === "allow")).toBeTrue();
+        }
+        expect(tierCalls).toEqual([[tool, "cam"]]);
+        expect(h.spies[0]).toHaveBeenCalled();
+        expect(h.spies[1]).toHaveBeenCalledTimes(1);
+        expect(h.writes).toEqual([]);
+      } finally { for (const spy of h.spies) spy.mockRestore(); }
+    });
+
+    test(`tier denial wiring: ${tool} policy denial precedes tier denial`, async () => {
+      const h = setup();
+      try {
+        h.deps.policy["claude-main"]!.tools = [];
+        const tierCalls: string[][] = [];
+        h.deps.tierDenied = (...args) => { tierCalls.push(args); return "withheld tier"; };
+        const reason = `tool '${tool}' not granted to agent 'claude-main'`;
+        expect((await h.handlers[tool]!({ camera: "cam", spec: "tier" })).content.map(c => c.text)).toEqual([`DENIED: ${reason}`]);
+        expect(h.receipts).toEqual([expect.objectContaining({ tool, decision: "deny", detail: reason })]);
+        expect(tierCalls).toEqual([]);
+        for (const spy of h.spies) expect(spy).not.toHaveBeenCalled();
+        expect(readdirSync(h.root)).toEqual(["specs"]);
+      } finally { for (const spy of h.spies) spy.mockRestore(); }
+    });
+  }
+});
+
 describe("gateway tier denial", () => {
   test("commission_apply is a receipted deny when the vault withholds the admin tier, plan mode included", async () => {
     const h = harness();

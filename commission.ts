@@ -206,7 +206,7 @@ export function registerCommission(server: McpServer, d: CommissionDeps) {
     if (!d.cameras[camera]) return `unknown camera '${camera}'`;
     if (!p.config?.groups) return `agent '${d.agent}' has no config grant`;
     if (tool === "commission_apply" && approve && !p.config.remediate) return `agent '${d.agent}' has no config remediation grant`;
-    if (tool === "commission_apply") { const tier = d.tierDenied?.(tool, camera); if (tier) return tier; }
+    const tier = d.tierDenied?.(tool, camera); if (tier) return tier;
     return null;
   };
   const validateParams = (spec: Spec): string | null => {

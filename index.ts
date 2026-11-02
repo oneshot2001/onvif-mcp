@@ -538,7 +538,7 @@ server.tool("config_baseline", "Capture allowed VAPIX parameters as the camera c
   const params = { camera };
   const file = baselineFile(camera);
   const config = { agent: AGENT, rebaseline: policy[AGENT]?.config?.rebaseline };
-  const deny = configDenied("config_baseline", camera) ?? baselineDenied(config, existsSync(file));
+  const deny = configDenied("config_baseline", camera) ?? tierDenied("config_baseline", camera) ?? baselineDenied(config, existsSync(file));
   if (deny) { receipt("config_baseline", params, "deny", deny); return { content: [{ type: "text", text: `DENIED: ${deny}` }] }; }
   const groups = policy[AGENT]!.config!.groups;
   const live = await configParams("config_baseline", camera, groups);
@@ -562,7 +562,7 @@ server.tool("config_baseline", "Capture allowed VAPIX parameters as the camera c
 server.tool("config_drift", "Compare live VAPIX parameters with the saved config baseline",
   { camera: cameraId }, async ({ camera }) => {
   const params = { camera };
-  const deny = configDenied("config_drift", camera);
+  const deny = configDenied("config_drift", camera) ?? tierDenied("config_drift", camera);
   if (deny) { receipt("config_drift", params, "deny", deny); return { content: [{ type: "text", text: `DENIED: ${deny}` }] }; }
   const file = baselineFile(camera);
   if (!existsSync(file)) { receipt("config_drift", params, "allow", "no baseline"); return { content: [{ type: "text", text: "no baseline — run config_baseline" }] }; }
