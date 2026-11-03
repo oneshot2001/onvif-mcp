@@ -30,6 +30,7 @@ export function configHarness(root: string, options: {
   readReply?: { ok: boolean; body: string };
   writeReply?: { ok: boolean; body: string };
   writeSticks?: boolean;
+  onFetch?: () => void;
 } = {}) {
   const chain: any[][] = [], calls: any[][] = [];
   const handlers: Record<string, (input: any) => Promise<any>> = {};
@@ -50,6 +51,7 @@ export function configHarness(root: string, options: {
     server: { tool: (name: string, _description: string, _schema: unknown, handler: any) => { handlers[name] = handler; } },
     configParams: async (tool: string, camera: string, groups: string[]) => {
       calls.push(["configParams", tool, camera, [...groups]]);
+      options.onFetch?.();
       return { ok: true, params: Object.fromEntries(Object.entries(liveParams)
         .filter(([param]) => groups.some(g => param === g || param.startsWith(`${g}.`)))) };
     },
@@ -65,6 +67,7 @@ export function configHarness(root: string, options: {
     const readParams = new Function("vapix", "parseParams", `${readCode}\nreturn configParams;`)(
       async (tool: string, camera: string, path: string) => {
         calls.push(["vapix", tool, camera, path]);
+        options.onFetch?.();
         return options.readReply;
       }, parseParams,
     );
