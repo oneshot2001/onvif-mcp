@@ -226,7 +226,7 @@ function gateHarness(options: HarnessOptions = {}, caller = agent) {
   const calls: any[][] = [], chain: any[][] = [];
   const handlers: Record<string, (input: any) => Promise<any>> = {};
   const log = join(fs.mkdtempSync(join(root, "gates-")), "chain.jsonl");
-  const cameras = { cam: { ptz: true, protocol: "vapix" }, other: { ptz: true, protocol: "vapix" } };
+  const cameras = { cam: options.camera ?? { ptz: true, protocol: "vapix" }, other: { ptz: true, protocol: "vapix" } };
   const clock: ClockResult = {
     state: "ok", camera_time: "2027-01-15T08:00:00Z", host_before: "2027-01-15T08:00:00Z",
     host_after: "2027-01-15T08:00:00Z", offset_s: 0, uncertainty_s: 0,
@@ -306,6 +306,47 @@ for (const tool of ["get_snapshot", "ptz_preset"] as const) {
     expect(bundle(output).find(r => r.kind === "dispatch")).toBeDefined();
   });
 }
+
+test("PTZ gate wiring: ptz_move denies a fixed VAPIX camera before dispatch", async () => {
+  const h = gateHarness({ camera: { ptz: false, protocol: "vapix" } });
+  const params = { camera: "cam", pan: 1, tilt: 0, zoom: 0 };
+  denial(h, await h.handlers.ptz_move!(params), "ptz_move", params, "camera 'cam' is not PTZ");
+  expect(h.calls).toEqual([]);
+});
+
+for (const [name, camera, reason] of [
+  ["fixed VAPIX camera", { ptz: false, protocol: "vapix" }, "camera 'cam' is not PTZ"],
+  ["PTZ ONVIF camera", { ptz: true, protocol: "onvif" }, "preset recall implemented for vapix protocol only"],
+] as const) {
+  test(`PTZ gate wiring: ptz_preset denies a ${name} before dispatch`, async () => {
+    const h = harness("ok", undefined, { camera });
+    const params = { camera: "cam", preset: "Home" };
+    const output = await h.handlers.ptz_preset!(params);
+    denial(h, output, "ptz_preset", params, reason);
+    expect(h.calls).toEqual([]);
+    const receipts = bundle(output);
+    expect(receipts.find(r => r.kind === "action_attempt").body.disposition).toBe("not_dispatched");
+    expect(receipts.find(r => r.kind === "dispatch")).toBeUndefined();
+  });
+}
+
+test("PTZ gate wiring: ptz_move dispatches to a PTZ VAPIX camera", async () => {
+  const h = gateHarness({ camera: { ptz: true, protocol: "vapix" } });
+  const params = { camera: "cam", pan: 1, tilt: 0, zoom: 0 };
+  expect(outputText(await h.handlers.ptz_move!(params))).toBe("moved cam pan=1° tilt=0° zoom=0 (vapix)");
+  expect(h.calls).toEqual([["ptzMove", "ptz_move", "cam", 1, 0, 0]]);
+  expect(h.chain).toEqual([["ptz_move", params, "allow", "moved via vapix"]]);
+});
+
+test("PTZ gate wiring: ptz_preset dispatches to a PTZ VAPIX camera", async () => {
+  const h = harness("ok", undefined, { camera: { ptz: true, protocol: "vapix" } });
+  const params = { camera: "cam", preset: "Home" };
+  const output = await h.handlers.ptz_preset!(params);
+  expect(outputText(output)).not.toContain("DENIED:");
+  expect(h.calls).toEqual(["metadata", "recall", "readback", "readback"]);
+  expect(h.chain).toEqual([["ptz_preset", params, "allow", "preset recalled (vapix)"]]);
+  expect(bundle(output).find(r => r.kind === "dispatch")).toBeDefined();
+});
 
 test("tool gate wiring: ptz_move enforces maxStep before dispatch", async () => {
   const h = gateHarness();
