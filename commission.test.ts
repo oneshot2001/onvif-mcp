@@ -91,6 +91,74 @@ function harness(options: { ptz?: boolean; aoa?: boolean; aoaInstalled?: boolean
   return { root, state, writes, posts, receipts, presets, handlers, deps, aoa: () => aoa, privateKey, publicKey: publicKey.export({ type: "spki", format: "pem" }).toString() };
 }
 
+describe("commission gates", () => {
+  const yaml = "spec: camspec/0.1\nname: gate\nparams:\n  Image.I0.Appearance.Rotation: '180'\n";
+
+  test("commission gate wiring: approved apply requires remediation grant before any dependency call; dry-run remains allowed", async () => {
+    const h = harness();
+    delete h.deps.policy["claude-main"]!.config!.remediate;
+    writeFileSync(join(h.root, "specs/gate.yaml"), yaml);
+    // Include metadata reads and local helpers, not just camera writes. Receipt
+    // emission is the only dependency permitted on the denied path.
+    const spies = (["vapix", "vapixPost", "configParams", "observeEvents", "snapshot", "clockCheck", "parseParams", "inGroup", "sha256", "lastReceipt", "checkActuation", "checkSnapshot"] as const).map(name => spyOn(h.deps, name));
+    try {
+      const reason = "agent 'claude-main' has no config remediation grant";
+      const denied = await h.handlers.commission_apply!({ camera: "cam", spec: "gate", approve: true });
+      expect(denied.content[0]!.text).toBe(`DENIED: ${reason}`);
+      expect(h.receipts).toEqual([expect.objectContaining({ tool: "commission_apply", decision: "deny", detail: reason })]);
+      for (const spy of spies) expect(spy).not.toHaveBeenCalled();
+
+      const dry = await h.handlers.commission_apply!({ camera: "cam", spec: "gate", approve: false });
+      expect(JSON.parse(dry.content[0]!.text)).toEqual({
+        diff: [{ param: "Image.I0.Appearance.Rotation", current: "0", desired: "180" }],
+        presets: [], scenarios: [], warnings: [],
+      });
+      expect(h.receipts).toEqual([
+        expect.objectContaining({ tool: "commission_apply", decision: "deny", detail: reason }),
+        expect.objectContaining({ tool: "commission_apply", decision: "allow", detail: "dry-run: planned 1 params, 0 presets, and 0 scenarios" }),
+      ]);
+      expect(h.writes).toEqual([]);
+      expect(h.posts).toEqual([]);
+      expect(h.state["Image.I0.Appearance.Rotation"]).toBe("0");
+      expect(readdirSync(h.root)).toEqual(["specs"]);
+    } finally { for (const spy of spies) spy.mockRestore(); }
+  });
+
+  function outsideLink() {
+    const h = harness();
+    // A shared directory prefix must not count as realpath containment.
+    mkdirSync(join(h.root, "specs-outside"));
+    const target = join(h.root, "specs-outside/gate.yaml");
+    writeFileSync(target, yaml);
+    symlinkSync(target, join(h.root, "specs/link.yaml"));
+    return h;
+  }
+
+  test("commission gate wiring: reader rejects a symlink to a valid spec outside specs/", () => {
+    const h = outsideLink();
+    expect(() => readCommissionSpec(h.root, "link")).toThrow("spec 'link' is outside specs/");
+  });
+
+  test("commission gate wiring: plan rejects an escaping symlink before any camera call", async () => {
+    const h = outsideLink();
+    const spies = (["vapix", "vapixPost", "configParams", "snapshot", "clockCheck", "observeEvents"] as const).map(name => spyOn(h.deps, name));
+    try {
+      const result = await h.handlers.commission_plan!({ camera: "cam", spec: "link" });
+      expect(result.content[0]!.text).toBe("spec 'link' is outside specs/");
+      for (const spy of spies) expect(spy).not.toHaveBeenCalled();
+    } finally { for (const spy of spies) spy.mockRestore(); }
+  });
+
+  test("commission gate wiring: a symlink to a spec inside specs/ still loads", () => {
+    const h = harness();
+    writeFileSync(join(h.root, "specs/gate.yaml"), yaml);
+    symlinkSync("gate.yaml", join(h.root, "specs/link.yaml"));
+    const loaded = readCommissionSpec(h.root, "link");
+    expect(loaded).toEqual(readCommissionSpec(h.root, "gate"));
+    expect(loaded.spec).toMatchObject({ name: "gate", params: { "Image.I0.Appearance.Rotation": "180" } });
+  });
+});
+
 describe("gateway event observation", () => {
   // Execute the production helper without index.ts startup or real sockets/timers.
   const source = readFileSync(join(import.meta.dir, "index.ts"), "utf8");
