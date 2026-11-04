@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { decodeCbor, encodeCbor, fromHex, toHex } from "aar-kat-harness/harness/cbor";
 import { hash } from "aar-kat-harness/harness/crypto";
+import { REAL_CLOCK_BOUND_SECONDS } from "aar-kat-harness/demo/ep/wire-builder";
 import { AarWireProducer, commandDigestHex, verifyBundleDir, type WireEmitInput } from "./producer";
 import { appendJournal, checkAarJournal } from "./journal";
 
@@ -50,6 +51,86 @@ function key(e: any): Buffer {
 }
 function sorted(es: any[]) {
   for (let i = 1; i < es.length; i++) expect(Buffer.compare(key(es[i - 1]), key(es[i]))).toBeLessThan(0);
+}
+
+for (const mode of ["both", "neither"] as const) {
+  test(`AAR producer invariants: ${mode} send and refusal rejects without reserving an epoch`, async () => {
+    const path = join(aar(), "producer-state.json");
+    const previous = '{"next_epoch":7}\n';
+    fs.writeFileSync(path, previous);
+    let sends = 0;
+    const request = input(async () => { sends++; throw Error("unexpected send"); });
+    const invalid = mode === "both" ? { ...request, refusal: "policy denied" } : { ...request, send: undefined };
+    await expect(producer.emit(invalid)).rejects.toThrow("emit() requires exactly one of send or refusal");
+    expect(fs.readFileSync(path, "utf8")).toBe(previous);
+    expect(sends).toBe(0);
+    expect(fs.existsSync(journal())).toBe(false);
+  });
+}
+
+test("AAR producer invariants: partial key directory rejects before send", async () => {
+  const keyDir = join(root, "home", ".aar-onvif-mcp", "test-agent");
+  fs.mkdirSync(keyDir, { recursive: true });
+  fs.writeFileSync(join(keyDir, "agent.private.json"), "{}");
+  expect(fs.existsSync(join(keyDir, "verifier-trust.private.json"))).toBe(false);
+  let sends = 0;
+  await expect(producer.emit(input(async () => { sends++; throw Error("unexpected send"); })))
+    .rejects.toThrow("partially generated key dir");
+  expect(sends).toBe(0);
+  expect(fs.readFileSync(join(keyDir, "agent.private.json"), "utf8")).toBe("{}");
+  expect(fs.existsSync(journal())).toBe(false);
+});
+
+for (const field of ["startedAt", "observedAt"] as const) {
+  test(`AAR producer invariants: ${field} past T0 rejects before send`, async () => {
+    const t0 = now / 1000 + 1;
+    let sends = 0;
+    const request = { ...input(async () => { sends++; throw Error("unexpected send"); }), [field]: t0 + 1 };
+    await expect(producer.emit(request)).rejects.toThrow("clock went backwards before T0");
+    expect(now / 1000).toBe(t0);
+    expect(sends).toBe(0);
+    expect(fs.existsSync(journal())).toBe(false);
+  });
+}
+
+test("AAR producer invariants: clock jump after commit fsync rejects before send", async () => {
+  const append = fs.appendFileSync, sync = fs.fsyncSync;
+  const t0 = now / 1000 + 1;
+  let commitFd: number | undefined, jumps = 0, sends = 0;
+  spies.push(spyOn(fs, "appendFileSync").mockImplementation((...args: Parameters<typeof append>) => {
+    if (String(args[1]).includes('"event":"attempt_committed"')) commitFd = args[0] as number;
+    return append(...args);
+  }));
+  spies.push(spyOn(fs, "fsyncSync").mockImplementation(fd => {
+    sync(fd);
+    if (fd === commitFd) {
+      commitFd = undefined;
+      jumps++;
+      now += (REAL_CLOCK_BOUND_SECONDS + 1) * 1000;
+    }
+  }));
+  await expect(producer.emit(input(async () => { sends++; throw Error("unexpected send"); })))
+    .rejects.toThrow("invalid real-clock timeline before send");
+  expect(jumps).toBe(1);
+  expect(now / 1000).toBe(t0 + REAL_CLOCK_BOUND_SECONDS + 1);
+  expect(sends).toBe(0);
+  expect(records().map(r => r.event)).toEqual(["attempt_envelope", "attempt_committed"]);
+  expect(records().at(-1).envelope_synced_at).toBe(t0);
+  expect(fs.readdirSync(aar()).some(f => fs.existsSync(join(aar(), f, "bundle.cbor")))).toBe(false);
+});
+
+for (const nextEpoch of [0, "x", Number.MAX_SAFE_INTEGER]) {
+  test(`AAR producer invariants: invalid next_epoch ${JSON.stringify(nextEpoch)} rejects before reservation`, async () => {
+    const path = join(aar(), "producer-state.json");
+    const previous = JSON.stringify({ next_epoch: nextEpoch });
+    fs.writeFileSync(path, previous);
+    let sends = 0;
+    await expect(producer.emit(input(async () => { sends++; throw Error("unexpected send"); })))
+      .rejects.toThrow("invalid next_epoch");
+    expect(fs.readFileSync(path, "utf8")).toBe(previous);
+    expect(sends).toBe(0);
+    expect(fs.existsSync(journal())).toBe(false);
+  });
 }
 
 for (const actionName of ["camera.ptz.preset", "camera.stream.view"] as const) {
