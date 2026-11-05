@@ -36,7 +36,7 @@ function harness(options: { ptz?: boolean; aoa?: boolean; aoaInstalled?: boolean
   let seq = 0;
   let aoaReads = 0;
   const handlers: Record<string, (args: Record<string, unknown>) => Promise<{ content: Array<{ text: string }> }>> = {};
-  const server = { tool(name: string, _description: string, _schema: unknown, handler: (args: Record<string, unknown>) => Promise<{ content: Array<{ text: string }> }>) { handlers[name] = handler; } };
+  const server = { tool(name: string, ...args: any[]) { handlers[name] = args[args.length - 1]; } };
   const parseParams = (body: string) => Object.fromEntries(body.trim().split(/\r?\n/).filter(Boolean).map((line) => {
     const raw = line.startsWith("root.") ? line.slice(5) : line;
     const i = raw.indexOf("=");

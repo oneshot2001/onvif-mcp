@@ -1,3 +1,4 @@
+import { TOOL_HINTS } from "./tool-hints";
 import { expect, test } from "bun:test";
 import { createHash, generateKeyPairSync, sign as edSign } from "node:crypto";
 import { readFileSync } from "node:fs";
@@ -30,6 +31,7 @@ function harness(protocol: "vapix" | "onvif", reply: Reply) {
   const policy = { test: { tools: ["ptz_move"], cameras: ["cam"], ptz: { maxStep: 30, maxZoomStep: 2 } } };
   const { privateKey, publicKey } = generateKeyPairSync("ed25519");
   const dependencies = {
+    TOOL_HINTS,
     z, cameraId, ptzBound, policy, cameras, AGENT: "test",
     createHash, edSign, PRIV: privateKey, outcomeEvidence, LOG: "in-memory",
     signer: { sign: (_kind: string, body: unknown) => edSign(null, Buffer.from(createHash("sha256").update(JSON.stringify(body)).digest("hex")), privateKey).toString("base64") },
@@ -43,7 +45,7 @@ function harness(protocol: "vapix" | "onvif", reply: Reply) {
     camOf: (camera: keyof typeof cameras) => cameras[camera],
     vapix: async (...args: unknown[]) => { calls.push(["vapix", ...args]); return reply; },
     soap: async (...args: unknown[]) => { calls.push(["soap", ...args]); return reply; },
-    server: { tool: (name: string, _description: string, _schema: unknown, handler: typeof handlers[string]) => { handlers[name] = handler; } },
+    server: { tool: (name: string, ...args: any[]) => { const handler = args[args.length - 1]; handlers[name] = handler; } },
   };
   const ptzMove = new Function(...Object.keys(dependencies), code + "\nreturn ptzMove;")(...Object.values(dependencies)) as
     (tool: string, camera: string, pan: number, tilt: number, zoom: number) => Promise<boolean>;

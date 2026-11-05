@@ -97,6 +97,8 @@ bun index.ts --verify
 
 ## Tools
 
+All tools persist receipts; some also save artifacts, replace baselines, or change camera state. MCP annotations are advisory; server policy still governs calls.
+
 | Tool | Does | Policy checks |
 |---|---|---|
 | `list_cameras` | Live device info for cameras this agent may see | agent known, tool granted |

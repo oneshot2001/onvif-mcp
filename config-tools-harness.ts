@@ -1,3 +1,4 @@
+import { TOOL_HINTS } from "./tool-hints";
 import * as fs from "node:fs";
 import { join } from "node:path";
 import { createHash } from "node:crypto";
@@ -40,6 +41,7 @@ export function configHarness(root: string, options: {
   } });
   const liveParams = { ...(options.liveParams ?? { "Image.X": "live" }) };
   const dependencies = {
+    TOOL_HINTS,
     ROOT: root, AGENT: "test", policy, join, createHash, z, cameraId, paramName,
     baselineDenied, policyConfigDenied, hardDenied, formatDriftLines, deviceText,
     existsSync: fs.existsSync, statSync: options.statSync ?? fs.statSync,
@@ -48,7 +50,7 @@ export function configHarness(root: string, options: {
     rateDenied: options.rateDenied ?? (() => null),
     tierDenied: options.tierDenied ?? (() => null),
     receipt: (...args: any[]) => chain.push(args),
-    server: { tool: (name: string, _description: string, _schema: unknown, handler: any) => { handlers[name] = handler; } },
+    server: { tool: (name: string, ...args: any[]) => { const handler = args[args.length - 1]; handlers[name] = handler; } },
     configParams: async (tool: string, camera: string, groups: string[]) => {
       calls.push(["configParams", tool, camera, [...groups]]);
       options.onFetch?.();

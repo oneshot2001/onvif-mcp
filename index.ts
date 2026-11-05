@@ -6,6 +6,7 @@ import { gatewayConfigFromEnv, serveGateway } from "./gateway-listen";
 import { createVaultClient, curlVaultCall, VaultWithheld, type Signer } from "./vault-client";
 import { z } from "zod";
 import { cameraId, presetName, paramName } from "./schemas";
+import { TOOL_HINTS } from "./tool-hints";
 import { generateKeyPairSync, sign as edSign, createHash } from "node:crypto";
 import { existsSync, readFileSync, writeFileSync, mkdirSync, statSync, openSync, appendFileSync, fsyncSync, closeSync } from "node:fs";
 import { join } from "node:path";
@@ -435,7 +436,7 @@ const server = new McpServer({ name: "onvif-mcp", version: "0.1.0" });
 withInvocations(server);
 registerCommission(server, { root: ROOT, agent: AGENT, policy, policyBytes, cameras, privateKey: PRIV, signer, tierDenied, vapix, vapixPost, observeEvents, configParams, parseParams, inGroup, sha256, receipt, lastReceipt, snapshot, checkSnapshot: () => rateDenied("snapshot"), checkActuation: () => rateDenied("actuation"), clockCheck: (tool, camera) => clockCheck(tool, camera, { now: Date.now, vapixPost }) });
 
-server.tool("list_cameras", "List cameras this agent may access, with live device info", {}, async () => {
+server.tool("list_cameras", "List cameras this agent may access, with live device info", {}, TOOL_HINTS.list_cameras, async () => {
   const deny = allowed("list_cameras");
   if (deny) { receipt("list_cameras", {}, "deny", deny); return { content: [{ type: "text", text: `DENIED: ${deny}` }] }; }
   const visible = policy[AGENT]!.cameras;
@@ -446,7 +447,7 @@ server.tool("list_cameras", "List cameras this agent may access, with live devic
 });
 
 server.tool("clock_check", "Read the camera clock offset against this host (host sync not checked) and device-reported NTP status",
-  { camera: cameraId.describe("camera id from list_cameras") }, async ({ camera }) => {
+  { camera: cameraId.describe("camera id from list_cameras") }, TOOL_HINTS.clock_check, async ({ camera }) => {
   const deny = allowed("clock_check", camera);
   if (deny) { receipt("clock_check", { camera }, "deny", deny); return { content: [{ type: "text", text: `DENIED: ${deny}` }] }; }
   const result = await clockCheck("clock_check", camera, { now: Date.now, vapixPost });
@@ -457,7 +458,7 @@ server.tool("clock_check", "Read the camera clock offset against this host (host
 });
 
 server.tool("get_snapshot", "Capture a JPEG snapshot from a camera; returns the image plus saved file path and sha256",
-  { camera: cameraId.describe("camera id from list_cameras") }, async ({ camera }) => {
+  { camera: cameraId.describe("camera id from list_cameras") }, TOOL_HINTS.get_snapshot, async ({ camera }) => {
   const startedAt = Math.floor(Date.now() / 1000);
   const deny = allowed("get_snapshot", camera) ?? rateDenied("snapshot");
   if (deny) {
@@ -487,7 +488,7 @@ server.tool("get_snapshot", "Capture a JPEG snapshot from a camera; returns the 
 });
 
 server.tool("ptz_preset", "Send a PTZ camera to a named preset (VAPIX cameras only)",
-  { camera: cameraId, preset: presetName.default("Home") }, async ({ camera, preset }) => {
+  { camera: cameraId, preset: presetName.default("Home") }, TOOL_HINTS.ptz_preset, async ({ camera, preset }) => {
   const startedAt = Math.floor(Date.now() / 1000);
   const deny = allowed("ptz_preset", camera);
   const cam = cameras[camera];
@@ -521,7 +522,7 @@ server.tool("ptz_preset", "Send a PTZ camera to a named preset (VAPIX cameras on
 
 server.tool("ptz_move", "Relative PTZ move (degrees pan/tilt, zoom steps), bounded by policy",
   { camera: cameraId, pan: z.number().default(0), tilt: z.number().default(0), zoom: z.number().default(0) },
-  async ({ camera, pan, tilt, zoom }) => {
+  TOOL_HINTS.ptz_move, async ({ camera, pan, tilt, zoom }) => {
   const deny = allowed("ptz_move", camera);
   const cam = cameras[camera];
   const bound = !deny && (!cam?.ptz ? `camera '${camera}' is not PTZ` :
@@ -534,7 +535,7 @@ server.tool("ptz_move", "Relative PTZ move (degrees pan/tilt, zoom steps), bound
 });
 
 server.tool("config_baseline", "Capture allowed VAPIX parameters as the camera config baseline",
-  { camera: cameraId }, async ({ camera }) => {
+  { camera: cameraId }, TOOL_HINTS.config_baseline, async ({ camera }) => {
   const params = { camera };
   const file = baselineFile(camera);
   const config = { agent: AGENT, rebaseline: policy[AGENT]?.config?.rebaseline };
@@ -560,7 +561,7 @@ server.tool("config_baseline", "Capture allowed VAPIX parameters as the camera c
 });
 
 server.tool("config_drift", "Compare live VAPIX parameters with the saved config baseline",
-  { camera: cameraId }, async ({ camera }) => {
+  { camera: cameraId }, TOOL_HINTS.config_drift, async ({ camera }) => {
   const params = { camera };
   const deny = configDenied("config_drift", camera) ?? tierDenied("config_drift", camera);
   if (deny) { receipt("config_drift", params, "deny", deny); return { content: [{ type: "text", text: `DENIED: ${deny}` }] }; }
@@ -585,7 +586,7 @@ server.tool("config_drift", "Compare live VAPIX parameters with the saved config
 });
 
 server.tool("config_remediate", "Restore one drifted VAPIX parameter to its baseline value",
-  { camera: cameraId, param: paramName, approve: z.boolean().optional() }, async ({ camera, param, approve }) => {
+  { camera: cameraId, param: paramName, approve: z.boolean().optional() }, TOOL_HINTS.config_remediate, async ({ camera, param, approve }) => {
   const params = { camera, param, approve };
   const deny = configDenied("config_remediate", camera, approve) ?? tierDenied("config_remediate", camera) ?? (approve ? rateDenied("actuation") : null);
   if (deny) { receipt("config_remediate", params, "deny", deny); return { content: [{ type: "text", text: `DENIED: ${deny}` }] }; }
@@ -622,7 +623,7 @@ server.tool("config_remediate", "Restore one drifted VAPIX parameter to its base
 });
 
 server.tool("get_receipts", "Return the caller's last N signed receipts from the chain",
-  { n: z.number().int().min(1).max(100).default(5) }, async ({ n }) => {
+  { n: z.number().int().min(1).max(100).default(5) }, TOOL_HINTS.get_receipts, async ({ n }) => {
   const deny = allowed("get_receipts");
   if (deny) { receipt("get_receipts", { n }, "deny", deny); return { content: [{ type: "text", text: `DENIED: ${deny}` }] }; }
   const lines = existsSync(LOG) ? selectReceipts(readFileSync(LOG, "utf8").trim().split("\n"), AGENT, n) : [];

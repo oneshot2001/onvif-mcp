@@ -1,3 +1,4 @@
+import { TOOL_HINTS } from "../tool-hints";
 import { afterEach, beforeEach, expect, spyOn, test } from "bun:test";
 import * as fs from "node:fs";
 import { tmpdir } from "node:os";
@@ -107,6 +108,7 @@ function harness(mode: string, password = "fake-password", options: HarnessOptio
     expect(request.stdin).toContain(password.replace(/\\/g, "\\\\").replace(/"/g, '\\"')); // Only credential channel; no process/network.
   };
   const dependencies = {
+    TOOL_HINTS,
     AarWireProducer, commandDigestHex, runAsDispatch, sendPreset, sendSnapshot, createHash, join, cameraId, presetName, formatPresetRecall, snapshotContent,
     claimInvocationForAar, currentInvocationId, appendLocked, outcomeEvidence, edSign, LOG: log, PRIV: privateKey,
     signer: { sign: (_kind: string, body: unknown) => edSign(null, Buffer.from(createHash("sha256").update(JSON.stringify(body)).digest("hex")), privateKey).toString("base64") },
@@ -116,7 +118,7 @@ function harness(mode: string, password = "fake-password", options: HarnessOptio
     allowed: (tool: string, camera?: string) => mode === "deny" ? "agent has no grant" : policyAllowed(policy, agent, tool, camera),
     rateDenied: options.rateDenied ?? (() => null),
     deviceMeta: async (tool: string) => { recordCall("metadata", tool); return { manufacturer: "AXIS", model: "test", firmware: "0" }; },
-    server: { tool: (name: string, _description: string, _schema: unknown, handler: any) => { rawHandlers[name] = handler; handlers[name] = input => runWithInvocation(() => handler(input)); } },
+    server: { tool: (name: string, ...args: any[]) => { const handler = args[args.length - 1]; rawHandlers[name] = handler; handlers[name] = input => runWithInvocation(() => handler(input)); } },
     snapshot: async (tool: string, _camera: string, path: string) => {
       assertCommitted();
       recordCall("snapshot", tool);
@@ -233,6 +235,7 @@ function gateHarness(options: HarnessOptions = {}, caller = agent) {
     reference: "host system clock, sync not checked", ntp: null,
   };
   const dependencies = {
+    TOOL_HINTS,
     z, cameraId, ptzBound, clockReceipt, formatClock, selectReceipts, formatReceiptsText,
     policy, cameras, AGENT: caller, LOG: log,
     existsSync: fs.existsSync, readFileSync: fs.readFileSync,
@@ -247,7 +250,7 @@ function gateHarness(options: HarnessOptions = {}, caller = agent) {
       chain.push(args);
       fs.appendFileSync(log, JSON.stringify({ principal: { id: caller }, tool: args[0], decision: args[2] }) + "\n");
     },
-    server: { tool: (name: string, _description: string, _schema: unknown, handler: any) => { handlers[name] = input => runWithInvocation(() => handler(input)); } },
+    server: { tool: (name: string, ...args: any[]) => { const handler = args[args.length - 1]; handlers[name] = input => runWithInvocation(() => handler(input)); } },
   };
   new Function(...Object.keys(dependencies), gateCode)(...Object.values(dependencies));
   return { handlers, calls, chain, log };
