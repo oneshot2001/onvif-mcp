@@ -99,3 +99,43 @@ test("journal regular file: absent journal stays absent without warnings", () =>
     expect(existsSync(path)).toBe(false);
   } finally { warning.mockRestore(); }
 });
+
+const attempt = {
+  invocation_id: "01".repeat(16), receipt_id: "02".repeat(32),
+  envelope_cbor: "00", envelope_digest: toHex(hash(new Uint8Array([0]))),
+};
+
+for (const event of ["attempt_envelope", "attempt_committed"] as const) {
+  test(`AAR journal action invariants: ${event} rejects a mismatched envelope digest`, () => {
+    const record = { ...attempt, event, envelope_synced_at: 1 };
+    const warning = spyOn(console, "error").mockImplementation(() => {});
+    try {
+      appendJournal(path, record);
+      checkAarJournal(path);
+      expect(warning).toHaveBeenCalledTimes(1);
+      const wrongDigest = (attempt.envelope_digest[0] === "0" ? "1" : "0") + attempt.envelope_digest.slice(1);
+      writeFileSync(path, JSON.stringify({ ...record, envelope_digest: wrongDigest }) + "\n");
+      expect(() => checkAarJournal(path)).toThrow(`aar journal corrupt: invalid attempt envelope (${path})`);
+    } finally { warning.mockRestore(); }
+  });
+}
+
+for (const event of ["dispatch_completed", "dispatch_ambiguous"] as const) {
+  test(`AAR journal action invariants: orphan ${event} is corrupt`, () => {
+    appendJournal(path, { event, invocation_id: attempt.invocation_id, observed_at: 2 });
+    expect(() => checkAarJournal(path)).toThrow(`aar journal corrupt: completion without attempt (${path})`);
+  });
+
+  test(`AAR journal action invariants: valid ${event} clears its attempt`, () => {
+    appendJournal(path, { ...attempt, event: "attempt_envelope" });
+    const warning = spyOn(console, "error").mockImplementation(() => {});
+    try {
+      checkAarJournal(path);
+      expect(warning.mock.calls).toEqual([[`aar journal warning: invocation ${attempt.invocation_id} has no completion; never redispatch (${path})`]]);
+      appendJournal(path, { event, invocation_id: attempt.invocation_id, observed_at: 2 });
+      warning.mockClear();
+      checkAarJournal(path);
+      expect(warning).not.toHaveBeenCalled();
+    } finally { warning.mockRestore(); }
+  });
+}

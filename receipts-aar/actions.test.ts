@@ -50,3 +50,22 @@ test("settled position requires consecutive successful equal reads", async () =>
 test("unexpected send exception is not converted to a false refusal", async () => {
   await expect(sendSnapshot(async () => { throw Error("ambiguous"); })).rejects.toThrow("ambiguous");
 });
+
+test("AAR journal action invariants: preset Error body refuses without readback", async () => {
+  let reads = 0;
+  const result = await sendPreset(now / 1000, async () => ({ ok: true, body: "Error: no such preset" }),
+    async () => { reads++; return { ok: true, body: "pan=1" }; }, sleep);
+  expect(result.ok).toBe(false);
+  expect(reads).toBe(0);
+  expect(result.dispatch).toMatchObject({ status: 0, outcomeLevel: "unknown", outcomeState: "unknown" });
+});
+
+test("AAR journal action invariants: HTML snapshot has unknown outcome", async () => {
+  const result = await sendSnapshot(async () => Buffer.from("<html>"));
+  expect(result.dispatch).toMatchObject({ outcomeLevel: "unknown", outcomeState: "unknown" });
+});
+
+test("AAR journal action invariants: JPEG snapshot is acknowledged and consistent", async () => {
+  const result = await sendSnapshot(async () => Buffer.from([0xff, 0xd8, 0xff, 0xd9]));
+  expect(result.dispatch).toMatchObject({ outcomeLevel: "device_acknowledged", outcomeState: "consistent" });
+});
