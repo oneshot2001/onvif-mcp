@@ -2,8 +2,10 @@ import { afterEach, beforeEach, expect, test } from "bun:test";
 import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import ts from "typescript";
 
 const source = readFileSync(join(import.meta.dir, "index.ts"), "utf8");
+const parsed = ts.createSourceFile("index.ts", source, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS);
 let root: string;
 beforeEach(() => {
   root = mkdtempSync(join(tmpdir(), "onvif-startup-gates-"));
@@ -12,8 +14,10 @@ beforeEach(() => {
 });
 afterEach(() => rmSync(root, { recursive: true, force: true }));
 
-// Check unique, ordered boundaries inside each test, before executing any slice.
-// The credential-fetching loops, key generation and listeners stay outside.
+// Check unique, ordered boundaries and top-level placement inside each test,
+// before executing any slice. Parsing skips comments, strings (including nested
+// templates) and regex literals, so their braces cannot hide an enclosing block.
+// Credential fetching and listeners stay outside; keys are temporary fixtures.
 function slice(startMarker: string, endMarker: string): string {
   const start = source.indexOf(startMarker);
   const end = source.indexOf(endMarker);
@@ -21,6 +25,8 @@ function slice(startMarker: string, endMarker: string): string {
   expect(end).toBeGreaterThan(start);
   expect(source.lastIndexOf(startMarker)).toBe(start);
   expect(source.lastIndexOf(endMarker)).toBe(end);
+  expect(parsed.statements.some((statement) => statement.getStart(parsed) === start),
+    `startup slice must start at top-level nesting depth: ${startMarker}`).toBe(true);
   return source.slice(start, end);
 }
 
@@ -100,9 +106,16 @@ test("startup gate wiring: nonempty passwords continue without secrets", () => {
 function runKeyGate(mode: number) {
   const key = join(root, "keys", "receipt.key");
   writeFileSync(key, "stand-in-private-key");
+  writeFileSync(join(root, "keys", "receipt.pub"), "stand-in-public-key");
   chmodSync(key, mode);
-  return runGate(importHelper("keyModeProblem", "key-perms.ts"),
-    slice('  const keyProblem = keyModeProblem(statSync(join(KEYDIR, "receipt.key")).mode);', "  const localKey = PRIV;"));
+  return runGate(`
+    ${importHelper("keyModeProblem", "key-perms.ts")}
+    import { generateKeyPairSync, sign as edSign, createHash } from "node:crypto";
+    import { writeFileSync } from "node:fs";
+    const vault = null;
+    let PRIV = "";
+    let signer;
+  `, slice('if (vault === null) {\n  if (!existsSync(join(KEYDIR, "receipt.key"))) {', "const PUB = signer.publicKeyPem;"));
 }
 
 test("startup gate wiring: mode 0644 receipt key exits 1 with chmod diagnostic", () => {
