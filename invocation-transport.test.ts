@@ -46,12 +46,15 @@ const accountCases = [
 ] as const;
 type CurlCall = { args: string[]; stdin: string };
 
-function accountTransports(body = "<Response/>", camera = accountCamera) {
+function accountTransports(body = "<Response/>", camera = accountCamera, options: {
+  env?: Record<string, string | undefined>;
+  passwords?: Record<string, string>;
+} = {}) {
   const calls: CurlCall[] = [];
   const dependencies = {
     curlRequest, currentInvocationId, currentCommandDigest, accountFor, parseParams, parseSnapshotUri, snapshotPath,
-    camOf: () => camera, passwords: accountPasswords,
-    process: { env: {} },
+    camOf: () => camera, passwords: options.passwords ?? accountPasswords,
+    process: { env: options.env ?? {} },
     Bun: { spawnSync(args: string[], opts: { stdin: Buffer }) {
       calls.push({ args: [...args], stdin: opts.stdin.toString() });
       return { exitCode: 0, stdout: Buffer.from(body), stderr: Buffer.alloc(0) };
@@ -75,6 +78,72 @@ function expectAccountCall(call: CurlCall, user: string, key: keyof typeof accou
     expect(JSON.stringify(result)).not.toContain(password);
     if (otherKey !== key) expect(call.stdin).not.toContain(password);
   }
+}
+
+function expectGatewayCall(call: CurlCall, socket: string, path: string,
+  user: string, key: keyof typeof accountPasswords, result: unknown) {
+  expectAccountCall(call, user, key, result);
+  expect(call.args[0]).toBe("curl");
+  expect(call.args.filter(arg => arg === "--unix-socket")).toHaveLength(1);
+  expect(call.args[call.args.indexOf("--unix-socket") + 1]).toBe(socket);
+  expect(call.args.filter(arg => /^https?:\/\//.test(arg))).toEqual([`http://cam${path}`]);
+  expect(call.stdin).not.toContain("undefined");
+}
+
+for (const transport of ["vapix", "vapix with outFile", "vapixPost", "soap"] as const) {
+  test(`gateway transport wiring: ${transport} routes through witness with selected credentials`, async () => {
+    const root = mkdtempSync(join(tmpdir(), "gateway-transport-"));
+    try {
+      const socket = join(root, "witness.sock");
+      const outFile = join(root, "snapshot.jpg");
+      const h = accountTransports("<Response/>", { ...accountCamera, base: "http://cam" }, {
+        env: { GATEWAY_WITNESS_SOCKET: socket },
+      });
+      const viewer = transport === "vapix" || transport === "vapix with outFile";
+      const path = transport === "soap" ? "/onvif/services" : transport === "vapixPost" ? "/json" : "/snapshot";
+      const result = await (transport === "soap"
+        ? h.soap("commission_apply", "cam", "<GetDeviceInformation/>")
+        : transport === "vapixPost"
+          ? h.vapixPost("commission_apply", "cam", path, { method: "read" })
+          : h.vapix("get_snapshot", "cam", path, transport === "vapix with outFile" ? outFile : undefined));
+      expect(result).toEqual({ ok: true, body: "<Response/>" });
+      expect(h.calls).toHaveLength(1);
+      expectGatewayCall(h.calls[0]!, socket, path, viewer ? "viewer-user" : "root-user", viewer ? "kv" : "kr", result);
+      if (transport === "vapix with outFile") expect(h.calls[0]!.args.slice(-2)).toEqual(["-o", outFile]);
+      else expect(h.calls[0]!.args).not.toContain("-o");
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+}
+
+for (const transport of ["vapix", "vapixPost", "soap"] as const) {
+  test(`gateway transport wiring: ${transport} refuses withheld admin without spawning and keeps viewer working`, async () => {
+    const root = mkdtempSync(join(tmpdir(), "gateway-transport-"));
+    try {
+      const socket = join(root, "witness.sock");
+      const h = accountTransports("<Response/>", { ...accountCamera, base: "http://cam" }, {
+        env: { GATEWAY_WITNESS_SOCKET: socket },
+        passwords: { kv: accountPasswords.kv, ko: accountPasswords.ko },
+      });
+      const path = transport === "soap" ? "/onvif/services" : "/get";
+      const request = (tool: string) => transport === "soap"
+        ? h.soap(tool, "cam", "<GetDeviceInformation/>")
+        : transport === "vapixPost"
+          ? h.vapixPost(tool, "cam", path, { method: "read" })
+          : h.vapix(tool, "cam", path);
+      const denied = await request(transport === "vapix" ? "config_remediate" : "commission_apply");
+      expect(denied).toEqual({ ok: false, body: "credential tier withheld by the vault" });
+      expect(h.calls).toHaveLength(0);
+      for (const password of Object.values(accountPasswords)) expect(JSON.stringify(denied)).not.toContain(password);
+      const result = await request("get_snapshot");
+      expect(result).toEqual({ ok: true, body: "<Response/>" });
+      expect(h.calls).toHaveLength(1);
+      expectGatewayCall(h.calls[0]!, socket, path, "viewer-user", "kv", result);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
 }
 
 for (const transport of ["vapix", "vapixPost", "soap"] as const) {
