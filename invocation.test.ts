@@ -3,7 +3,51 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { z } from "zod";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { registerCommission, type CommissionDeps } from "./commission";
+import { TOOL_HINTS } from "./tool-hints";
 import { claimInvocationForAar, currentCommandDigest, currentInvocationId, runAsDispatch, runWithInvocation, withInvocations } from "./invocation";
+
+test.each(["commission_plan", "commission_apply", "commission_verify", "get_receipts"] as const)(
+  "tool annotations runtime: %s survives withInvocations and SDK listTools",
+  async (name) => {
+    const root = mkdtempSync(join(tmpdir(), "onvif-tool-annotations-"));
+    const server = new McpServer({ name: "annotations-test", version: "1" });
+    const client = new Client({ name: "annotations-client", version: "1" });
+    const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+    let dependencyCalls = 0;
+    const unexpected = (): never => {
+      dependencyCalls++;
+      throw new Error("listTools must not invoke a handler or its dependencies");
+    };
+    const deps: CommissionDeps = {
+      root, agent: "annotations-test", policy: {}, policyBytes: new Uint8Array(), cameras: {}, privateKey: "",
+      vapix: unexpected, vapixPost: unexpected, observeEvents: unexpected,
+      configParams: unexpected, parseParams: unexpected, inGroup: unexpected,
+      sha256: unexpected, receipt: unexpected, lastReceipt: unexpected,
+      checkActuation: unexpected, snapshot: unexpected, checkSnapshot: unexpected, clockCheck: unexpected,
+    };
+    try {
+      withInvocations(server);
+      registerCommission(server, deps);
+      server.tool("get_receipts", "Stand-in registration", { n: z.number() }, TOOL_HINTS.get_receipts, unexpected);
+      await server.connect(serverTransport);
+      await client.connect(clientTransport);
+      const { tools } = await client.listTools();
+      expect(tools.map(tool => tool.name).sort()).toEqual([
+        "commission_apply", "commission_plan", "commission_verify", "get_receipts",
+      ]);
+      expect(tools.find(tool => tool.name === name)!.annotations).toEqual(TOOL_HINTS[name]);
+      expect(dependencyCalls).toBe(0);
+    } finally {
+      await client.close();
+      await server.close();
+      rmSync(root, { recursive: true, force: true });
+    }
+  },
+);
 
 test("W2a primitives: nested dispatch scopes restore digests and share the invocation claim", () => {
   const outer = "a".repeat(64), inner = "b".repeat(64), value = {};
