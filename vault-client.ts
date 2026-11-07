@@ -54,14 +54,16 @@ export function createVaultClient(call: VaultCall) {
       return body.password;
     },
     signer(): Signer {
-      const key = parse(call("GET", "/public-key"), "public-key");
+      const response = call("GET", "/public-key");
+      if (response.status !== 200) throw new Error(`vault public-key: HTTP ${response.status}`);
+      const key = parse(response, "public-key");
       if (typeof key.pem !== "string" || !key.pem.includes("PUBLIC KEY")) throw new Error("vault public-key: no PEM in the reply");
       return {
         publicKeyPem: key.pem,
         sign(kind, body) {
           const response = call("POST", "/sign", { kind, body });
           const reply = parse(response, "sign");
-          if (response.status !== 200 || typeof reply.sig !== "string") throw new Error(`vault refused to sign the ${kind}: ${typeof reply.reason === "string" ? reply.reason : `HTTP ${response.status}`} (the action may have executed; no signed ${kind} was written)`);
+          if (response.status !== 200 || typeof reply.sig !== "string" || reply.sig === "") throw new Error(`vault refused to sign the ${kind}: ${typeof reply.reason === "string" ? reply.reason : `HTTP ${response.status}`} (the action may have executed; no signed ${kind} was written)`);
           return reply.sig;
         },
       };
