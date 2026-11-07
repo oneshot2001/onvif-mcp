@@ -11,12 +11,12 @@ signed receipt — including denials**.<br>
 The audit trail records what agents *tried*, not just what they did.
 
 <p>
-  <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue.svg" alt="License: MIT"></a>
-  <a href="https://bun.sh"><img src="https://img.shields.io/badge/runtime-Bun-f9f1e1.svg?logo=bun" alt="Runtime: Bun"></a>
-  <a href="https://modelcontextprotocol.io"><img src="https://img.shields.io/badge/protocol-MCP-8A2BE2.svg" alt="Protocol: MCP"></a>
-  <a href="#transports"><img src="https://img.shields.io/badge/transports-VAPIX%20%7C%20ONVIF%20SOAP-1d3648.svg" alt="Transports: VAPIX | ONVIF SOAP"></a>
-  <a href="https://github.com/oneshot2001/aar"><img src="https://img.shields.io/badge/receipts-AAR%20v0.2%20vocabulary-3ec9a7.svg" alt="Receipts: AAR v0.2 vocabulary"></a>
-  <a href="#status"><img src="https://img.shields.io/badge/status-experimental-d98e3b.svg" alt="Status: experimental"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-6B665C.svg?labelColor=24221E" alt="License: MIT"></a>
+  <a href="https://bun.sh"><img src="https://img.shields.io/badge/runtime-Bun-6B665C.svg?logo=bun&labelColor=24221E" alt="Runtime: Bun"></a>
+  <a href="https://modelcontextprotocol.io"><img src="https://img.shields.io/badge/protocol-MCP-6B665C.svg?labelColor=24221E" alt="Protocol: MCP"></a>
+  <a href="#transports"><img src="https://img.shields.io/badge/transports-VAPIX%20%7C%20ONVIF%20SOAP-6B665C.svg?labelColor=24221E" alt="Transports: VAPIX | ONVIF SOAP"></a>
+  <a href="https://github.com/oneshot2001/aar"><img src="https://img.shields.io/badge/receipts-AAR%20v0.2%20vocabulary-FFD60A.svg?labelColor=24221E" alt="Receipts: AAR v0.2 vocabulary"></a>
+  <a href="#status"><img src="https://img.shields.io/badge/status-experimental-6B665C.svg?labelColor=24221E" alt="Status: experimental"></a>
 </p>
 
 <a href="https://github.com/oneshot2001/aar">AAR specification</a> ·

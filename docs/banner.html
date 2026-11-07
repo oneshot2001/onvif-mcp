@@ -1,82 +1,60 @@
-<!DOCTYPE html>
+<!doctype html>
 <html>
 <head>
 <meta charset="utf-8">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Public+Sans:wght@400..700&family=Newsreader:ital,opsz,wght@0,6..72,400..600;1,6..72,400..600&family=JetBrains+Mono:wght@400;500&display=block">
 <style>
+  :root {
+    --charcoal: #24221E; --deep: #141310; --lemon: #FFD60A; --rust-on-dark: #E8744A;
+    --on-dark: #F4F1EA; --muted-on-dark: #CFC9BC;
+    --serif: "Newsreader", serif; --sans: "Public Sans", sans-serif; --mono: "JetBrains Mono", monospace;
+  }
   * { margin: 0; padding: 0; box-sizing: border-box; }
-  body { width: 1600px; height: 500px; overflow: hidden; }
-  .banner {
-    width: 1600px; height: 500px;
-    background: radial-gradient(1200px 700px at 18% 30%, #0e2233 0%, #08131d 45%, #050b11 100%);
-    display: flex; align-items: center; justify-content: center; gap: 72px;
-    font-family: -apple-system, "SF Pro Display", "Segoe UI", Inter, sans-serif;
-    position: relative;
-  }
-  /* faint scanline grid, camera-glass feel */
-  .banner::before {
-    content: ""; position: absolute; inset: 0;
-    background-image: linear-gradient(rgba(94, 234, 212, 0.035) 1px, transparent 1px),
-                      linear-gradient(90deg, rgba(94, 234, 212, 0.035) 1px, transparent 1px);
-    background-size: 44px 44px;
-  }
-  .mark { position: relative; width: 220px; height: 220px; flex: 0 0 auto; }
-  .text { position: relative; max-width: 860px; }
-  h1 {
-    font-size: 92px; font-weight: 800; letter-spacing: -2px; color: #f2f7fa;
-    font-family: "SF Mono", ui-monospace, Menlo, monospace;
-  }
-  h1 .dim { color: #3ec9a7; }
-  .tag { margin-top: 18px; font-size: 34px; font-weight: 600; color: #c7d5de; letter-spacing: -0.4px; }
-  .trip { margin-top: 22px; font-size: 26px; font-weight: 500; color: #6f8494; }
-  .trip b { color: #3ec9a7; font-weight: 600; }
-  .chain { margin-top: 30px; display: flex; align-items: center; gap: 0; }
-  .block {
-    width: 118px; height: 10px; border-radius: 6px;
-    background: linear-gradient(90deg, #16a085, #3ec9a7);
-  }
-  .block.deny { background: linear-gradient(90deg, #b0662a, #d98e3b); }
-  .link { width: 26px; height: 2px; background: #2a4152; }
+  html, body { width: 1600px; height: 500px; background: var(--charcoal); overflow: hidden; }
+  body { color: var(--on-dark); font-family: var(--sans); padding: 44px 72px 0; display: flex; flex-direction: column; }
+
+  .mast { border-top: 4px solid var(--on-dark); }
+  .mast__rule { border-top: 1px solid color-mix(in srgb, var(--on-dark) 40%, transparent); margin-top: 3px; }
+  .mast__row { display: flex; justify-content: space-between; padding: 12px 0 0; margin-bottom: 10px;
+    font-family: var(--mono); font-size: 14px; letter-spacing: .08em; text-transform: uppercase; color: var(--muted-on-dark); }
+
+  .main { flex: 1; display: grid; grid-template-columns: 1fr 680px; gap: 56px; align-items: center; padding-bottom: 36px; }
+
+  .word { font-family: var(--serif); font-weight: 500; font-size: 128px; line-height: .9; letter-spacing: -0.03em;
+    font-variation-settings: "opsz" 72; display: flex; align-items: flex-end; }
+  .word .dot { width: 22px; height: 22px; background: var(--lemon); margin: 0 0 30px 9px; flex: none; }
+  .dek { font-family: var(--serif); font-weight: 400; font-size: 33px; line-height: 1.22; margin-top: 28px; max-width: 19em;
+    text-wrap: balance; font-variation-settings: "opsz" 36; }
+  .proof { font-family: var(--mono); font-size: 17px; letter-spacing: .02em; color: var(--muted-on-dark); margin-top: 22px; }
+  .proof i { font-style: normal; color: var(--lemon); }
+
+  .specimen { background: var(--deep); color: var(--on-dark); border: 1px solid color-mix(in srgb, var(--on-dark) 18%, transparent);
+    border-radius: 11px; padding: 24px 30px; font-family: var(--mono); font-size: 16px; line-height: 1.6; white-space: pre; }
+  .specimen .dim { color: var(--muted-on-dark); }
+  .specimen b { color: var(--lemon); font-weight: 500; }
+  .specimen b.no { color: var(--rust-on-dark); }
 </style>
 </head>
 <body>
-<div class="banner">
-  <div class="mark">
-    <svg viewBox="0 0 220 220" width="220" height="220">
-      <!-- doorway frame -->
-      <rect x="30" y="18" width="160" height="184" rx="18" fill="none" stroke="#1d3648" stroke-width="7"/>
-      <rect x="30" y="18" width="160" height="184" rx="18" fill="#0a1822" opacity="0.6"/>
-      <!-- aperture rings -->
-      <circle cx="110" cy="96" r="52" fill="none" stroke="#3ec9a7" stroke-width="7"/>
-      <circle cx="110" cy="96" r="30" fill="none" stroke="#2a6f60" stroke-width="6"/>
-      <circle cx="110" cy="96" r="10" fill="#3ec9a7"/>
-      <!-- shutter blades -->
-      <g stroke="#2a6f60" stroke-width="5">
-        <line x1="110" y1="44" x2="110" y2="66"/>
-        <line x1="155" y1="70" x2="136" y2="81"/>
-        <line x1="155" y1="122" x2="136" y2="111"/>
-        <line x1="110" y1="148" x2="110" y2="126"/>
-        <line x1="65" y1="122" x2="84" y2="111"/>
-        <line x1="65" y1="70" x2="84" y2="81"/>
-      </g>
-      <!-- receipt line under aperture -->
-      <g>
-        <rect x="56" y="164" width="32" height="12" rx="4" fill="#3ec9a7"/>
-        <rect x="94" y="164" width="32" height="12" rx="4" fill="#3ec9a7"/>
-        <rect x="132" y="164" width="32" height="12" rx="4" fill="#d98e3b"/>
-      </g>
-    </svg>
+  <div class="mast">
+    <div class="mast__rule"></div>
+    <div class="mast__row"><span>MCP server for video infrastructure</span><span>VAPIX · ONVIF SOAP · AAR receipts</span></div>
   </div>
-  <div class="text">
-    <h1>onvif<span class="dim">-</span>mcp</h1>
-    <div class="tag">A governed doorway between AI agents and video infrastructure</div>
-    <div class="trip"><b>Fail-closed policy.</b> <b>Signed receipts.</b> Denials on the record.</div>
-    <div class="chain">
-      <div class="block"></div><div class="link"></div>
-      <div class="block"></div><div class="link"></div>
-      <div class="block deny"></div><div class="link"></div>
-      <div class="block"></div>
+  <div class="main">
+    <div>
+      <div class="word">onvif-mcp<span class="dot"></span></div>
+      <p class="dek">A governed doorway between AI agents and video infrastructure.</p>
+      <p class="proof">Fail-closed policy <i>·</i> Signed receipts <i>·</i> Denials on the record</p>
     </div>
+<div class="specimen">{ "seq": 19, <span class="dim">…</span>
+  "action": { "tool": "ptz_move",
+              "params": { "camera": "gate", "pan": 90 } },
+  "decision": <b class="no">"deny"</b>,
+  "detail": "step exceeds policy maxStep 30°",
+  "prev": "8fb7…", "hash": "8322…", "sig": "jRld…" }
+
+<span class="dim">$ bun index.ts --verify</span>
+<b>chain OK</b> — every hash linked + signature valid</div>
   </div>
-</div>
 </body>
 </html>
