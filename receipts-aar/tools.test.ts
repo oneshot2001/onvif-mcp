@@ -125,6 +125,11 @@ function harness(mode: string, password = "fake-password", options: HarnessOptio
       credentialChannel("/axis-cgi/jpg/image.cgi");
       if (mode === "throws") throw Error("stand-in-camera-password");
       if (mode === "snapshot-failure") return false;
+      if (mode === "html") { fs.writeFileSync(path, "<html>login</html>"); return true; }
+      if (mode === "jpeg-prefix" || mode === "partial") {
+        fs.writeFileSync(path, Buffer.from([0xff, 0xd8]));
+        return mode !== "partial";
+      }
       fs.writeFileSync(path, Buffer.from([255, 216, 255, 217]));
       return true;
     },
@@ -156,6 +161,63 @@ function bundle(output: any) {
   const wire = decodeCbor(fs.readFileSync(join(dir!, "bundle.cbor"))) as any;
   return wire.artifacts.receipts.map((e: any[]) => decodeCbor(e[0] as Uint8Array)) as any[];
 }
+
+for (const [mode, bytes, evidence] of [
+  ["html", Buffer.from("<html>login</html>"), "unknown"],
+  ["jpeg-prefix", Buffer.from([0xff, 0xd8]), "unknown"],
+  ["ok", Buffer.from([0xff, 0xd8, 0xff, 0xd9]), "device_acknowledged"],
+] as const) {
+  test(`snapshot evidence: ${mode} saves and hashes bytes with ${evidence} evidence`, async () => {
+    const h = harness(mode);
+    const file = join(root, "receipts", `snap-cam-${now}.jpg`);
+    const output = await h.handlers.get_snapshot!({ camera: "cam" });
+    const receipts = h.signedReceipts();
+    expect(receipts).toHaveLength(1);
+    expect(receipts[0]).toMatchObject({
+      action: { tool: "get_snapshot", params: { camera: "cam" } },
+      decision: "allow", detail: `saved ${file}`,
+      result_sha256: createHash("sha256").update(bytes).digest("hex"),
+    });
+    expect(receipts[0].outcome_evidence, "saved snapshot evidence matches JPEG validity").toBe(evidence);
+    expect(fs.readFileSync(file)).toEqual(bytes);
+    expect(verifyChain(h.lines(), h.publicKey)).toEqual({ count: 1, bad: [] });
+    expect(bundle(output).find(r => r.kind === "outcome_observation")).toMatchObject({
+      body: { state: evidence === "unknown" ? "unknown" : "consistent" },
+      evidence: { outcome: { level: evidence } },
+    });
+    expect(outputText(output)).toContain(file);
+    const images = output.content.filter((c: any) => c.type === "image");
+    if (evidence === "unknown") {
+      expect(outputText(output)).toContain("invalid JPEG");
+      expect(images).toHaveLength(0);
+    } else {
+      expect(outputText(output)).not.toContain("invalid JPEG");
+      expect(images).toEqual([{ type: "image", data: bytes.toString("base64"), mimeType: "image/jpeg" }]);
+    }
+  });
+}
+
+test("snapshot evidence: partial capture fails without a saved receipt or image", async () => {
+  const h = harness("partial");
+  const file = join(root, "receipts", `snap-cam-${now}.jpg`);
+  const output = await h.handlers.get_snapshot!({ camera: "cam" });
+  expect(fs.readFileSync(file)).toEqual(Buffer.from([0xff, 0xd8]));
+  const receipts = h.signedReceipts();
+  expect(receipts).toHaveLength(1);
+  expect(receipts[0].detail, "failed capture retains capture FAILED receipt").toBe("capture FAILED");
+  expect(receipts[0]).toMatchObject({
+    action: { tool: "get_snapshot", params: { camera: "cam" } }, decision: "allow", result_sha256: null,
+  });
+  expect(receipts.filter(r => r.detail.startsWith("saved "))).toHaveLength(0);
+  expect(outputText(output)).toContain("capture failed");
+  expect(output.content.filter((c: any) => c.type === "image")).toHaveLength(0);
+  expect(verifyChain(h.lines(), h.publicKey)).toEqual({ count: 1, bad: [] });
+  const rs = bundle(output);
+  expect(rs.find(r => r.kind === "dispatch").body.target_status).toBe(0);
+  expect(rs.find(r => r.kind === "outcome_observation")).toMatchObject({
+    body: { state: "unknown" }, evidence: { outcome: { level: "unknown" } },
+  });
+});
 
 // These fakes prove handler argument forwarding, not transport account selection
 // (covered by the A2c-1 transport account wiring tests).

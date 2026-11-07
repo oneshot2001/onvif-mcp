@@ -483,7 +483,8 @@ server.tool("get_snapshot", "Capture a JPEG snapshot from a camera; returns the 
     return { content: [{ type: "text", text: (sent ? "capture failed" : "capture not dispatched") + aar }] };
   }
   const h = createHash("sha256").update(jpeg).digest("hex");
-  receipt("get_snapshot", { camera }, "allow", `saved ${file}`, h, "device_acknowledged");
+  const jpegValid = jpeg.length > 2 && jpeg[0] === 0xff && jpeg[1] === 0xd8;
+  receipt("get_snapshot", { camera }, "allow", `saved ${file}`, h, jpegValid ? "device_acknowledged" : "unknown");
   return { content: snapshotContent(jpeg, file, h, aar) };
 });
 
