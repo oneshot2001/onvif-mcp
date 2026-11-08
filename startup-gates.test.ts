@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, expect, test } from "bun:test";
-import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { createPublicKey, generateKeyPairSync } from "node:crypto";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import ts from "typescript";
@@ -103,19 +104,28 @@ test("startup gate wiring: nonempty passwords continue without secrets", () => {
   expectContinued(runPasswordGate({ ...passwords, empty: "stand-in-admin-password", whitespace: "stand-in-second-admin-password" }));
 });
 
-function runKeyGate(mode: number) {
+function writeKeyPair(mode = 0o600) {
+  const { privateKey, publicKey } = generateKeyPairSync("ed25519");
   const key = join(root, "keys", "receipt.key");
-  writeFileSync(key, "stand-in-private-key");
-  writeFileSync(join(root, "keys", "receipt.pub"), "stand-in-public-key");
+  writeFileSync(key, privateKey.export({ type: "pkcs8", format: "pem" }));
+  writeFileSync(join(root, "keys", "receipt.pub"), publicKey.export({ type: "spki", format: "pem" }));
   chmodSync(key, mode);
+}
+
+function runStdioKeyGate() {
   return runGate(`
     ${importHelper("keyModeProblem", "key-perms.ts")}
-    import { generateKeyPairSync, sign as edSign, createHash } from "node:crypto";
+    import { generateKeyPairSync, sign as edSign, createHash, createPublicKey } from "node:crypto";
     import { writeFileSync } from "node:fs";
     const vault = null;
     let PRIV = "";
     let signer;
   `, slice('if (vault === null) {\n  if (!existsSync(join(KEYDIR, "receipt.key"))) {', "const PUB = signer.publicKeyPem;"));
+}
+
+function runKeyGate(mode: number) {
+  writeKeyPair(mode);
+  return runStdioKeyGate();
 }
 
 test("startup gate wiring: mode 0644 receipt key exits 1 with chmod diagnostic", () => {
@@ -124,6 +134,53 @@ test("startup gate wiring: mode 0644 receipt key exits 1 with chmod diagnostic",
 
 test("startup gate wiring: mode 0600 receipt key continues", () => {
   expectContinued(runKeyGate(0o600));
+});
+
+test("stdio key wiring: public key without private key rejects without re-keying", () => {
+  writeKeyPair();
+  const key = join(root, "keys", "receipt.key");
+  const pub = join(root, "keys", "receipt.pub");
+  const before = readFileSync(pub);
+  rmSync(key);
+  expectRejected(runStdioKeyGate(), "receipt.key is missing but receipt.pub exists; restore the key or use a fresh ROOT (a new key cannot verify the existing receipts)");
+  expect(readFileSync(pub)).toEqual(before);
+  expect(existsSync(key)).toBe(false);
+});
+
+test.each(["mismatched pair", "non-PEM public key"])("stdio key wiring: %s rejects without changing either file", (kind) => {
+  writeKeyPair();
+  const key = join(root, "keys", "receipt.key");
+  const pub = join(root, "keys", "receipt.pub");
+  writeFileSync(pub, kind === "mismatched pair"
+    ? generateKeyPairSync("ed25519").publicKey.export({ type: "spki", format: "pem" })
+    : "not a PEM public key\n");
+  const keyBefore = readFileSync(key);
+  const pubBefore = readFileSync(pub);
+  expectRejected(runStdioKeyGate(), "receipt.pub does not match receipt.key; restore the matching pair");
+  expect(readFileSync(key)).toEqual(keyBefore);
+  expect(readFileSync(pub)).toEqual(pubBefore);
+});
+
+test.each(["original PEM", "CRLF PEM"])("stdio key wiring: matching pair continues with %s", (kind) => {
+  writeKeyPair();
+  const pub = join(root, "keys", "receipt.pub");
+  if (kind === "CRLF PEM") writeFileSync(pub, readFileSync(pub, "utf8").replaceAll("\n", "\r\n"));
+  expectContinued(runStdioKeyGate());
+});
+
+test("stdio key wiring: empty key directory creates matching pair with mode 0600", () => {
+  expectContinued(runStdioKeyGate());
+  const key = join(root, "keys", "receipt.key");
+  const pub = join(root, "keys", "receipt.pub");
+  expect(statSync(key).mode & 0o777).toBe(0o600);
+  expect(createPublicKey(readFileSync(key)).export({ type: "spki", format: "der" }))
+    .toEqual(createPublicKey(readFileSync(pub)).export({ type: "spki", format: "der" }));
+});
+
+test("stdio key wiring: mode 0644 reports chmod diagnostic before public key mismatch", () => {
+  writeKeyPair(0o644);
+  writeFileSync(join(root, "keys", "receipt.pub"), "not a PEM public key\n");
+  expectRejected(runStdioKeyGate(), "receipt.key has group/other permissions; run chmod 600 .keys/receipt.key");
 });
 
 function runChainGate() {

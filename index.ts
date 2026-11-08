@@ -7,7 +7,7 @@ import { createVaultClient, curlVaultCall, VaultWithheld, type Signer } from "./
 import { z } from "zod";
 import { cameraId, presetName, paramName } from "./schemas";
 import { TOOL_HINTS } from "./tool-hints";
-import { generateKeyPairSync, sign as edSign, createHash } from "node:crypto";
+import { generateKeyPairSync, sign as edSign, createHash, createPublicKey } from "node:crypto";
 import { existsSync, readFileSync, writeFileSync, mkdirSync, statSync, openSync, appendFileSync, fsyncSync, closeSync } from "node:fs";
 import { join } from "node:path";
 import { AarWireProducer, verifyBundleDir, type WireEmitInput } from "./receipts-aar/producer";
@@ -187,6 +187,10 @@ let signer: Signer;
 let PRIV = "";
 if (vault === null) {
   if (!existsSync(join(KEYDIR, "receipt.key"))) {
+    if (existsSync(join(KEYDIR, "receipt.pub"))) {
+      console.error("receipt.key is missing but receipt.pub exists; restore the key or use a fresh ROOT (a new key cannot verify the existing receipts)");
+      process.exit(1);
+    }
     const { privateKey, publicKey } = generateKeyPairSync("ed25519");
     writeFileSync(join(KEYDIR, "receipt.key"), privateKey.export({ type: "pkcs8", format: "pem" }), { mode: 0o600 });
     writeFileSync(join(KEYDIR, "receipt.pub"), publicKey.export({ type: "spki", format: "pem" }));
@@ -197,9 +201,19 @@ if (vault === null) {
     console.error(keyProblem);
     process.exit(1);
   }
+  const publicKeyPem = readFileSync(join(KEYDIR, "receipt.pub"), "utf8");
+  let matchingKey = false;
+  try {
+    matchingKey = createPublicKey(PRIV).export({ type: "spki", format: "der" })
+      .equals(createPublicKey(publicKeyPem).export({ type: "spki", format: "der" }));
+  } catch { /* An unparsable public key cannot match the signing key. */ }
+  if (!matchingKey) {
+    console.error("receipt.pub does not match receipt.key; restore the matching pair");
+    process.exit(1);
+  }
   const localKey = PRIV;
   signer = {
-    publicKeyPem: readFileSync(join(KEYDIR, "receipt.pub"), "utf8"),
+    publicKeyPem,
     sign: (_kind, body) => edSign(null, Buffer.from(createHash("sha256").update(JSON.stringify(body)).digest("hex")), localKey).toString("base64"),
   };
 } else {
