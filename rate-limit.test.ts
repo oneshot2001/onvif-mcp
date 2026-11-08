@@ -1,5 +1,54 @@
 import { describe, expect, test } from "bun:test";
+import { readFileSync } from "node:fs";
 import { makeLimiter } from "./rate-limit";
+
+const malformedBudgets: [string, unknown][] = [
+  ["unit string", "30deg"], ["numeric string", "30"], ["boolean", true],
+  ["array", [30]], ["null", null], ["NaN", NaN], ["Infinity", Infinity],
+  ["JSON overflow", JSON.parse("1e400")], ["Infinity string", "Infinity"],
+  ["negative Infinity", -Infinity], ["missing", undefined],
+];
+
+for (const [label, value] of malformedBudgets) {
+  test(`policy limit fail-closed: limiter ${label} denies first call without consuming budget`, () => {
+    const limiter = makeLimiter(() => 0);
+    expect(limiter.check("actuation", value as number)).toStartWith("rate limit:");
+    expect(limiter.check("actuation", 1)).toBeNull();
+    expect(limiter.check("actuation", 1)).toBe("rate limit: 1/min for actuation");
+  });
+}
+
+test("policy limit fail-closed: finite budget 2 allows twice then denies", () => {
+  const limiter = makeLimiter(() => 0);
+  expect(limiter.check("actuation", 2)).toBeNull();
+  expect(limiter.check("actuation", 2)).toBeNull();
+  expect(limiter.check("actuation", 2)).toBe("rate limit: 2/min for actuation");
+});
+
+// Execute only the actual rate gate, without importing server startup or credentials.
+function rateGate(rate: Record<string, unknown>) {
+  const source = readFileSync(new URL("./index.ts", import.meta.url), "utf8");
+  const startMarker = "function rateDenied(";
+  const endMarker = "// --- credentials:";
+  const start = source.indexOf(startMarker), end = source.indexOf(endMarker);
+  if (start < 0 || end <= start || source.lastIndexOf(startMarker) !== start
+    || source.lastIndexOf(endMarker) !== end) {
+    throw new Error("rateDenied slice boundaries must be unique and ordered");
+  }
+  const code = new Bun.Transpiler({ loader: "ts" }).transformSync(source.slice(start, end));
+  return new Function("policy", "AGENT", "limiter", code + "\nreturn rateDenied;")(
+    { tester: { rate } }, "tester", makeLimiter(() => 0),
+  ) as (key: "actuation" | "snapshot") => string | null;
+}
+
+test("policy limit fail-closed: actual rateDenied allows five calls with omitted budget", () => {
+  const rateDenied = rateGate({});
+  for (let i = 0; i < 5; i++) expect(rateDenied("actuation")).toBeNull();
+});
+
+test("policy limit fail-closed: actual rateDenied denies first call with budget two string", () => {
+  expect(rateGate({ actuationPerMin: "two" })("actuation")).toBe("rate limit: two/min for actuation");
+});
 
 describe("sliding rate limits", () => {
   test("allows six calls, denies the seventh, and allows again at 60 seconds", () => {

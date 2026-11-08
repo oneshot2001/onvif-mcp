@@ -6,7 +6,7 @@ export function makeLimiter(now: () => number) {
       const time = now();
       const recent = (calls.get(key) ?? []).filter((at) => at > time - 60_000);
       calls.set(key, recent);
-      if (recent.length >= perMinute) return `rate limit: ${perMinute}/min for ${key}`;
+      if (typeof perMinute !== "number" || !Number.isFinite(perMinute) || recent.length >= perMinute) return `rate limit: ${perMinute}/min for ${key}`;
       recent.push(time);
       return null;
     },

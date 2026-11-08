@@ -59,6 +59,48 @@ describe("PTZ bounds", () => {
   });
 });
 
+const malformedLimits: [string, unknown][] = [
+  ["unit string", "30deg"], ["numeric string", "30"], ["boolean", true],
+  ["array", [30]], ["null", null], ["NaN", NaN], ["Infinity", Infinity],
+  ["JSON overflow", JSON.parse("1e400")], ["Infinity string", "Infinity"],
+  ["negative Infinity", -Infinity],
+];
+
+for (const [label, value] of [["missing", undefined], ...malformedLimits] as [string, unknown][]) {
+  for (const axis of ["pan", "tilt"] as const) {
+    test(`policy limit fail-closed: maxStep ${label} denies ${axis} 1`, () => {
+      const ptz = (label === "missing" ? {} : { maxStep: value }) as Parameters<typeof ptzBound>[0];
+      expect(ptzBound(ptz, axis === "pan" ? 1 : 0, axis === "tilt" ? 1 : 0, 0))
+        .toStartWith("step exceeds policy maxStep");
+    });
+  }
+}
+
+for (const [label, value] of malformedLimits) {
+  test(`policy limit fail-closed: maxZoomStep ${label} denies zoom 1 and 0`, () => {
+    const ptz = { maxStep: 30, maxZoomStep: value } as Parameters<typeof ptzBound>[0];
+    expect(ptzBound(ptz, 0, 0, 1)).toStartWith("zoom step exceeds policy maxZoomStep");
+    expect(ptzBound(ptz, 0, 0, 0)).toStartWith("zoom step exceeds policy maxZoomStep");
+  });
+}
+
+test("policy limit fail-closed: omitted maxZoomStep means zero", () => {
+  expect(ptzBound({ maxStep: 30 }, 0, 0, 1)).toBe("zoom step exceeds policy maxZoomStep 0");
+  expect(ptzBound({ maxStep: 30 }, 0, 0, 0)).toBeNull();
+});
+
+test("policy limit fail-closed: finite PTZ limits preserve signed boundaries", () => {
+  const ptz = { maxStep: 30, maxZoomStep: 25 };
+  for (const sign of [-1, 1]) {
+    expect(ptzBound(ptz, sign * 30, 0, 0)).toBeNull();
+    expect(ptzBound(ptz, 0, sign * 30, 0)).toBeNull();
+    expect(ptzBound(ptz, sign * 31, 0, 0)).toBe("step exceeds policy maxStep 30°");
+    expect(ptzBound(ptz, 0, sign * 31, 0)).toBe("step exceeds policy maxStep 30°");
+    expect(ptzBound(ptz, 0, 0, sign * 25)).toBeNull();
+    expect(ptzBound(ptz, 0, 0, sign * 26)).toBe("zoom step exceeds policy maxZoomStep 25");
+  }
+});
+
 describe("policy checks", () => {
   test("unknown agent fails closed", () => {
     expect(allowed(policy, "unknown", "get_snapshot", "cam")).toBe("agent 'unknown' not in policy (fail closed)");

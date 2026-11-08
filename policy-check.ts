@@ -7,9 +7,9 @@ export function baselineDenied(config: { agent: string; rebaseline?: boolean }, 
 
 export function ptzBound(ptz: { maxStep: number; maxZoomStep?: number } | undefined, pan: number, tilt: number, zoom: number): string | null {
   if (!ptz) return "agent has no ptz grant";
-  if (Math.abs(pan) > ptz.maxStep || Math.abs(tilt) > ptz.maxStep) return `step exceeds policy maxStep ${ptz.maxStep}°`;
-  const maxZoomStep = ptz.maxZoomStep ?? 0;
-  if (Math.abs(zoom) > maxZoomStep) return `zoom step exceeds policy maxZoomStep ${maxZoomStep}`;
+  if (typeof ptz.maxStep !== "number" || !Number.isFinite(ptz.maxStep) || Math.abs(pan) > ptz.maxStep || Math.abs(tilt) > ptz.maxStep) return `step exceeds policy maxStep ${ptz.maxStep}°`;
+  const maxZoomStep = ptz.maxZoomStep === undefined ? 0 : ptz.maxZoomStep;
+  if (typeof maxZoomStep !== "number" || !Number.isFinite(maxZoomStep) || Math.abs(zoom) > maxZoomStep) return `zoom step exceeds policy maxZoomStep ${maxZoomStep}`;
   return null;
 }
 
