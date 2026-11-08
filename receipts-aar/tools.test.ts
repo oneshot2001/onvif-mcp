@@ -62,6 +62,7 @@ afterEach(() => {
 });
 function harness(mode: string, password = "fake-password", options: HarnessOptions = {}) {
   const policy = options.policy ?? freshPolicy();
+  let captureCount = 0;
   const calls: string[] = [];
   const toolCalls: Array<{ call: string; tool: string }> = [];
   const dispatchScopes: Array<{ call: string; digest: string | undefined }> = [];
@@ -130,6 +131,15 @@ function harness(mode: string, password = "fake-password", options: HarnessOptio
         fs.writeFileSync(path, Buffer.from([0xff, 0xd8]));
         return mode !== "partial";
       }
+      if (mode === "distinct-jpeg") {
+        const jpeg = fs.readFileSync(join(repo, "fixtures", "scene", "synthetic-8x8.jpg"));
+        const comment = Buffer.from(`capture ${++captureCount}`);
+        const marker = Buffer.from([0xff, 0xfe, 0, 0]);
+        marker.writeUInt16BE(comment.length + 2, 2);
+        // A JPEG comment after SOI varies the bytes without changing image validity.
+        fs.writeFileSync(path, Buffer.concat([jpeg.subarray(0, 2), marker, comment, jpeg.subarray(2)]));
+        return true;
+      }
       fs.writeFileSync(path, Buffer.from([255, 216, 255, 217]));
       return true;
     },
@@ -162,6 +172,47 @@ function bundle(output: any) {
   return wire.artifacts.receipts.map((e: any[]) => decodeCbor(e[0] as Uint8Array)) as any[];
 }
 
+for (const [label, count] of [["concurrent captures", 2], ["single-call control", 1]] as const) {
+  test(`snapshot file per invocation: ${label}`, async () => {
+    const h = harness("distinct-jpeg");
+    const capturedAt = now;
+    const outputs = await Promise.all(Array.from({ length: count }, () => h.handlers.get_snapshot!({ camera: "cam" })));
+    const receipts = h.signedReceipts();
+    expect(receipts).toHaveLength(count);
+    expect(receipts.every(r => r.detail.startsWith("saved "))).toBe(true);
+    const files = receipts.map(r => r.detail.slice("saved ".length));
+    expect(new Set(files).size, "each invocation saves a different snapshot file").toBe(count);
+    expect(new Set(receipts.map(r => r.result_sha256)).size, "capture mode produces distinct JPEG bytes").toBe(count);
+    expect(fs.readdirSync(join(root, "receipts")).filter(name => name.endsWith(".jpg")).sort()).toEqual(files.map(file => basename(file)).sort());
+    for (const output of outputs) {
+      const images = output.content.filter((c: any) => c.type === "image");
+      expect(images).toHaveLength(1);
+      expect(images[0].mimeType).toBe("image/jpeg");
+      const bytes = Buffer.from(images[0].data, "base64");
+      const hash = createHash("sha256").update(bytes).digest("hex");
+      const receipt = receipts.find(r => r.result_sha256 === hash);
+      expect(receipt).toBeDefined();
+      expect(receipt.invocation_id).toMatch(/^[0-9a-f]{32}$/);
+      const file = receipt.detail.slice("saved ".length);
+      expect(basename(file)).toMatch(new RegExp(`^snap-cam-${capturedAt}-[0-9a-f]{32}\\.jpg$`));
+      expect(file).toBe(join(root, "receipts", `snap-cam-${capturedAt}-${receipt.invocation_id}.jpg`));
+      expect(createHash("sha256").update(fs.readFileSync(file)).digest("hex"), "saved file matches its signed receipt hash").toBe(receipt.result_sha256);
+      expect(fs.readFileSync(file)).toEqual(bytes);
+      expect(receipt).toMatchObject({
+        action: { tool: "get_snapshot", params: { camera: "cam" } },
+        decision: "allow", outcome_evidence: "device_acknowledged",
+      });
+      expect(outputText(output).split("\n")[0]).toBe(`${file} sha256:${hash.slice(0, 16)}…`);
+      const attempt = bundle(output).find(r => r.kind === "action_attempt");
+      expect(toHex(attempt.body.command.command_digest)).toBe(commandDigestHex({
+        actionName: "camera.stream.view", camera: "cam", cameraPtz: true, protocol: "vapix",
+        parameters: { file: basename(file) },
+      }));
+    }
+    expect(verifyChain(h.lines(), h.publicKey)).toEqual({ count, bad: [] });
+  });
+}
+
 for (const [mode, bytes, evidence] of [
   ["html", Buffer.from("<html>login</html>"), "unknown"],
   ["jpeg-prefix", Buffer.from([0xff, 0xd8]), "unknown"],
@@ -169,10 +220,12 @@ for (const [mode, bytes, evidence] of [
 ] as const) {
   test(`snapshot evidence: ${mode} saves and hashes bytes with ${evidence} evidence`, async () => {
     const h = harness(mode);
-    const file = join(root, "receipts", `snap-cam-${now}.jpg`);
+    const capturedAt = now;
     const output = await h.handlers.get_snapshot!({ camera: "cam" });
     const receipts = h.signedReceipts();
     expect(receipts).toHaveLength(1);
+    expect(receipts[0].invocation_id).toMatch(/^[0-9a-f]{32}$/);
+    const file = join(root, "receipts", `snap-cam-${capturedAt}-${receipts[0].invocation_id}.jpg`);
     expect(receipts[0]).toMatchObject({
       action: { tool: "get_snapshot", params: { camera: "cam" } },
       decision: "allow", detail: `saved ${file}`,
@@ -199,11 +252,13 @@ for (const [mode, bytes, evidence] of [
 
 test("snapshot evidence: partial capture fails without a saved receipt or image", async () => {
   const h = harness("partial");
-  const file = join(root, "receipts", `snap-cam-${now}.jpg`);
+  const capturedAt = now;
   const output = await h.handlers.get_snapshot!({ camera: "cam" });
-  expect(fs.readFileSync(file)).toEqual(Buffer.from([0xff, 0xd8]));
   const receipts = h.signedReceipts();
   expect(receipts).toHaveLength(1);
+  expect(receipts[0].invocation_id).toMatch(/^[0-9a-f]{32}$/);
+  const file = join(root, "receipts", `snap-cam-${capturedAt}-${receipts[0].invocation_id}.jpg`);
+  expect(fs.readFileSync(file)).toEqual(Buffer.from([0xff, 0xd8]));
   expect(receipts[0].detail, "failed capture retains capture FAILED receipt").toBe("capture FAILED");
   expect(receipts[0]).toMatchObject({
     action: { tool: "get_snapshot", params: { camera: "cam" } }, decision: "allow", result_sha256: null,
@@ -264,7 +319,7 @@ for (const [tool, protocol, ptz, preset] of [
       { call: "readback", digest: undefined }, { call: "readback", digest: undefined },
     ]);
     const file = fs.readdirSync(join(root, "receipts")).find(name => name.endsWith(".jpg"));
-    if (tool === "get_snapshot") expect(file).toMatch(/^snap-cam-\d+\.jpg$/);
+    if (tool === "get_snapshot") expect(file).toMatch(/^snap-cam-\d+-[0-9a-f]{32}\.jpg$/);
     expect(digest).toBe(commandDigestHex({
       actionName: tool === "get_snapshot" ? "camera.stream.view" : "camera.ptz.preset",
       camera: "cam", cameraPtz: ptz, protocol,

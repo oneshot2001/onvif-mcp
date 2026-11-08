@@ -466,7 +466,7 @@ server.tool("get_snapshot", "Capture a JPEG snapshot from a camera; returns the 
     const aar = await emitAar("get_snapshot", camera, "camera.stream.view", {}, startedAt, { refusal: deny });
     return { content: [{ type: "text", text: `DENIED: ${deny}${aar}` }] };
   }
-  const file = join(ROOT, "receipts", `snap-${camera}-${Date.now()}.jpg`);
+  const file = join(ROOT, "receipts", `snap-${camera}-${Date.now()}-${currentInvocationId()}.jpg`);
   const parameters = { file: file.split("/").pop()! };
   let jpeg: Buffer | undefined;
   let sent = false;
