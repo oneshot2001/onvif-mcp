@@ -140,7 +140,12 @@ const policy: Policy =
   JSON.parse(policyBytes.toString("utf8")).agents;
 const limiter = makeLimiter(Date.now);
 function rateDenied(key: "actuation" | "snapshot"): string | null {
-  const perMinute = policy[AGENT]?.rate?.[key === "actuation" ? "actuationPerMin" : "snapshotPerMin"];
+  const rate = policy[AGENT]?.rate;
+  if (Object.hasOwn(policy[AGENT] ?? {}, "rate") && (rate === null || typeof rate !== "object"
+    || (Object.getPrototypeOf(rate) !== Object.prototype && Object.getPrototypeOf(rate) !== null))) {
+    return "rate limit: policy rate must be a plain object";
+  }
+  const perMinute = rate?.[key === "actuation" ? "actuationPerMin" : "snapshotPerMin"];
   return perMinute === undefined ? null : limiter.check(key, perMinute);
 }
 

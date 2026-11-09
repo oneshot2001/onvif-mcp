@@ -26,7 +26,7 @@ test("policy limit fail-closed: finite budget 2 allows twice then denies", () =>
 });
 
 // Execute only the actual rate gate, without importing server startup or credentials.
-function rateGate(rate: Record<string, unknown>) {
+function rateGate(rate?: unknown) {
   const source = readFileSync(new URL("./index.ts", import.meta.url), "utf8");
   const startMarker = "function rateDenied(";
   const endMarker = "// --- credentials:";
@@ -37,7 +37,7 @@ function rateGate(rate: Record<string, unknown>) {
   }
   const code = new Bun.Transpiler({ loader: "ts" }).transformSync(source.slice(start, end));
   return new Function("policy", "AGENT", "limiter", code + "\nreturn rateDenied;")(
-    { tester: { rate } }, "tester", makeLimiter(() => 0),
+    { tester: rate === undefined ? {} : { rate } }, "tester", makeLimiter(() => 0),
   ) as (key: "actuation" | "snapshot") => string | null;
 }
 
@@ -48,6 +48,39 @@ test("policy limit fail-closed: actual rateDenied allows five calls with omitted
 
 test("policy limit fail-closed: actual rateDenied denies first call with budget two string", () => {
   expect(rateGate({ actuationPerMin: "two" })("actuation")).toBe("rate limit: two/min for actuation");
+});
+
+for (const [label, value] of [
+  ["number", 6], ["string", "six"], ["array", [6]], ["null", null],
+  ["boolean", true], ["non-plain object", new Date(0)],
+] as [string, unknown][]) {
+  test(`policy rate container: ${label} denies first call`, () => {
+    const rateDenied = rateGate(value);
+    expect(rateDenied("actuation")).toStartWith("rate limit:");
+    expect(rateDenied("snapshot")).toStartWith("rate limit:");
+  });
+}
+
+test("policy rate container: empty object allows five calls", () => {
+  const rateDenied = rateGate({});
+  for (let i = 0; i < 5; i++) expect(rateDenied("actuation")).toBeNull();
+});
+
+test("policy rate container: omitted rate allows five calls", () => {
+  const rateDenied = rateGate();
+  for (let i = 0; i < 5; i++) expect(rateDenied("actuation")).toBeNull();
+});
+
+test("policy rate container: omitted budget allows five calls", () => {
+  const rateDenied = rateGate({ snapshotPerMin: 30 });
+  for (let i = 0; i < 5; i++) expect(rateDenied("actuation")).toBeNull();
+});
+
+test("policy rate container: budget 2 allows twice then denies", () => {
+  const rateDenied = rateGate({ actuationPerMin: 2 });
+  expect(rateDenied("actuation")).toBeNull();
+  expect(rateDenied("actuation")).toBeNull();
+  expect(rateDenied("actuation")).toBe("rate limit: 2/min for actuation");
 });
 
 describe("sliding rate limits", () => {
