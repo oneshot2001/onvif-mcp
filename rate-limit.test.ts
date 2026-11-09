@@ -83,6 +83,45 @@ test("policy rate container: budget 2 allows twice then denies", () => {
   expect(rateDenied("actuation")).toBe("rate limit: 2/min for actuation");
 });
 
+for (const [label, rate] of [
+  ["actuationPerMinute", { actuationPerMinute: 2 }],
+  ["ActuationPerMin", { ActuationPerMin: 2 }],
+  ["extra beside known budget", { actuationPerMin: 2, extra: 1 }],
+] as const) {
+  for (const key of ["actuation", "snapshot"] as const) {
+    test(`policy rate unknown key: ${label} denies first ${key} call`, () => {
+      expect(rateGate(rate)(key)).toStartWith("rate limit:");
+    });
+  }
+}
+
+for (const [label, rate] of [
+  ["omitted actuation budget", { snapshotPerMin: 30 }],
+  ["empty object", {}],
+  ["omitted rate", undefined],
+] as const) {
+  test(`policy rate unknown key: ${label} allows five actuation calls`, () => {
+    const rateDenied = rateGate(rate);
+    for (let i = 0; i < 5; i++) expect(rateDenied("actuation")).toBeNull();
+  });
+}
+
+test("policy rate unknown key: known budgets allow twice then deny actuation", () => {
+  const rateDenied = rateGate({ actuationPerMin: 2, snapshotPerMin: 30 });
+  expect(rateDenied("actuation")).toBeNull();
+  expect(rateDenied("actuation")).toBeNull();
+  expect(rateDenied("actuation")).toBe("rate limit: 2/min for actuation");
+});
+
+for (const [key, rate] of [
+  ["actuation", { actuationPerMin: "two" }],
+  ["snapshot", { snapshotPerMin: "two" }],
+] as const) {
+  test(`policy rate unknown key: known ${key} value still reaches limiter`, () => {
+    expect(rateGate(rate)(key)).toBe(`rate limit: two/min for ${key}`);
+  });
+}
+
 describe("sliding rate limits", () => {
   test("allows six calls, denies the seventh, and allows again at 60 seconds", () => {
     let time = 0;

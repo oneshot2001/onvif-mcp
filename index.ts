@@ -145,6 +145,9 @@ function rateDenied(key: "actuation" | "snapshot"): string | null {
     || (Object.getPrototypeOf(rate) !== Object.prototype && Object.getPrototypeOf(rate) !== null))) {
     return "rate limit: policy rate must be a plain object";
   }
+  if (rate && Object.keys(rate).some(name => name !== "actuationPerMin" && name !== "snapshotPerMin")) {
+    return "rate limit: policy rate has an unknown key";
+  }
   const perMinute = rate?.[key === "actuation" ? "actuationPerMin" : "snapshotPerMin"];
   return perMinute === undefined ? null : limiter.check(key, perMinute);
 }
