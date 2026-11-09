@@ -515,8 +515,9 @@ server.tool("ptz_preset", "Send a PTZ camera to a named preset (VAPIX cameras on
   const startedAt = Math.floor(Date.now() / 1000);
   const deny = allowed("ptz_preset", camera);
   const cam = cameras[camera];
+  const ptz = policy[AGENT]?.ptz;
   const bound = !deny && (!cam?.ptz ? `camera '${camera}' is not PTZ` :
-    !policy[AGENT]?.ptz ? "agent has no ptz grant" :
+    !ptz || typeof ptz !== "object" || typeof ptz.maxStep !== "number" || !Number.isFinite(ptz.maxStep) ? "agent has no ptz grant" :
     cam.protocol !== "vapix" ? "preset recall implemented for vapix protocol only" : null);
   const reason = deny ?? bound ?? rateDenied("actuation");
   if (reason) {

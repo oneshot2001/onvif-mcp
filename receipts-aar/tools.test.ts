@@ -503,6 +503,42 @@ test("tool gate wiring: ptz_preset requires an agent ptz grant", async () => {
   expect(bundle(output).find(r => r.kind === "action_attempt").body.disposition).toBe("not_dispatched");
 });
 
+for (const [name, ptz] of [
+  ["empty object", {}],
+  ["string maxStep", { maxStep: "30deg" }],
+  ["numeric grant", 1],
+  ["null grant", null],
+  ["missing grant", undefined],
+  ["array grant", []],
+  ["NaN maxStep", { maxStep: NaN }],
+  ["infinite maxStep", { maxStep: Infinity }],
+  ["negative infinite maxStep", { maxStep: -Infinity }],
+] as const) {
+  test(`preset ptz grant: denies ${name}`, async () => {
+    const policy = freshPolicy();
+    policy[agent]!.ptz = ptz as unknown as Policy[string]["ptz"];
+    const h = harness("ok", undefined, { policy });
+    const params = { camera: "cam", preset: "Home" };
+    const output = await h.handlers.ptz_preset!(params);
+    expect(h.chain, "malformed ptz grant produces exactly one deny receipt").toEqual([
+      ["ptz_preset", params, "deny", "agent has no ptz grant"],
+    ]);
+    expect(outputText(output)).toContain("DENIED: agent has no ptz grant");
+    expect(h.calls, "malformed ptz grant makes no camera calls").toEqual([]);
+  });
+}
+
+test("preset ptz grant: finite numeric maxStep still recalls", async () => {
+  const policy = freshPolicy();
+  policy[agent]!.ptz = { maxStep: 30 };
+  const h = harness("ok", undefined, { policy });
+  const params = { camera: "cam", preset: "Home" };
+  const output = await h.handlers.ptz_preset!(params);
+  expect(outputText(output)).not.toContain("DENIED:");
+  expect(h.chain).toEqual([["ptz_preset", params, "allow", "preset recalled (vapix)"]]);
+  expect(h.calls).toEqual(["metadata", "recall", "readback", "readback"]);
+});
+
 test("tool gate wiring: get_snapshot enforces snapshot rate before capture", async () => {
   const rates: string[] = [];
   const h = harness("ok", undefined, { rateDenied: key => { rates.push(key); return "snapshot rate exhausted"; } });
