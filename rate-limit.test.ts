@@ -27,6 +27,10 @@ test("policy limit fail-closed: finite budget 2 allows twice then denies", () =>
 
 // Execute only the actual rate gate, without importing server startup or credentials.
 function rateGate(rate?: unknown) {
+  return agentRateGate(rate === undefined ? {} : { rate });
+}
+
+function agentRateGate(agent: Record<string, unknown>) {
   const source = readFileSync(new URL("./index.ts", import.meta.url), "utf8");
   const startMarker = "function rateDenied(";
   const endMarker = "// --- credentials:";
@@ -37,9 +41,39 @@ function rateGate(rate?: unknown) {
   }
   const code = new Bun.Transpiler({ loader: "ts" }).transformSync(source.slice(start, end));
   return new Function("policy", "AGENT", "limiter", code + "\nreturn rateDenied;")(
-    { tester: rate === undefined ? {} : { rate } }, "tester", makeLimiter(() => 0),
+    { tester: agent }, "tester", makeLimiter(() => 0),
   ) as (key: "actuation" | "snapshot") => string | null;
 }
+
+for (const name of ["Rate", "rates", "RATES"]) {
+  for (const key of ["actuation", "snapshot"] as const) {
+    test(`policy rate container typo: ${name} denies first ${key} call`, () => {
+      expect(agentRateGate({ [name]: { actuationPerMin: 2 } })(key)).toStartWith("rate limit:");
+    });
+  }
+}
+
+test("policy rate container typo: typo beside exact rate denies both budgets", () => {
+  const rateDenied = agentRateGate({ rate: { actuationPerMin: 2, snapshotPerMin: 2 }, Rate: {} });
+  expect(rateDenied("actuation")).toStartWith("rate limit:");
+  expect(rateDenied("snapshot")).toStartWith("rate limit:");
+});
+
+test("policy rate container typo: omitted rate allows five calls per budget", () => {
+  const rateDenied = agentRateGate({ tools: ["get_snapshot"], cameras: ["stand-in"] });
+  for (const key of ["actuation", "snapshot"] as const) {
+    for (let i = 0; i < 5; i++) expect(rateDenied(key)).toBeNull();
+  }
+});
+
+test("policy rate container typo: exact rate allows twice then denies each budget", () => {
+  const rateDenied = agentRateGate({ rate: { actuationPerMin: 2, snapshotPerMin: 2 } });
+  for (const key of ["actuation", "snapshot"] as const) {
+    expect(rateDenied(key)).toBeNull();
+    expect(rateDenied(key)).toBeNull();
+    expect(rateDenied(key)).toBe(`rate limit: 2/min for ${key}`);
+  }
+});
 
 test("policy limit fail-closed: actual rateDenied allows five calls with omitted budget", () => {
   const rateDenied = rateGate({});

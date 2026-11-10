@@ -140,6 +140,9 @@ const policy: Policy =
   JSON.parse(policyBytes.toString("utf8")).agents;
 const limiter = makeLimiter(Date.now);
 function rateDenied(key: "actuation" | "snapshot"): string | null {
+  if (Object.keys(policy[AGENT] ?? {}).some(name => /^rates?$/i.test(name) && name !== "rate")) {
+    return "rate limit: policy has a misspelled rate container";
+  }
   const rate = policy[AGENT]?.rate;
   if (Object.hasOwn(policy[AGENT] ?? {}, "rate") && (rate === null || typeof rate !== "object"
     || (Object.getPrototypeOf(rate) !== Object.prototype && Object.getPrototypeOf(rate) !== null))) {
