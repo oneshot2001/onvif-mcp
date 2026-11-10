@@ -212,6 +212,10 @@ if (vault === null) {
     console.error(keyProblem);
     process.exit(1);
   }
+  if (!existsSync(join(KEYDIR, "receipt.pub"))) {
+    console.error("receipt.pub is missing but receipt.key exists; restore the matching pair");
+    process.exit(1);
+  }
   const publicKeyPem = readFileSync(join(KEYDIR, "receipt.pub"), "utf8");
   let matchingKey = false;
   try {

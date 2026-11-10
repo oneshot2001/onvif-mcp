@@ -147,6 +147,27 @@ test("stdio key wiring: public key without private key rejects without re-keying
   expect(existsSync(key)).toBe(false);
 });
 
+test("stdio key wiring: private key without public rejects without re-keying", () => {
+  writeKeyPair();
+  const key = join(root, "keys", "receipt.key");
+  const pub = join(root, "keys", "receipt.pub");
+  const before = readFileSync(key);
+  rmSync(pub);
+  const result = runStdioKeyGate();
+  expect(result.exitCode).toBe(1);
+  expect(result.stderr, "missing public key reports exactly the restore-pair diagnostic")
+    .toBe("receipt.pub is missing but receipt.key exists; restore the matching pair\n");
+  expect(result.stdout).toBe("");
+  expect(readFileSync(key)).toEqual(before);
+  expect(existsSync(pub)).toBe(false);
+});
+
+test("stdio key wiring: private key without public reports chmod diagnostic first for mode 0644", () => {
+  writeKeyPair(0o644);
+  rmSync(join(root, "keys", "receipt.pub"));
+  expectRejected(runStdioKeyGate(), "receipt.key has group/other permissions; run chmod 600 .keys/receipt.key");
+});
+
 test.each(["mismatched pair", "non-PEM public key"])("stdio key wiring: %s rejects without changing either file", (kind) => {
   writeKeyPair();
   const key = join(root, "keys", "receipt.key");
