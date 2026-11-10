@@ -539,6 +539,55 @@ test("preset ptz grant: finite numeric maxStep still recalls", async () => {
   expect(h.calls).toEqual(["metadata", "recall", "readback", "readback"]);
 });
 
+for (const [name, ptz] of [
+  ["negative maxStep", { maxStep: -1 }],
+  ["zero maxStep", { maxStep: 0 }],
+  ["string maxZoomStep", { maxStep: 30, maxZoomStep: "25x" }],
+  ["null maxZoomStep", { maxStep: 30, maxZoomStep: null }],
+  ["NaN maxZoomStep", { maxStep: 30, maxZoomStep: NaN }],
+  ["infinite maxZoomStep", { maxStep: 30, maxZoomStep: Infinity }],
+  ["negative infinite maxZoomStep", { maxStep: 30, maxZoomStep: -Infinity }],
+] as const) {
+  test(`preset ptz grant bounds: denies ${name}`, async () => {
+    const policy = freshPolicy();
+    policy[agent]!.ptz = ptz as unknown as Policy[string]["ptz"];
+    const h = harness("ok", undefined, { policy });
+    const params = { camera: "cam", preset: "Home" };
+    const output = await h.handlers.ptz_preset!(params);
+    expect(h.chain, "invalid ptz bounds produce exactly one deny receipt").toEqual([
+      ["ptz_preset", params, "deny", "agent has no ptz grant"],
+    ]);
+    expect(outputText(output)).toContain("DENIED: agent has no ptz grant");
+    expect(h.calls, "invalid ptz bounds make no camera calls").toEqual([]);
+  });
+}
+
+for (const [name, ptz] of [
+  ["omitted maxZoomStep", { maxStep: 30 }],
+  ["finite maxZoomStep", { maxStep: 30, maxZoomStep: 25 }],
+] as const) {
+  test(`preset ptz grant bounds: recalls with ${name}`, async () => {
+    const policy = freshPolicy();
+    policy[agent]!.ptz = ptz;
+    const h = harness("ok", undefined, { policy });
+    const params = { camera: "cam", preset: "Home" };
+    const output = await h.handlers.ptz_preset!(params);
+    expect(outputText(output)).not.toContain("DENIED:");
+    expect(h.chain).toEqual([["ptz_preset", params, "allow", "preset recalled (vapix)"]]);
+    expect(h.calls).toEqual(["metadata", "recall", "readback", "readback"]);
+  });
+}
+
+test("preset ptz grant bounds: zero maxStep still permits a zero-step move", async () => {
+  const policy = freshPolicy();
+  policy[agent]!.ptz = { maxStep: 0 };
+  const h = gateHarness({ policy });
+  const params = { camera: "cam", pan: 0, tilt: 0, zoom: 0 };
+  expect(outputText(await h.handlers.ptz_move!(params))).toBe("moved cam pan=0° tilt=0° zoom=0 (vapix)");
+  expect(h.calls).toEqual([["ptzMove", "ptz_move", "cam", 0, 0, 0]]);
+  expect(h.chain).toEqual([["ptz_move", params, "allow", "moved via vapix"]]);
+});
+
 test("tool gate wiring: get_snapshot enforces snapshot rate before capture", async () => {
   const rates: string[] = [];
   const h = harness("ok", undefined, { rateDenied: key => { rates.push(key); return "snapshot rate exhausted"; } });
