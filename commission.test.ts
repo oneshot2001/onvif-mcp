@@ -224,6 +224,58 @@ describe("commission param gates", () => {
   });
 });
 
+describe("commission rollback", () => {
+  test("commission rollback wiring: unreported parameter prevents writes and leads failed results", async () => {
+    const h = harness();
+    const param = "Image.I0.Appearance.Mirror";
+    writeFileSync(join(h.root, "specs", "missing.yaml"), `spec: camspec/0.1\nname: missing\nparams:\n  ${param}: 'yes'\n`);
+    const out = JSON.parse((await h.handlers.commission_apply!({ camera: "cam", spec: "missing", approve: true })).content[0]!.text);
+    expect(h.writes).toEqual([]);
+    expect(out.passed).toBeFalse();
+    expect(out.failed[0]).toEqual({ param, desired: "yes", observed: null });
+    expect(h.receipts.filter((receipt) => receipt.detail.startsWith("wrote "))).toEqual([]);
+    expect(h.receipts).toContainEqual(expect.objectContaining({ detail: "verification FAILED" }));
+  });
+
+  for (const refused of [true, false]) {
+    test(`commission rollback wiring: ${refused ? "refused" : "successful"} AOA rollback reports its actual outcome`, async () => {
+      const h = harness();
+      const snapshot = structuredClone(h.aoa());
+      const message = "stand-in device refusal";
+      const sets: unknown[] = [];
+      const post = h.deps.vapixPost;
+      h.deps.vapixPost = async (tool, camera, path, body) => {
+        if ((body as { method: string }).method === "setConfiguration") {
+          sets.push(structuredClone(body));
+          // Refuse only the rollback, without changing the fake device state.
+          if (refused && sets.length === 2) return { ok: true, body: JSON.stringify({ error: { message } }) };
+        }
+        return post(tool, camera, path, body);
+      };
+      writeFileSync(join(h.root, "specs", "aoa.yaml"), "spec: camspec/0.1\nname: aoa\nparams:\n  Image.I0.Appearance.Rotation: '180'\nscenarios:\n  - name: lab-motion\n    type: motion\n    objects: [human]\n    area: [[-0.9,-0.9],[0.9,-0.9],[0.9,0.9],[-0.9,0.9]]\nobserve: { seconds: 0 }\n");
+      process.env.COMMISSION_FAIL_PARAM = "Image.I0.Appearance.Rotation";
+      const out = JSON.parse((await h.handlers.commission_apply!({ camera: "cam", spec: "aoa", approve: true })).content[0]!.text);
+      expect(out.passed).toBeFalse();
+      expect(out.rolled_back).toBeTrue();
+      expect(out.rollback_verified).toBe(!refused);
+      expect(sets).toHaveLength(2);
+      expect(sets[1]).toMatchObject({ method: "setConfiguration", params: snapshot });
+      expect(h.state["Image.I0.Appearance.Rotation"]).toBe("0");
+      const failures = h.receipts.filter((receipt) => receipt.detail.startsWith("AOA rollback FAILED"));
+      const restored = h.receipts.filter((receipt) => receipt.detail === "restored prior AOA configuration");
+      if (refused) {
+        expect(failures).toEqual([expect.objectContaining({ detail: `AOA rollback FAILED: AOA setConfiguration failed: ${message}`, evidence: "unknown" })]);
+        expect(restored).toEqual([]);
+        expect(h.aoa().scenarios.map((scenario) => scenario.name)).toContain("lab-motion");
+      } else {
+        expect(failures).toEqual([]);
+        expect(restored).toEqual([expect.objectContaining({ evidence: "device_acknowledged" })]);
+        expect(h.aoa()).toEqual(snapshot);
+      }
+    });
+  }
+});
+
 describe("gateway event observation", () => {
   // Execute the production helper without index.ts startup or real sockets/timers.
   const source = readFileSync(join(import.meta.dir, "index.ts"), "utf8");
