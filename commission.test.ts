@@ -159,6 +159,71 @@ describe("commission gates", () => {
   });
 });
 
+describe("commission param gates", () => {
+  const calls = [
+    { tool: "commission_plan", args: {} },
+    { tool: "commission_apply", args: { approve: true } },
+    { tool: "commission_apply", args: { approve: false } },
+    { tool: "commission_verify", args: {} },
+  ];
+  const cases = [
+    { gate: "outside granted groups", param: "Audio.A0.Enabled", before: "yes", desired: "no", reason: "param 'Audio.A0.Enabled' is outside allowed config groups" },
+    { gate: "hard-denied", param: "System.BoxRebootAction", before: "none", desired: "reboot", reason: "param 'System.BoxRebootAction' is hard-denied" },
+    { gate: "no config grant", param: "Image.I0.Appearance.Rotation", before: "0", desired: "180", reason: "agent 'claude-main' has no config grant" },
+  ];
+
+  for (const { tool, args } of calls) for (const { gate, param, before, desired, reason } of cases) {
+    const label = tool === "commission_apply" ? `${tool} approve=${args.approve}` : tool;
+    test(`commission param gate wiring: ${label} denies ${gate}`, async () => {
+      const h = harness();
+      // A missing gate must reach an existing, differing camera value, so an
+      // approved apply would write instead of stopping on an unreported param.
+      h.state[param] = before;
+      if (gate === "hard-denied") h.deps.policy["claude-main"]!.config!.groups.push("System");
+      if (gate === "no config grant") delete h.deps.policy["claude-main"]!.config;
+      writeFileSync(join(h.root, "specs/gate.yaml"), `spec: camspec/0.1\nname: gate\nparams:\n  ${param}: '${desired}'\n`);
+      const names = gate === "no config grant"
+        ? ["vapix", "vapixPost", "configParams", "observeEvents", "snapshot", "clockCheck", "parseParams", "inGroup", "sha256", "lastReceipt", "checkActuation", "checkSnapshot"] as const
+        : ["vapix", "vapixPost", "configParams", "observeEvents", "snapshot", "clockCheck", "checkSnapshot"] as const;
+      const spies = names.map(name => spyOn(h.deps, name));
+      try {
+        const result = await h.handlers[tool]!({ camera: "cam", spec: "gate", ...args });
+        expect(result.content[0]!.text).toBe(`DENIED: ${reason}`);
+        expect(h.receipts).toEqual([expect.objectContaining({ tool, decision: "deny", detail: reason })]);
+        for (const spy of spies) expect(spy).not.toHaveBeenCalled();
+        expect(h.writes).toEqual([]);
+        expect(h.posts).toEqual([]);
+        expect(h.state[param]).toBe(before);
+        expect(readdirSync(h.root)).toEqual(["specs"]);
+      } finally { for (const spy of spies) spy.mockRestore(); }
+    });
+  }
+
+  test("commission param gate wiring: in-group non-hard-denied control plans and applies", async () => {
+    const h = harness();
+    writeFileSync(join(h.root, "specs/gate.yaml"), "spec: camspec/0.1\nname: gate\nparams:\n  Image.I0.Appearance.Rotation: '180'\n");
+    const plan = await h.handlers.commission_plan!({ camera: "cam", spec: "gate" });
+    expect(JSON.parse(plan.content[0]!.text)).toEqual({
+      diff: [{ param: "Image.I0.Appearance.Rotation", current: "0", desired: "180" }],
+      presets: [], scenarios: [], warnings: [],
+    });
+    expect(h.receipts).toEqual([expect.objectContaining({ tool: "commission_plan", decision: "allow", detail: "planned 1 params, 0 presets, and 0 scenarios" })]);
+    expect(h.writes).toEqual([]);
+    expect(h.state["Image.I0.Appearance.Rotation"]).toBe("0");
+
+    const applied = await h.handlers.commission_apply!({ camera: "cam", spec: "gate", approve: true });
+    expect(JSON.parse(applied.content[0]!.text)).toMatchObject({ passed: true, failed: [], rolled_back: false });
+    expect(h.writes).toEqual(["/axis-cgi/param.cgi?action=update&Image.I0.Appearance.Rotation=180"]);
+    expect(h.state["Image.I0.Appearance.Rotation"]).toBe("180");
+    expect(h.receipts.slice(1)).toEqual([
+      expect.objectContaining({ tool: "commission_apply", decision: "allow", detail: "wrote Image.I0.Appearance.Rotation" }),
+      expect.objectContaining({ tool: "commission_apply", decision: "allow", detail: "verification passed" }),
+      expect.objectContaining({ tool: "commission_apply", decision: "allow", detail: expect.stringMatching(/^handoff cam-.*\.json$/) }),
+    ]);
+    expect(h.posts).toEqual([]);
+  });
+});
+
 describe("gateway event observation", () => {
   // Execute the production helper without index.ts startup or real sockets/timers.
   const source = readFileSync(join(import.meta.dir, "index.ts"), "utf8");
