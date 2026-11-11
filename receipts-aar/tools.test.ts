@@ -673,6 +673,53 @@ for (const caller of [agent, "other-agent"]) {
   });
 }
 
+test("handler receipt wiring: ptz_preset refuses an exhausted actuation rate", async () => {
+  const rates: string[] = [];
+  const reason = "actuation rate exhausted";
+  const h = harness("ok", undefined, { rateDenied: key => { rates.push(key); return reason; } });
+  const params = { camera: "cam", preset: "Home" };
+  const output = await h.handlers.ptz_preset!(params);
+  expect(outputText(output).split("\n")[0], "preset rate refusal returns DENIED with its reason").toBe(`DENIED: ${reason}`);
+  expect(h.chain).toEqual([["ptz_preset", params, "deny", reason]]);
+  expect(rates).toEqual(["actuation"]);
+  expect(h.calls).toEqual([]);
+  expect(bundle(output).find(r => r.kind === "action_attempt").body.disposition).toBe("not_dispatched");
+});
+
+for (const [mode, detail, evidence] of [
+  ["transport-failure", "transport error", "unknown"],
+  ["ok", "preset recalled (vapix)", "device_acknowledged"],
+] as const) {
+  test(`handler receipt wiring: ptz_preset ${mode} records ${evidence} evidence`, async () => {
+    const h = harness(mode);
+    const params = { camera: "cam", preset: "Home" };
+    await h.handlers.ptz_preset!(params);
+    const receipts = h.signedReceipts();
+    expect(receipts).toHaveLength(1);
+    expect(receipts[0]).toMatchObject({ action: { tool: "ptz_preset", params }, decision: "allow", detail });
+    expect(receipts[0].outcome_evidence, "preset receipt evidence matches transport result").toBe(evidence);
+  });
+}
+
+for (const [mode, detail, calls] of [
+  ["journal-refusal", "capture not dispatched", ["metadata"]],
+  ["snapshot-failure", "capture FAILED", ["metadata", "snapshot"]],
+] as const) {
+  test(`handler receipt wiring: get_snapshot ${mode} records ${detail}`, async () => {
+    const h = harness(mode === "journal-refusal" ? "ok" : mode);
+    if (mode === "journal-refusal") failJournal("attempt_envelope");
+    await h.handlers.get_snapshot!({ camera: "cam" });
+    const receipts = h.signedReceipts();
+    expect(receipts).toHaveLength(1);
+    expect(receipts[0].detail, "snapshot receipt detail distinguishes refusal from capture failure").toBe(detail);
+    expect(receipts[0]).toMatchObject({
+      action: { tool: "get_snapshot", params: { camera: "cam" } }, decision: "allow", result_sha256: null,
+    });
+    if (mode === "journal-refusal") expect(receipts.some(r => r.detail === "capture FAILED")).toBe(false);
+    expect(h.calls).toEqual([...calls]);
+  });
+}
+
 for (const [mode, tool, status] of [
   ["readback-failure", "ptz_preset", 200], ["transport-failure", "ptz_preset", 0], ["snapshot-failure", "get_snapshot", 0],
 ] as const) {
