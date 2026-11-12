@@ -1,5 +1,16 @@
 export type Policy = Record<string, { tools: string[]; cameras: string[]; ptz?: { maxStep: number; maxZoomStep?: number }; config?: { groups: string[]; remediate?: boolean; aoa?: boolean; rebaseline?: boolean }; rate?: { actuationPerMin?: number; snapshotPerMin?: number } }>;
 
+export function unknownAgentKey(policy: Policy): string | null {
+  for (const [agent, grants] of Object.entries(policy)) {
+    for (const key of Object.keys(grants)) {
+      if (!["tools", "cameras", "ptz", "rate", "config"].includes(key)) {
+        return `policy agent '${agent}' has unknown key '${key}'`;
+      }
+    }
+  }
+  return null;
+}
+
 export function baselineDenied(config: { agent: string; rebaseline?: boolean }, exists: boolean): string | null {
   if (exists && config.rebaseline !== true) return `baseline exists; agent '${config.agent}' has no rebaseline grant`;
   return null;

@@ -1,5 +1,44 @@
 import { describe, expect, test } from "bun:test";
-import { allowed, baselineDenied, configDenied, ptzBound, type Policy } from "./policy-check";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
+import { allowed, baselineDenied, configDenied, ptzBound, unknownAgentKey, type Policy } from "./policy-check";
+
+test.each(["rateLimit", "rate_limit", "ratelimits", "rate ", "Rate", "ptzz", "_note"])("policy unknown agent key: rejects %s", (key) => {
+  expect(unknownAgentKey({ operator: { tools: [], cameras: [], [key]: { actuationPerMin: 2 } } }))
+    .toBe(`policy agent 'operator' has unknown key '${key}'`);
+});
+
+test("policy unknown agent key: checks the second agent after a clean first agent", () => {
+  expect(unknownAgentKey(JSON.parse('{"viewer":{"tools":[],"cameras":[]},"operator":{"rateLimit":{"actuationPerMin":2}}}')))
+    .toBe("policy agent 'operator' has unknown key 'rateLimit'");
+});
+
+test("policy unknown agent key: returns the first unknown key in agent and key JSON order", () => {
+  expect(unknownAgentKey(JSON.parse('{"z-agent":{"tools":[],"ptzz":{},"Rate":{}},"a-agent":{"_note":"later"}}')))
+    .toBe("policy agent 'z-agent' has unknown key 'ptzz'");
+});
+
+test("policy unknown agent key: accepts all five known keys", () => {
+  expect(unknownAgentKey({ operator: {
+    tools: [], cameras: [], ptz: { maxStep: 30 }, rate: { actuationPerMin: 2 }, config: { groups: [] },
+  } })).toBeNull();
+});
+
+test("policy unknown agent key: accepts omitted optional keys and an empty policy", () => {
+  expect(unknownAgentKey({ viewer: { tools: [], cameras: [] } })).toBeNull();
+  expect(unknownAgentKey({})).toBeNull();
+});
+
+test("policy unknown agent key: ignores inherited keys and nested ptz and config keys", () => {
+  const grants = Object.assign(Object.create({ rateLimit: {} }), {
+    tools: [], cameras: [], ptz: { maxStep: 30, extra: true }, config: { groups: [], extra: true },
+  });
+  expect(unknownAgentKey({ operator: grants })).toBeNull();
+});
+
+test("policy unknown agent key: accepts the repository policy agents", () => {
+  expect(unknownAgentKey(JSON.parse(readFileSync(join(import.meta.dir, "policy.json"), "utf8")).agents)).toBeNull();
+});
 
 const policy: Policy = {
   viewer: { tools: ["get_snapshot", "config_drift"], cameras: ["cam"] },

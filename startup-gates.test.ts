@@ -65,6 +65,25 @@ function expectContinued(result: ReturnType<typeof runGate>) {
   expect(result.stdout).toBe("startup continued\n");
 }
 
+function runPolicyKeyGate(agents: unknown) {
+  writeFileSync(join(root, "policy.json"), JSON.stringify({ agents }));
+  return runGate(`
+    ${importHelper("unknownAgentKey", "policy-check.ts")}
+    const AGENT = "viewer";
+  `, slice('const policyBytes = readFileSync(join(ROOT, "policy.json"));', "const limiter = makeLimiter(Date.now);"));
+}
+
+test("policy key wiring: an unknown key in another agent exits 1 with the exact diagnostic", () => {
+  expectRejected(runPolicyKeyGate({
+    viewer: { tools: [], cameras: [] },
+    operator: { tools: [], cameras: [], rateLimit: { actuationPerMin: 2 } },
+  }), "policy agent 'operator' has unknown key 'rateLimit'");
+});
+
+test("policy key wiring: a clean policy continues with rate omitted", () => {
+  expectContinued(runPolicyKeyGate({ viewer: { tools: [], cameras: [] } }));
+});
+
 function runPinGate(base: string) {
   const cameras = { pinned: { base, pin: "sha256//AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=" } };
   return runGate(`

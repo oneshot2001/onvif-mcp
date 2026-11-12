@@ -31,7 +31,7 @@ import { accountFor, type CameraAccounts } from "./account-for";
 import { keyModeProblem } from "./key-perms";
 import { missingPasswords } from "./creds-check";
 import { makeLimiter } from "./rate-limit";
-import { allowed as policyAllowed, baselineDenied, configDenied as policyConfigDenied, ptzBound, type Policy } from "./policy-check";
+import { allowed as policyAllowed, baselineDenied, configDenied as policyConfigDenied, ptzBound, unknownAgentKey, type Policy } from "./policy-check";
 
 const ROOT = import.meta.dir;
 const KEYDIR = join(ROOT, ".keys");
@@ -138,6 +138,11 @@ if (gateway !== null) {
 const policyBytes = readFileSync(join(ROOT, "policy.json"));
 const policy: Policy =
   JSON.parse(policyBytes.toString("utf8")).agents;
+const policyKeyProblem = unknownAgentKey(policy);
+if (policyKeyProblem !== null) {
+  console.error(policyKeyProblem);
+  process.exit(1);
+}
 const limiter = makeLimiter(Date.now);
 function rateDenied(key: "actuation" | "snapshot"): string | null {
   if (Object.keys(policy[AGENT] ?? {}).some(name => /^rates?$/i.test(name) && name !== "rate")) {
