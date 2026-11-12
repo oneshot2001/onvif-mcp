@@ -249,9 +249,9 @@ export function registerCommission(server: McpServer, d: CommissionDeps) {
     if (new Set(names).size !== names.length) throw new Error("AOA getConfiguration returned duplicate scenario names");
     return config;
   };
-  const guardAoaConfiguration = async (tool: string, camera: string, snapshot: AoaConfiguration, scenarios: Scenario[]) => {
+  const guardAoaConfiguration = async (tool: string, camera: string, snapshot: AoaConfiguration, planned: ScenarioPlan[]) => {
     const current = checkScenarioNames(await readAoaConfiguration(tool, camera));
-    const managed = new Set(scenarios.map((scenario) => scenario.name));
+    const managed = new Set(planned.map((scenario) => scenario.name));
     const byName = (config: AoaConfiguration) => new Map(config.scenarios.filter((scenario) => !managed.has(scenario.name)).map((scenario) => [scenario.name, JSON.stringify(scenario)]));
     const before = byName(snapshot), now = byName(current);
     const changed = [...new Set([...before.keys(), ...now.keys()])].filter((name) => before.get(name) !== now.get(name)).sort();
@@ -292,10 +292,11 @@ export function registerCommission(server: McpServer, d: CommissionDeps) {
       const base = current?.type === spec.type ? current : {};
       return { filters: [], ...base, id, name: spec.name, type: spec.type, devices, triggers: [trigger], objectClassifications: spec.objects.map((type) => ({ type })) } as AoaScenario; // AOA rejects a motion scenario without a filters array (error 2003)
     });
-    const managed = new Map(desired.map((scenario) => [scenario.name, scenario]));
+    const plan = scenarios.flatMap((scenario, i) => scenarioDiff(scenario, existing.get(scenario.name)).length ? [{ name: scenario.name, id: desired[i]!.id, type: scenario.type, action: "deploy" as const }] : []);
+    const planned = new Set(plan.map((item) => item.name));
+    const managed = new Map(desired.filter((scenario) => planned.has(scenario.name)).map((scenario) => [scenario.name, scenario]));
     const mergedScenarios = config.scenarios.map((scenario) => managed.get(scenario.name) ?? scenario);
     for (const scenario of desired) if (!existing.has(scenario.name)) mergedScenarios.push(scenario);
-    const plan = scenarios.flatMap((scenario, i) => scenarioDiff(scenario, existing.get(scenario.name)).length ? [{ name: scenario.name, id: desired[i]!.id, type: scenario.type, action: "deploy" as const }] : []);
     return { desired, plan, merged: { ...config, scenarios: mergedScenarios } };
   };
   const loadAoa = async (tool: string, camera: string, scenarios: Scenario[]): Promise<PreparedAoa> => {
@@ -594,7 +595,7 @@ export function registerCommission(server: McpServer, d: CommissionDeps) {
       if (!writeFailed && p.aoa.installed && p.aoa.plan.length) {
         let ok = false, why = "";
         try {
-          await guardAoaConfiguration("commission_apply", camera, p.aoa.config!, p.spec.scenarios);
+          await guardAoaConfiguration("commission_apply", camera, p.aoa.config!, p.aoa.plan);
           const r = await d.vapixPost("commission_apply", camera, "/local/objectanalytics/control.cgi", { apiVersion: "1.0", method: "setConfiguration", params: p.aoa.merged });
           ok = r.ok; why = r.ok ? "" : "transport failed";
           if (ok) parseRpc(r.body, "setConfiguration");
@@ -623,7 +624,7 @@ export function registerCommission(server: McpServer, d: CommissionDeps) {
         if (applied.some((a) => "scenario" in a) && p.aoa.config) {
           let ok = false, why = "";
           try {
-            await guardAoaConfiguration("commission_apply", camera, p.aoa.config, p.spec.scenarios);
+            await guardAoaConfiguration("commission_apply", camera, p.aoa.config, p.aoa.plan);
             const r = await d.vapixPost("commission_apply", camera, "/local/objectanalytics/control.cgi", { apiVersion: "1.0", method: "setConfiguration", params: p.aoa.config });
             ok = r.ok;
             if (ok) parseRpc(r.body, "setConfiguration");

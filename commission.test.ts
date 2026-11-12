@@ -1723,3 +1723,150 @@ describe("gateway tier denial", () => {
     expect(h.receipts.filter((r) => r.tool === "commission_apply").map((r) => r.decision)).toEqual(["deny", "deny"]);
   });
 });
+
+function plannedScopeCrossline() {
+  return {
+    id: 7, name: "gate-line", type: "crosslinecounting", devices: [{ id: 1 }],
+    triggers: [{ type: "countingLine", countingDirection: "rightToLeft", vertices: [[-0.5, 0], [0.5, 0]] }],
+    objectClassifications: [{ type: "vehicle", subTypes: ["car"] }],
+    filters: [{ type: "timeShort", time: 2 }],
+  };
+}
+
+function plannedScopeSpec(objects = "vehicle", withParam = false) {
+  return `spec: camspec/0.1
+name: scope
+${withParam ? "params:\n  Image.I0.Appearance.Rotation: '180'\n" : ""}scenarios:
+  - name: gate-line
+    type: crosslinecounting
+    objects: [${objects}]
+    line: [[-0.5, 0], [0.5, 0]]
+  - name: lab-motion
+    type: motion
+    objects: [human]
+    area: [[-0.9,-0.9],[0.9,-0.9],[0.9,0.9],[-0.9,0.9]]
+observe: { seconds: 0 }
+`;
+}
+
+function plannedScopeWrites(h: ReturnType<typeof harness>) {
+  return h.posts.filter((post) => (post as { method: string }).method === "setConfiguration") as Array<{ params: ReturnType<typeof h.aoa> }>;
+}
+
+test("commission planned-scenario scope: an unplanned managed scenario is written back byte-for-byte", async () => {
+  const h = harness();
+  h.aoa().scenarios.push(plannedScopeCrossline());
+  const gateText = JSON.stringify(h.aoa().scenarios[1]);
+  const keepText = JSON.stringify(h.aoa().scenarios[0]);
+  writeFileSync(join(h.root, "specs/scope.yaml"), plannedScopeSpec());
+  const plan = JSON.parse((await h.handlers.commission_plan!({ camera: "cam", spec: "scope" })).content[0]!.text);
+  expect(plan.scenarios).toEqual([{ name: "lab-motion", id: 8, type: "motion", action: "deploy" }]);
+  const out = JSON.parse((await h.handlers.commission_apply!({ camera: "cam", spec: "scope", approve: true })).content[0]!.text);
+  const writes = plannedScopeWrites(h);
+  expect(writes).toHaveLength(1);
+  const scenarios = writes[0]!.params.scenarios;
+  expect(JSON.stringify(scenarios.find((scenario) => scenario.name === "gate-line"))).toBe(gateText);
+  expect(JSON.stringify(scenarios.find((scenario) => scenario.name === "keep-me"))).toBe(keepText);
+  expect(scenarios.map((scenario) => scenario.name)).toEqual(["keep-me", "gate-line", "lab-motion"]);
+  expect(out.passed).toBeTrue();
+  const handoff = JSON.parse(readFileSync(out.handoff, "utf8"));
+  expect(handoff.applied).toEqual([{ scenario: "lab-motion", id: 8, type: "motion" }]);
+  expect(verifyHandoffs(h.root, h.publicKey)).toMatchObject({ count: 1, bad: [] });
+  const verified = JSON.parse((await h.handlers.commission_verify!({ camera: "cam", spec: "scope" })).content[0]!.text);
+  expect(verified.passed).toBeTrue();
+  expect(verified.scenarios).toEqual([
+    { name: "gate-line", id: 7, type: "crosslinecounting", deployed: true, readback_diff: [] },
+    { name: "lab-motion", id: 8, type: "motion", deployed: true, readback_diff: [] },
+  ]);
+  expect(plannedScopeWrites(h)).toHaveLength(1);
+});
+
+test("commission planned-scenario scope: planned scenarios, new and existing, are still deployed (control)", async () => {
+  const h = harness();
+  h.aoa().scenarios.push(plannedScopeCrossline());
+  const keepText = JSON.stringify(h.aoa().scenarios[0]);
+  writeFileSync(join(h.root, "specs/scope.yaml"), plannedScopeSpec("human"));
+  const plan = JSON.parse((await h.handlers.commission_plan!({ camera: "cam", spec: "scope" })).content[0]!.text);
+  expect(plan.scenarios).toEqual([
+    { name: "gate-line", id: 7, type: "crosslinecounting", action: "deploy" },
+    { name: "lab-motion", id: 8, type: "motion", action: "deploy" },
+  ]);
+  const out = JSON.parse((await h.handlers.commission_apply!({ camera: "cam", spec: "scope", approve: true })).content[0]!.text);
+  const writes = plannedScopeWrites(h);
+  expect(writes).toHaveLength(1);
+  const scenarios = writes[0]!.params.scenarios;
+  const expectedGate = {
+    ...plannedScopeCrossline(), objectClassifications: [{ type: "human" }],
+    triggers: [{ type: "countingLine", countingDirection: "leftToRight", vertices: [[-0.5, 0], [0.5, 0]] }],
+  };
+  const expectedMotion = {
+    filters: [], id: 8, name: "lab-motion", type: "motion", devices: [{ id: 1 }],
+    triggers: [{ type: "includeArea", vertices: [[-0.9, -0.9], [0.9, -0.9], [0.9, 0.9], [-0.9, 0.9]] }],
+    objectClassifications: [{ type: "human" }],
+  };
+  expect(scenarios.find((scenario) => scenario.name === "gate-line")).toEqual(expectedGate);
+  expect(scenarios.find((scenario) => scenario.name === "lab-motion")).toEqual(expectedMotion);
+  expect(JSON.stringify(scenarios.find((scenario) => scenario.name === "keep-me"))).toBe(keepText);
+  expect(out.passed).toBeTrue();
+  expect(h.receipts.filter((receipt) => receipt.detail.startsWith("deployed scenario "))).toEqual([
+    expect.objectContaining({ detail: "deployed scenario gate-line", evidence: "device_acknowledged" }),
+    expect.objectContaining({ detail: "deployed scenario lab-motion", evidence: "device_acknowledged" }),
+  ]);
+});
+
+test("commission planned-scenario scope: an operator edit to an unplanned managed scenario refuses the apply write", async () => {
+  let edited: ReturnType<typeof h.aoa> | undefined;
+  const h = harness({ beforeAoaRead: (read) => {
+    if (read !== 2) return;
+    Object.assign(h.aoa().scenarios.find((scenario) => scenario.name === "gate-line")!, { filters: [{ type: "timeShort", time: 9 }] });
+    edited = structuredClone(h.aoa());
+  } });
+  h.aoa().scenarios.push(plannedScopeCrossline());
+  writeFileSync(join(h.root, "specs/scope.yaml"), plannedScopeSpec());
+  const out = JSON.parse((await h.handlers.commission_apply!({ camera: "cam", spec: "scope", approve: true })).content[0]!.text);
+  expect(out.passed).toBeFalse();
+  expect(plannedScopeWrites(h)).toHaveLength(0);
+  expect(edited).toBeDefined();
+  expect(h.aoa()).toEqual(edited!);
+  const message = "AOA configuration changed underneath this run (gate-line)";
+  const handoff = JSON.parse(readFileSync(out.handoff, "utf8"));
+  expect(handoff.verify.failed).toContainEqual(expect.objectContaining({ param: "scenario:lab-motion", observed: message }));
+  expect(h.receipts).toContainEqual(expect.objectContaining({ detail: `scenario write FAILED lab-motion: ${message}`, evidence: "unknown" }));
+});
+
+test("commission planned-scenario scope: an operator edit to an unplanned managed scenario refuses the rollback write", async () => {
+  let edited: ReturnType<typeof h.aoa> | undefined;
+  const h = harness({ beforeAoaRead: (read) => {
+    if (read !== 4) return;
+    Object.assign(h.aoa().scenarios.find((scenario) => scenario.name === "gate-line")!, { filters: [{ type: "timeShort", time: 9 }] });
+    edited = structuredClone(h.aoa());
+  } });
+  h.aoa().scenarios.push(plannedScopeCrossline());
+  writeFileSync(join(h.root, "specs/scope.yaml"), plannedScopeSpec("vehicle", true));
+  process.env.COMMISSION_FAIL_PARAM = "Image.I0.Appearance.Rotation";
+  const out = JSON.parse((await h.handlers.commission_apply!({ camera: "cam", spec: "scope", approve: true })).content[0]!.text);
+  expect(out.passed).toBeFalse();
+  expect(plannedScopeWrites(h)).toHaveLength(1);
+  expect(edited).toBeDefined();
+  expect(h.aoa()).toEqual(edited!);
+  const handoff = JSON.parse(readFileSync(out.handoff, "utf8"));
+  expect(handoff.rollback).toEqual({ performed: true, verified: false });
+  expect(out).toMatchObject({ rolled_back: true, rollback_verified: false });
+  expect(h.receipts).toContainEqual(expect.objectContaining({ detail: "AOA rollback FAILED: AOA configuration changed underneath this run (gate-line)", evidence: "unknown" }));
+});
+
+test("commission planned-scenario scope: an edit to a planned scenario stays exempt from the guard (control)", async () => {
+  let edited = false;
+  const h = harness({ beforeAoaRead: (read) => {
+    if (read !== 2) return;
+    Object.assign(h.aoa().scenarios.find((scenario) => scenario.name === "gate-line")!, { filters: [{ type: "timeShort", time: 9 }] });
+    edited = true;
+  } });
+  h.aoa().scenarios.push(plannedScopeCrossline());
+  writeFileSync(join(h.root, "specs/scope.yaml"), plannedScopeSpec("human"));
+  const out = JSON.parse((await h.handlers.commission_apply!({ camera: "cam", spec: "scope", approve: true })).content[0]!.text);
+  expect(edited).toBeTrue();
+  expect(out.passed).toBeTrue();
+  expect(plannedScopeWrites(h)).toHaveLength(1);
+  expect(h.receipts.filter((receipt) => receipt.detail.includes("changed underneath"))).toEqual([]);
+});
