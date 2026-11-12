@@ -23,7 +23,7 @@ afterEach(() => {
   for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true });
 });
 
-function harness(options: { ptz?: boolean; aoa?: boolean; aoaInstalled?: boolean; checkActuation?: () => string | null; beforeAoaRead?: (read: number) => void } = {}) {
+function harness(options: { ptz?: boolean; aoa?: boolean; aoaInstalled?: boolean; checkActuation?: () => string | null; beforeAoaRead?: (read: number) => void; observeEvents?: CommissionDeps["observeEvents"]; snapshot?: CommissionDeps["snapshot"] } = {}) {
   const root = mkdtempSync(join(tmpdir(), "onvif-commission-"));
   roots.push(root);
   mkdirSync(join(root, "specs"));
@@ -55,7 +55,7 @@ function harness(options: { ptz?: boolean; aoa?: boolean; aoaInstalled?: boolean
     checkActuation: options.checkActuation ?? (() => null),
     clockCheck: async () => structuredClone(fakeClock),
     checkSnapshot: () => null,
-    snapshot: async (_tool, _camera, file) => { copyFileSync(join(import.meta.dir, "fixtures/scene/synthetic-8x8.jpg"), file); return true; },
+    snapshot: options.snapshot ?? (async (_tool, _camera, file) => { copyFileSync(join(import.meta.dir, "fixtures/scene/synthetic-8x8.jpg"), file); return true; }),
     receipt: (tool, _params, decision, detail, resultHash, evidence) => { seq++; receipts.push({ tool, decision, detail, resultHash, evidence, invocationId: currentInvocationId() }); },
     configParams: async (_tool, _camera, groups) => ({ ok: true, params: Object.fromEntries(Object.entries(state).filter(([param]) => groups.some((group) => param === group || param.startsWith(`${group}.`)))) }),
     vapix: async (_tool, _camera, path) => {
@@ -84,12 +84,67 @@ function harness(options: { ptz?: boolean; aoa?: boolean; aoaInstalled?: boolean
       }
       return { ok: false, body: "" };
     },
-    observeEvents: async (_tool, _camera, topics) => ({ events: topics.length ? [{ topic: topics[0]!, timestamp: 1_700_000_000_000, message: { data: { active: "1" } } }] : [], warnings: [] }),
+    observeEvents: options.observeEvents ?? (async (_tool, _camera, topics) => ({ events: topics.length ? [{ topic: topics[0]!, timestamp: 1_700_000_000_000, message: { data: { active: "1" } } }] : [], warnings: [] })),
   };
   withInvocations(server as never);
   registerCommission(server as never, deps);
   return { root, state, writes, posts, receipts, presets, handlers, deps, aoa: () => aoa, privateKey, publicKey: publicKey.export({ type: "spki", format: "pem" }).toString() };
 }
+
+describe("commission handoff evidence", () => {
+  const yaml = "spec: camspec/0.1\nname: evidence\nscenarios:\n  - name: lab-motion\n    type: motion\n    objects: [human]\n    area: [[-0.9,-0.9],[0.9,-0.9],[0.9,0.9],[-0.9,0.9]]\nobserve: { seconds: 1 }\n";
+
+  for (const { label, data, count } of [
+    { label: "active/inactive mix counts only the active event", data: [{ active: "1" }, { active: "0" }, { active: false }], count: 1 },
+    { label: "inactive-only events warn about zero firings", data: [{ active: "0" }, { active: false }], count: 0 },
+    { label: "event without active or state still counts", data: [{}], count: 1 },
+  ]) {
+    test(`commission handoff evidence wiring: ${label}`, async () => {
+      const h = harness({ observeEvents: async (_tool, _camera, topics) => ({
+        events: data.map((value) => ({ topic: topics[0]!, message: { data: value } })), warnings: [],
+      }) });
+      writeFileSync(join(h.root, "specs/evidence.yaml"), yaml);
+      const out = JSON.parse((await h.handlers.commission_apply!({ camera: "cam", spec: "evidence", approve: true })).content[0]!.text);
+      expect(out.passed).toBeTrue();
+      const handoff = JSON.parse(readFileSync(out.handoff, "utf8"));
+      for (const observation of [out.observation, handoff.observation]) {
+        expect(observation.window_seconds).toBe(1);
+        expect(observation.fired["lab-motion"].count).toBe(count);
+        expect(observation.warnings).toEqual(count ? [] : ["lab-motion: 0 events in window"]);
+      }
+      expect(out.observation).toEqual(handoff.observation);
+      expect(h.receipts.filter((receipt) => receipt.detail.startsWith("observed "))).toEqual([
+        expect.objectContaining({ tool: "commission_apply", decision: "allow", detail: "observed 1s AOA event window", resultHash: h.deps.sha256(handoff.observation), evidence: "device_acknowledged" }),
+      ]);
+      expect(verifyHandoffs(h.root, h.publicKey)).toMatchObject({ count: 1, bad: [] });
+    });
+  }
+
+  for (const truncated of [true, false]) {
+    test(`commission handoff evidence wiring: ${truncated ? "truncated JPEG fails and leaves no frame" : "complete JPEG retains its file and sha256"}`, async () => {
+      const fixture = readFileSync(join(import.meta.dir, "fixtures/scene/synthetic-8x8.jpg"));
+      expect([...fixture.subarray(-2)]).toEqual([0xff, 0xd9]);
+      const bytes = truncated ? fixture.subarray(0, -2) : fixture;
+      const h = harness({ snapshot: async (_tool, _camera, file) => { writeFileSync(file, bytes); return true; } });
+      writeFileSync(join(h.root, "specs/evidence.yaml"), "spec: camspec/0.1\nname: evidence\n");
+      const out = JSON.parse((await h.handlers.commission_verify!({ camera: "cam", spec: "evidence" })).content[0]!.text);
+      expect(out.passed).toBeTrue();
+      const handoff = JSON.parse(readFileSync(out.handoff, "utf8"));
+      const frame = handoff.scene.reference_frame;
+      const jpgs = readdirSync(join(h.root, "handoff")).filter((file) => file.endsWith(".jpg"));
+      if (truncated) {
+        expect(frame).toEqual({ state: "failed", reason: "not a complete JPEG" });
+        expect(jpgs).toEqual([]);
+      } else {
+        expect(frame.file).toBe(basename(out.handoff).replace(/\.json$/, ".jpg"));
+        expect(frame.sha256).toBe(createHash("sha256").update(fixture).digest("hex"));
+        expect(jpgs).toEqual([frame.file]);
+        expect(readFileSync(join(h.root, "handoff", frame.file))).toEqual(fixture);
+      }
+      expect(verifyHandoffs(h.root, h.publicKey)).toMatchObject({ count: 1, bad: [] });
+    });
+  }
+});
 
 describe("commission gates", () => {
   const yaml = "spec: camspec/0.1\nname: gate\nparams:\n  Image.I0.Appearance.Rotation: '180'\n";
