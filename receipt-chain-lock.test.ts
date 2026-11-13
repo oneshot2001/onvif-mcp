@@ -149,6 +149,69 @@ describe("receipt chain locking", () => {
     }
   }, 15000);
 
+  test("live foreign lock owner is not reclaimed when its liveness probe returns EPERM", async () => {
+    const root = mkdtempSync(join(tmpdir(), "receipt-chain-foreign-lock-"));
+    const log = join(root, "chain.jsonl");
+    let child: Bun.Subprocess<"ignore", "pipe", "pipe"> | undefined;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    try {
+      const worker = join(root, "writer.ts");
+      writeFileSync(worker, `
+        import { appendLocked } from ${JSON.stringify(join(import.meta.dir, "receipt-chain.ts"))};
+        import { writeSync } from "node:fs";
+        let first = true;
+        process.kill = (pid, signal) => {
+          if (first) {
+            first = false;
+            writeSync(1, JSON.stringify({ pid, signal }) + "\\n");
+          }
+          throw { code: "EPERM" };
+        };
+        appendLocked(process.argv[2], (prev) => JSON.stringify({ seq: prev.seq + 1, prev: prev.hash, hash: "test-hash" }));
+      `);
+      writeFileSync(log + ".lock", "999999");
+      child = Bun.spawn([process.execPath, worker, log], {
+        cwd: root, stdin: "ignore", stdout: "pipe", stderr: "pipe",
+      });
+      const ready = (async () => {
+        const reader = child.stdout.getReader();
+        let output = "";
+        try {
+          while (!output.includes("\n")) {
+            const { done, value } = await reader.read();
+            if (done) return "stdout closed before readiness";
+            output += new TextDecoder().decode(value);
+          }
+          return JSON.parse(output.trim());
+        } finally {
+          reader.releaseLock();
+        }
+      })();
+      const exited = child.exited.then((code) => `child exited with code ${code}`);
+      const startupTimeout = new Promise<string>((resolve) => {
+        timer = setTimeout(() => resolve("startup deadline exceeded"), 3000);
+      });
+      expect(await Promise.race([ready, exited, startupTimeout]), "liveness probe readiness").toEqual({ pid: 999999, signal: 0 });
+      clearTimeout(timer);
+      const started = performance.now();
+      expect(await Promise.race([
+        exited,
+        Bun.sleep(1100).then(() => "still blocked"),
+      ]), "live foreign lock owner must keep the writer blocked").toBe("still blocked");
+      expect(performance.now() - started).toBeGreaterThanOrEqual(1000);
+      child.kill();
+      await child.exited;
+      expect(await new Response(child.stderr).text()).toBe("");
+      expect(readFileSync(log + ".lock", "utf8")).toBe("999999");
+      expect(existsSync(log)).toBe(false);
+    } finally {
+      clearTimeout(timer);
+      if (child?.exitCode === null) child.kill();
+      if (child) await child.exited;
+      rmSync(root, { recursive: true, force: true });
+    }
+  }, 7000);
+
   test("reclaims a dead owner's lock", async () => {
     const root = mkdtempSync(join(tmpdir(), "receipt-chain-dead-lock-"));
     const log = join(root, "chain.jsonl");
