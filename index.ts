@@ -29,7 +29,7 @@ import { claimInvocationForAar, currentCommandDigest, currentInvocationId, runAs
 import { cameraPinProblem } from "./camera-pins";
 import { accountFor, type CameraAccounts } from "./account-for";
 import { keyModeProblem } from "./key-perms";
-import { missingPasswords } from "./creds-check";
+import { missingPasswords, unsafeCredentials } from "./creds-check";
 import { makeLimiter } from "./rate-limit";
 import { allowed as policyAllowed, baselineDenied, configDenied as policyConfigDenied, ptzBound, ptzGranted, unknownAgentKey, type Policy } from "./policy-check";
 
@@ -182,6 +182,11 @@ if (vault === null) {
       withheld[credKey] = error.message;
     }
   }
+}
+const unsafe = unsafeCredentials(cameras, passwords);
+if (unsafe.length > 0) {
+  console.error(`Camera credentials contain CR, LF or NUL: ${unsafe.join(", ")}`);
+  process.exit(1);
 }
 function tierDenied(tool: string, camera: string): string | null {
   const cam = cameras[camera];

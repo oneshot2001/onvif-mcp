@@ -203,3 +203,55 @@ describe("curl request", () => {
     expect(args).not.toContain("@-");
   });
 });
+
+
+const credentialOptions = [
+  ["GET", {}, []],
+  ["JSON", { jsonBody }, ["-H", "content-type: application/json", "--data-raw", JSON.stringify(jsonBody)]],
+  ["SOAP", { soapBody }, ["-H", "Content-Type: application/soap+xml", "--data-raw", soapBody]],
+  ["outFile", { outFile: "/tmp/stand-in-snapshot.jpg" }, []],
+  ["unix-socket", { unixSocket: "/tmp/stand-in-witness.sock" }, ["--unix-socket", "/tmp/stand-in-witness.sock"]],
+] as const;
+
+for (const [name, bytes] of [["LF", "\n"], ["CR", "\r"], ["CRLF", "\r\n"], ["NUL", "\0"]] as const) {
+  for (const field of ["username", "password"] as const) {
+    for (const [mode, opts] of credentialOptions) {
+      test(`credential control characters: curl rejects ${name} in ${field} for ${mode}`, () => {
+        const camera = { base: "http://camera.invalid", user: field === "username" ? `stand-in-user${bytes}suffix` : "stand-in-user" };
+        const secret = field === "password" ? `stand-in-password${bytes}suffix` : "stand-in-password";
+        let error: unknown;
+        try { curlRequest(camera, secret, "/request", opts); } catch (caught) { error = caught; }
+        expect(error).toBeInstanceOf(Error);
+        expect((error as Error).message).toBe(`camera credential refused: ${field} contains CR, LF or NUL`);
+        expect((error as Error).message).not.toContain("stand-in");
+        expect((error as Error).message).not.toContain("suffix");
+      });
+    }
+  }
+}
+
+test("credential control characters: curl checks username first even when both credentials are corrupt", () => {
+  let error: unknown;
+  try {
+    curlRequest({ ...cam, user: "stand-in-user\n", pin: "invalid" }, "stand-in-password\0", "/request", { invocationId: "invalid" });
+  } catch (caught) { error = caught; }
+  expect(error).toBeInstanceOf(Error);
+  expect((error as Error).message).toBe("camera credential refused: username contains CR, LF or NUL");
+  expect((error as Error).message).not.toContain("stand-in");
+});
+
+for (const [label, user, secret, stdin] of [
+  ["ordinary", "stand-in-user", "stand-in-password", 'user = "stand-in-user:stand-in-password"\n'],
+  ["escaped", 'stand-in-user"\\\t\\n', 'stand-in-password"\\\t\\n', 'user = "stand-in-user\\"\\\\\t\\\\n:stand-in-password\\"\\\\\t\\\\n"\n'],
+] as const) {
+  for (const [mode, opts, extraArgs] of credentialOptions) {
+    test(`credential control characters: curl preserves ${label} stdin and argv for ${mode}`, () => {
+      const request = curlRequest({ base: "http://camera.invalid", user, auth: "any" }, secret, "/request", opts);
+      expect(request).toEqual({
+        args: ["curl", "-sk", "--globoff", mode === "unix-socket" ? "--anyauth" : "--digest", "--fail", "--config", "-", "--max-time", "10",
+          ...extraArgs, "http://camera.invalid/request", ...(mode === "outFile" ? ["-o", "/tmp/stand-in-snapshot.jpg"] : [])],
+        stdin,
+      });
+    });
+  }
+}

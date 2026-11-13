@@ -485,3 +485,29 @@ test("W2a dispatch wiring: witness counts both marked Digest 401 and 200 exchang
     rmSync(root, { recursive: true, force: true });
   }
 });
+
+
+for (const transport of ["vapix", "vapixPost", "soap"] as const) {
+  for (const [name, bytes] of [["LF", "\n"], ["CR", "\r"], ["NUL", "\0"]] as const) {
+    test(`credential control characters: ${transport} rejects ${name} admin password with zero spawns and viewer works`, async () => {
+      const h = accountTransports("<Response/>", accountCamera, {
+        passwords: { ...accountPasswords, kr: `stand-in-admin${bytes}suffix` },
+      });
+      const request = (tool: string) => transport === "soap"
+        ? h.soap(tool, "cam", "<GetDeviceInformation/>")
+        : transport === "vapixPost"
+          ? h.vapixPost(tool, "cam", "/json", { method: "read" })
+          : h.vapix(tool, "cam", "/get");
+      let error: unknown;
+      try { await request("commission_apply"); } catch (caught) { error = caught; }
+      expect(error).toBeInstanceOf(Error);
+      expect((error as Error).message).toBe("camera credential refused: password contains CR, LF or NUL");
+      expect((error as Error).message).not.toContain("stand-in");
+      expect(h.calls).toEqual([]);
+      const result = await request("get_snapshot");
+      expect(result).toEqual({ ok: true, body: "<Response/>" });
+      expect(h.calls).toHaveLength(1);
+      expectAccountCall(h.calls[0]!, "viewer-user", "kv", result);
+    });
+  }
+}

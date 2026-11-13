@@ -1,5 +1,9 @@
 export const CURL_TIMEOUT_SECONDS = 10;
 
+export function hasLineBreakOrNul(value: string): boolean {
+  return /[\r\n\0]/.test(value);
+}
+
 export function validatePin(pin: unknown): void {
   if (pin === undefined) return;
   if (typeof pin !== "string" || !pin.startsWith("sha256//")) throw new Error("camera pin must start with sha256//");
@@ -12,6 +16,8 @@ export function curlRequest(
   path: string,
   opts: { outFile?: string; jsonBody?: unknown; soapBody?: string; maxTime?: number; invocationId?: string; commandDigest?: string; unixSocket?: string } = {},
 ): { args: string[]; stdin: string } {
+  if (hasLineBreakOrNul(cam.user)) throw new Error("camera credential refused: username contains CR, LF or NUL");
+  if (hasLineBreakOrNul(password)) throw new Error("camera credential refused: password contains CR, LF or NUL");
   const url = `${cam.base}${path}`;
   const credentials = `${cam.user}:${password}`.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
   // Digest unless the camera is enrolled with auth "any" AND the call goes through the

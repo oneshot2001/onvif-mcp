@@ -241,3 +241,112 @@ test("startup gate wiring: empty chain without handoff heads continues", () => {
   writeFileSync(join(root, "chain.jsonl"), "");
   expectContinued(runChainGate());
 });
+
+function credentialGateResult(setup: string, start = "const unsafe = unsafeCredentials(cameras, passwords);", end = "function tierDenied(") {
+  const result = runGate(`
+    ${importHelper("unsafeCredentials, missingPasswords", "creds-check.ts")}
+    ${importHelper("VaultWithheld", "vault-client.ts")}
+    ${importHelper("accountFor", "account-for.ts")}
+    ${setup}
+  `, slice(start, end));
+  expect(result.stdout).not.toContain("stand-in");
+  expect(result.stderr).not.toContain("stand-in");
+  expect(existsSync(join(root, "chain.jsonl"))).toBe(false);
+  expect(existsSync(join(root, "receipts", "chain.jsonl"))).toBe(false);
+  return result;
+}
+
+const credentialCamera = {
+  user: "stand-in-admin", credKey: "admin",
+  accounts: {
+    viewer: { user: "stand-in-viewer", credKey: "viewer" },
+    operator: { user: "stand-in-operator", credKey: "operator" },
+  },
+};
+
+for (const [name, bytes] of [["LF", "\n"], ["CR", "\r"], ["CRLF", "\r\n"], ["NUL", "\0"]] as const) {
+  for (const field of ["username", "password"] as const) {
+    test(`credential gate wiring: ${name} in ${field} exits before startup continues`, () => {
+      const user = field === "username" ? `stand-in-user${bytes}suffix` : "stand-in-user";
+      const password = field === "password" ? `stand-in-password${bytes}suffix` : "stand-in-password";
+      const result = credentialGateResult(`
+        const cameras = { cam: { user: ${JSON.stringify(user)}, credKey: "key" } };
+        const passwords = { key: ${JSON.stringify(password)} };
+      `);
+      expectRejected(result, `Camera credentials contain CR, LF or NUL: cam ${field} (credKey: key)`);
+    });
+  }
+}
+
+test("credential gate wiring: clean quote backslash and tab credentials continue", () => {
+  const value = 'stand-in-quote"backslash\\tab\tliteral\\n';
+  expectContinued(credentialGateResult(`
+    const cameras = { cam: { user: ${JSON.stringify(value)}, credKey: "key" } };
+    const passwords = { key: ${JSON.stringify(value)} };
+  `));
+});
+
+function runCredentialLoad(mode: "stdio" | "gateway", password: string, options: {
+  withheldAdmin?: boolean; corruptWithheldUsername?: boolean; bothGates?: boolean;
+} = {}) {
+  const cameras = {
+    healthy: { user: "stand-in-healthy", credKey: "healthy" },
+    cam: { ...credentialCamera, user: options.corruptWithheldUsername ? "stand-in-admin\n" : credentialCamera.user },
+  };
+  return credentialGateResult(`
+    const cameras = ${JSON.stringify(cameras)};
+    const reply = ${JSON.stringify(password)};
+    const Bun = { spawnSync: () => ({ stdout: Buffer.from(reply) }) };
+    const vault = ${mode === "stdio" ? "null" : `{
+      credential(id, tier) {
+        if (id === "healthy") return "stand-in-healthy-password";
+        if (${Boolean(options.withheldAdmin)} && tier === "admin") throw new VaultWithheld("tier unavailable");
+        return reply;
+      }
+    }`};
+  `, "const credentials = Object.entries(cameras).flatMap(", options.bothGates
+    ? "// --- receipts: hash chain + ed25519 signature." : "function tierDenied(");
+}
+
+for (const mode of ["stdio", "gateway"] as const) {
+  test(`credential gate wiring: ${mode} warning line ahead of password is refused`, () => {
+    const labels = [
+      ...(mode === "stdio" ? ["healthy password (credKey: healthy)"] : []),
+      "cam password (credKey: admin)", "cam password (credKey: viewer)", "cam password (credKey: operator)",
+    ];
+    expectRejected(runCredentialLoad(mode, "stand-in-warning\nstand-in-password"),
+      `Camera credentials contain CR, LF or NUL: ${labels.join(", ")}`);
+  });
+}
+
+test("credential gate wiring: stdio still trims a clean password trailing line break", () => {
+  expectContinued(runCredentialLoad("stdio", "stand-in-password\n"));
+});
+
+test("credential gate wiring: gateway refuses a vault password trailing LF", () => {
+  expectRejected(runCredentialLoad("gateway", "stand-in-password\n"),
+    "Camera credentials contain CR, LF or NUL: cam password (credKey: admin), cam password (credKey: viewer), cam password (credKey: operator)");
+});
+
+test("credential gate wiring: clean vault replies with withheld admin continue", () => {
+  expectContinued(runCredentialLoad("gateway", "stand-in-password", { withheldAdmin: true }));
+});
+
+test("credential gate wiring: withheld corrupt username stops even healthy cameras", () => {
+  expectRejected(runCredentialLoad("gateway", "stand-in-password", { withheldAdmin: true, corruptWithheldUsername: true }),
+    "Camera credentials contain CR, LF or NUL: cam username (credKey: admin)");
+});
+
+test("credential gate wiring: unsafe whitespace is refused before missing passwords", () => {
+  expectRejected(runCredentialLoad("gateway", " \n", { bothGates: true }),
+    "Camera credentials contain CR, LF or NUL: cam password (credKey: admin), cam password (credKey: viewer), cam password (credKey: operator)");
+});
+
+test("credential gate wiring: blank vault passwords retain the missing diagnostic", () => {
+  expectRejected(runCredentialLoad("gateway", "  \t", { bothGates: true }),
+    "Missing camera passwords: cam (credKey: admin), cam (credKey: viewer), cam (credKey: operator)");
+});
+
+test("credential gate wiring: clean vault passwords pass both gates", () => {
+  expectContinued(runCredentialLoad("gateway", "stand-in-password", { bothGates: true }));
+});
