@@ -12,7 +12,7 @@ import { formatPresetRecall } from "../ptz-output";
 import { snapshotContent } from "../snapshot-content";
 import { curlRequest } from "../curl-args";
 import { z } from "zod";
-import { allowed as policyAllowed, ptzBound, type Policy } from "../policy-check";
+import { allowed as policyAllowed, ptzBound, ptzGranted, type Policy } from "../policy-check";
 import { clockReceipt, formatClock, type ClockResult } from "../clock";
 import { appendLocked, outcomeEvidence, verifyChain, formatReceiptsText, selectReceipts } from "../receipt-chain";
 
@@ -110,6 +110,7 @@ function harness(mode: string, password = "fake-password", options: HarnessOptio
   };
   const dependencies = {
     TOOL_HINTS,
+    ptzGranted,
     AarWireProducer, commandDigestHex, runAsDispatch, sendPreset, sendSnapshot, createHash, join, cameraId, presetName, formatPresetRecall, snapshotContent,
     claimInvocationForAar, currentInvocationId, appendLocked, outcomeEvidence, edSign, LOG: log, PRIV: privateKey,
     signer: { sign: (_kind: string, body: unknown) => edSign(null, Buffer.from(createHash("sha256").update(JSON.stringify(body)).digest("hex")), privateKey).toString("base64") },

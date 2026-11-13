@@ -45,7 +45,7 @@ function harness(options: { ptz?: boolean; aoa?: boolean; aoaInstalled?: boolean
   const { privateKey, publicKey } = generateKeyPairSync("ed25519");
   const deps: CommissionDeps = {
     root, agent: "claude-main",
-    policy: { "claude-main": { tools: ["commission_plan", "commission_apply", "commission_verify"], cameras: ["cam"], config: { groups: ["Time", "Image", "Network"], remediate: true, aoa: options.aoa ?? true } } },
+    policy: { "claude-main": { tools: ["commission_plan", "commission_apply", "commission_verify"], cameras: ["cam"], ptz: { maxStep: 30 }, config: { groups: ["Time", "Image", "Network"], remediate: true, aoa: options.aoa ?? true } } },
     policyBytes: Buffer.from("policy"), cameras: { cam: { ptz: options.ptz ?? false } },
     privateKey: privateKey.export({ type: "pkcs8", format: "pem" }).toString(),
     parseParams,
@@ -1924,4 +1924,130 @@ test("commission planned-scenario scope: an edit to a planned scenario stays exe
   expect(out.passed).toBeTrue();
   expect(plannedScopeWrites(h)).toHaveLength(1);
   expect(h.receipts.filter((receipt) => receipt.detail.includes("changed underneath"))).toEqual([]);
+});
+
+describe("commission preset authorization", () => {
+  const yaml = `spec: camspec/0.1
+name: door
+params:
+  Image.I0.Appearance.Rotation: '180'
+presets:
+  Door: { pan: 170, tilt: -40, zoom: 9999 }
+  Gate: { pan: -10, tilt: 5, zoom: 1 }
+scenarios:
+  - name: door-motion
+    type: motion
+    objects: [human]
+    area: [[-0.9,-0.9],[0.9,-0.9],[0.9,0.9],[-0.9,0.9]]
+observe: { seconds: 1 }
+`;
+  const presets = [
+    { name: "Door", pan: 170, tilt: -40, zoom: 9999 },
+    { name: "Gate", pan: -10, tilt: 5, zoom: 1 },
+  ];
+  const requests = [
+    "/axis-cgi/com/ptz.cgi?pan=170&tilt=-40&zoom=9999",
+    "/axis-cgi/com/ptz.cgi?setserverpresetname=Door",
+    "/axis-cgi/com/ptz.cgi?pan=-10&tilt=5&zoom=1",
+    "/axis-cgi/com/ptz.cgi?setserverpresetname=Gate",
+  ];
+
+  function setup(ptz = true) {
+    const h = harness({ ptz });
+    writeFileSync(join(h.root, "specs/door.yaml"), yaml);
+    return h;
+  }
+
+  async function expectDenied(h: ReturnType<typeof harness>) {
+    const actuation = spyOn(h.deps, "checkActuation");
+    const spies = (["vapix", "vapixPost", "configParams", "observeEvents", "snapshot", "clockCheck"] as const).map(name => spyOn(h.deps, name));
+    try {
+      const result = await h.handlers.commission_apply!({ camera: "cam", spec: "door", approve: true });
+      expect(result.content[0]!.text).toBe("DENIED: agent has no ptz grant");
+      expect(result).toMatchObject({ isError: false });
+      expect(h.receipts).toEqual([expect.objectContaining({ tool: "commission_apply", decision: "deny", detail: "agent has no ptz grant" })]);
+      expect(actuation).toHaveBeenCalledTimes(1);
+      for (const spy of spies) expect(spy).not.toHaveBeenCalled();
+      expect(h.writes).toEqual([]);
+      expect(h.posts).toEqual([]);
+      expect([...h.presets]).toEqual([]);
+      expect(h.state["Image.I0.Appearance.Rotation"]).toBe("0");
+      expect(readdirSync(h.root)).toEqual(["specs"]);
+    } finally {
+      actuation.mockRestore();
+      for (const spy of spies) spy.mockRestore();
+    }
+  }
+
+  test("commission preset authorization: an approved apply with presets is denied without a ptz grant before any camera call", async () => {
+    const h = setup();
+    delete h.deps.policy["claude-main"]!.ptz;
+    await expectDenied(h);
+  });
+
+  test("commission preset authorization: every ptz value ptz_preset refuses is refused", async () => {
+    const refused: unknown[] = [
+      null, {}, [], 1, "yes",
+      ...["30deg", NaN, Infinity, -Infinity, -1, 0].map(maxStep => ({ maxStep })),
+      ...["25x", null, NaN, Infinity, -Infinity].map(maxZoomStep => ({ maxStep: 30, maxZoomStep })),
+    ];
+    for (const ptz of refused) {
+      const h = setup();
+      h.deps.policy["claude-main"]!.ptz = ptz;
+      await expectDenied(h);
+    }
+  });
+
+  test("commission preset authorization: a ptz grant applies every preset on one actuation check, whatever maxStep is", async () => {
+    for (const ptz of [
+      { maxStep: 1 }, { maxStep: 30, maxZoomStep: 25 }, { maxStep: 0.5, maxZoomStep: 0 },
+      { maxStep: 30, maxZoomStep: -1 }, { maxStep: 30, maxZoomStep: undefined },
+    ]) {
+      const h = setup();
+      h.deps.policy["claude-main"]!.ptz = ptz;
+      const actuation = spyOn(h.deps, "checkActuation");
+      const vapix = spyOn(h.deps, "vapix");
+      try {
+        const out = JSON.parse((await h.handlers.commission_apply!({ camera: "cam", spec: "door", approve: true })).content[0]!.text);
+        expect(out.passed).toBeTrue();
+        expect(vapix.mock.calls.map(call => call[2]).filter(path => /ptz\.cgi\?(pan=|setserverpresetname=)/.test(path))).toEqual(requests);
+        expect([...h.presets]).toEqual(["Door", "Gate"]);
+        expect(actuation).toHaveBeenCalledTimes(1);
+        expect(h.receipts.filter(receipt => receipt.decision === "deny")).toEqual([]);
+        expect(h.state["Image.I0.Appearance.Rotation"]).toBe("180");
+      } finally {
+        actuation.mockRestore();
+        vapix.mockRestore();
+      }
+    }
+  });
+
+  test("commission preset authorization: plan, dry-run, verify, a spec without presets and a non-PTZ camera need no ptz grant", async () => {
+    const h = setup();
+    delete h.deps.policy["claude-main"]!.ptz;
+    const plan = JSON.parse((await h.handlers.commission_plan!({ camera: "cam", spec: "door" })).content[0]!.text);
+    expect(plan.presets).toEqual(presets);
+    const dry = JSON.parse((await h.handlers.commission_apply!({ camera: "cam", spec: "door", approve: false })).content[0]!.text);
+    expect(dry.presets).toEqual(presets);
+    const verify = JSON.parse((await h.handlers.commission_verify!({ camera: "cam", spec: "door" })).content[0]!.text);
+    expect(verify.passed).toBeFalse();
+    expect(verify.failed).toContainEqual({ param: "preset:Door", desired: "Door", observed: null });
+    expect(h.writes).toEqual([]);
+    writeFileSync(join(h.root, "specs/params.yaml"), "spec: camspec/0.1\nname: params\nparams:\n  Image.I0.Appearance.Rotation: '180'\n");
+    const applied = JSON.parse((await h.handlers.commission_apply!({ camera: "cam", spec: "params", approve: true })).content[0]!.text);
+    expect(applied.passed).toBeTrue();
+    expect(h.state["Image.I0.Appearance.Rotation"]).toBe("180");
+    expect(h.receipts.filter(receipt => receipt.decision === "deny")).toEqual([]);
+
+    const fixed = setup(false);
+    delete fixed.deps.policy["claude-main"]!.ptz;
+    const vapix = spyOn(fixed.deps, "vapix");
+    try {
+      const out = JSON.parse((await fixed.handlers.commission_apply!({ camera: "cam", spec: "door", approve: true })).content[0]!.text);
+      expect(out.passed).toBeTrue();
+      expect(vapix.mock.calls.map(call => call[2]).filter(path => path.includes("ptz.cgi"))).toEqual([]);
+      expect(fixed.receipts.filter(receipt => receipt.decision === "deny")).toEqual([]);
+      expect(fixed.state["Image.I0.Appearance.Rotation"]).toBe("180");
+    } finally { vapix.mockRestore(); }
+  });
 });

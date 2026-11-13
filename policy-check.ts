@@ -24,6 +24,13 @@ export function ptzBound(ptz: { maxStep: number; maxZoomStep?: number } | undefi
   return null;
 }
 
+export function ptzGranted(ptz: unknown): boolean {
+  if (ptz === null || typeof ptz !== "object") return false;
+  const { maxStep, maxZoomStep } = ptz as { maxStep?: unknown; maxZoomStep?: unknown };
+  return typeof maxStep === "number" && Number.isFinite(maxStep) && maxStep > 0 &&
+    (maxZoomStep === undefined || (typeof maxZoomStep === "number" && Number.isFinite(maxZoomStep)));
+}
+
 export function allowed(policy: Policy, agent: string, tool: string, camera?: string): string | null {
   const p = policy[agent];
   if (!p) return `agent '${agent}' not in policy (fail closed)`;

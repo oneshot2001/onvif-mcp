@@ -107,7 +107,7 @@ All tools persist receipts; some also save artifacts, replace baselines, or chan
 | `ptz_move` | Relative pan/tilt/zoom in degrees | + camera granted, camera is PTZ, step within `maxStep` |
 | `ptz_preset` | Recall a named PTZ preset (VAPIX); emits an AAR wire bundle | + camera granted, camera is PTZ, ptz grant |
 | `commission_plan` | Diff parameters and named AOA scenarios; list applicable presets; no writes | + camera granted, config groups granted, all params allowed, AOA grant for scenario specs |
-| `commission_apply` | Dry-run unless `approve:true`; apply, read back, observe AOA events, roll back parameters on failure, emit signed handoff; optional `notes` (string, max 2000 characters) | + plan checks, config remediation grant for approved writes, `config.aoa` for scenarios |
+| `commission_apply` | Dry-run unless `approve:true`; apply, read back, observe AOA events, roll back parameters on failure, emit signed handoff; optional `notes` (string, max 2000 characters) | + plan checks, config remediation grant for approved writes, `config.aoa` for scenarios, `ptz` grant when an approved spec has presets on a PTZ camera |
 | `commission_verify` | Check parameter, preset-name, and AOA scenario conformance; emit a signed handoff; optional `notes` (string, max 2000 characters) | + camera granted, config groups granted, all params allowed, AOA grant for scenarios |
 | `get_receipts` | Tail the signed receipt chain | agent known, tool granted |
 

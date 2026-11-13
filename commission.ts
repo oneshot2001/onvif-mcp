@@ -2,13 +2,14 @@ import { TOOL_HINTS } from "./tool-hints";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import { cameraId, specRef } from "./schemas";
+import { ptzGranted } from "./policy-check";
 import { deviceText, escapeInvisible } from "./device-text";
 import type { ClockResult } from "./clock";
 import { createHash, createPublicKey, randomUUID, sign as edSign, verify as edVerify } from "node:crypto";
 import { existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, realpathSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { basename, join, resolve, sep } from "node:path";
 
-type Policy = { tools: string[]; cameras: string[]; config?: { groups: string[]; remediate?: boolean; aoa?: boolean } };
+type Policy = { tools: string[]; cameras: string[]; ptz?: unknown; config?: { groups: string[]; remediate?: boolean; aoa?: boolean } };
 type Camera = { ptz: boolean };
 type Preset = { name: string; pan: number; tilt: number; zoom: number };
 type Point = [number, number];
@@ -318,10 +319,11 @@ export function registerCommission(server: McpServer, d: CommissionDeps) {
     const p = d.parseParams(r.body);
     return { id: camera, model: p["Brand.ProdShortName"] ?? p["Brand.ProdFullName"] ?? (p["Brand.ProdNbr"] ? `AXIS ${p["Brand.ProdNbr"]}` : "unknown"), firmware: p["Properties.Firmware.Version"] ?? "unknown", serial: p["Properties.System.SerialNumber"] ?? "unknown" };
   };
-  const prepare = async (tool: string, camera: string, ref: string) => {
+  const prepare = async (tool: string, camera: string, ref: string, approve = false) => {
     const loaded = readCommissionSpec(d.root, ref);
     const reason = validateParams(loaded.spec);
     if (reason) throw new Error(`DENIED: ${reason}`);
+    if (approve && d.cameras[camera]!.ptz && loaded.spec.presets.length && !ptzGranted(d.policy[d.agent]!.ptz)) throw new Error("DENIED: agent has no ptz grant");
     const cameraMeta = await meta(tool, camera);
     if (loaded.spec.applies_to && !loaded.spec.applies_to.models.includes(cameraMeta.model)) throw new ModelMismatchError(cameraMeta.model);
     const groups = [...new Set(Object.keys(loaded.spec.params).map((param) => param.split(".")[0]!))];
@@ -565,7 +567,7 @@ export function registerCommission(server: McpServer, d: CommissionDeps) {
     const started = new Date().toISOString();
     const firstSeq = d.lastReceipt().seq + 1;
     try {
-      const p = await prepare("commission_apply", camera, ref);
+      const p = await prepare("commission_apply", camera, ref, approve);
       if (!approve) {
         const out = planOutput(p);
         d.receipt("commission_apply", params, "allow", `dry-run: planned ${p.plan.length} params, ${p.presets.length} presets, and ${p.aoa.plan.length} scenarios`, d.sha256(out));
