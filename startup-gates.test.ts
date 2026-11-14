@@ -380,3 +380,61 @@ test("policy shape wiring: the committed policy file and a full valid policy con
   expectContinued(runPolicyShapeGate(readFileSync(join(import.meta.dir, "policy.json"), "utf8")));
   expectContinued(runPolicyShapeGate('{"agents":{"guard":{"tools":["ptz_move"],"cameras":["lobby"],"ptz":{"maxStep":30,"maxZoomStep":-1},"rate":{"actuationPerMin":6,"snapshotPerMin":30},"config":{"groups":["Image"],"remediate":true,"aoa":true,"rebaseline":true}}}}'));
 });
+
+const vaultFailureReason = "stand-in-secret-before-break\nstand-in-after-break\r";
+const releasedVaultReply = { status: 200, body: JSON.stringify({ password: "stand-in-password" }) };
+
+function runVaultFailureLoad(admin: { status: number; body: string }) {
+  return runGate(`
+    ${importHelper("createVaultClient, VaultWithheld", "vault-client.ts")}
+    const cameras = {
+      cam: { user: "stand-in-admin", credKey: "admin", accounts: {
+        viewer: { user: "stand-in-viewer", credKey: "viewer" }
+      } }
+    };
+    const replies = ${JSON.stringify({ admin, viewer: releasedVaultReply })};
+    const vault = createVaultClient((_method, _path, body) => replies[body.tier]);
+  `, slice("const credentials = Object.entries(cameras).flatMap(", "const unsafe = unsafeCredentials(cameras, passwords);")
+    + '\nconsole.log(JSON.stringify({ released: Object.keys(passwords), withheld }));');
+}
+
+test("vault failure wiring: a credential reply with a reason prints only the status line", () => {
+  for (const status of [500, 401, 404, 200]) {
+    const result = runVaultFailureLoad({ status, body: JSON.stringify({ reason: vaultFailureReason, password: "" }) });
+    expectRejected(result, status === 200
+      ? "vault credential: HTTP 200 with no password in the reply"
+      : `vault credential: HTTP ${status}`);
+    expect(result.stdout).not.toContain("stand-in");
+    expect(result.stderr).not.toContain("stand-in");
+  }
+});
+
+test("vault failure wiring: a withheld tier keeps its reason and clean replies continue", () => {
+  const reason = "admin tier withheld until approval";
+  const cases = [
+    { admin: { status: 403, body: JSON.stringify({ reason }) }, released: ["viewer"], withheld: { admin: reason } },
+    { admin: { status: 403, body: "{}" }, released: ["viewer"], withheld: { admin: "tier admin withheld" } },
+    { admin: releasedVaultReply, released: ["admin", "viewer"], withheld: {} },
+  ];
+  for (const { admin, released, withheld } of cases) {
+    const result = runVaultFailureLoad(admin);
+    expect(result.exitCode).toBe(0);
+    expect(result.stderr).toBe("");
+    expect(result.stdout).toBe(JSON.stringify({ released, withheld }) + "\nstartup continued\n");
+    expect(result.stdout).not.toContain("stand-in");
+    expect(result.stdout).not.toContain("password");
+  }
+});
+
+test("vault failure wiring: malformed replies print fixed text", () => {
+  for (const status of [500, 403, 200]) {
+    for (const [body, diagnostic] of [
+      [vaultFailureReason, "non-JSON"],
+      [JSON.stringify(vaultFailureReason), "non-object"],
+    ] as const) {
+      const result = runVaultFailureLoad({ status, body });
+      expectRejected(result, `vault credential: HTTP ${status} with a ${diagnostic} body`);
+      expect(result.stderr).not.toContain("stand-in");
+    }
+  }
+});

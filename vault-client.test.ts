@@ -116,7 +116,7 @@ describe("vault client", () => {
 
   test("an empty password, an unknown camera or a non-JSON body is an error, never a credential", () => {
     expect(() => createVaultClient(fakeVault({ "POST /credential": () => ({ status: 200, body: { password: "" } }) }).call).credential("q6358", "viewer")).toThrow("HTTP 200");
-    expect(() => createVaultClient(fakeVault({ "POST /credential": () => ({ status: 404, body: { reason: "unknown camera" } }) }).call).credential("nope", "viewer")).toThrow("unknown camera");
+    expect(() => createVaultClient(fakeVault({ "POST /credential": () => ({ status: 404, body: { reason: "unknown camera" } }) }).call).credential("nope", "viewer")).toThrow("vault credential: HTTP 404");
     expect(() => createVaultClient(fakeVault({ "POST /credential": () => ({ status: 200, body: "<html>" }) }).call).credential("q6358", "viewer")).toThrow("non-JSON");
   });
 
@@ -140,4 +140,31 @@ describe("vault client", () => {
     expect(() => createVaultClient(refused.call).signer().sign("receipt", {})).toThrow("vault refused to sign the receipt: no witnessed traffic");
     expect(() => createVaultClient(fakeVault({ "GET /public-key": () => ({ status: 200, body: { pem: "nope" } }) }).call).signer()).toThrow("no PEM");
   });
+});
+
+test("vault credential diagnostics: a failed fetch never carries the vault reason", () => {
+  const reason = "stand-in-secret-before-break\nstand-in-after-break\r";
+  let plainError: unknown;
+  try { throw new Error("fixed diagnostic"); } catch (caught) { plainError = caught; }
+  const replies = [
+    ...[400, 401, 404, 500, 503].map(status => ({ status, body: { reason } })),
+    ...[500, 201].map(status => ({ status, body: { reason, password: "stand-in-password" } })),
+    { status: 200, body: { reason } },
+    { status: 200, body: { reason, password: "" } },
+    { status: 200, body: { reason, password: 123 } },
+  ];
+  for (const reply of replies) {
+    const vault = fakeVault({ "POST /credential": () => reply });
+    let error: unknown;
+    try { createVaultClient(vault.call).credential("camera", "admin"); } catch (caught) { error = caught; }
+    expect(error).toBeInstanceOf(Error);
+    expect(error).not.toBeInstanceOf(VaultWithheld);
+    expect((error as Error).message).toBe(reply.status === 200
+      ? "vault credential: HTTP 200 with no password in the reply"
+      : `vault credential: HTTP ${reply.status}`);
+    expect(Object.getOwnPropertyNames(error)).toEqual(Object.getOwnPropertyNames(plainError));
+    for (const property of Object.getOwnPropertyNames(error)) {
+      expect(String((error as unknown as Record<string, unknown>)[property])).not.toContain("stand-in");
+    }
+  }
 });

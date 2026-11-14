@@ -50,7 +50,8 @@ export function createVaultClient(call: VaultCall) {
       const response = call("POST", "/credential", { camera, tier });
       const body = parse(response, "credential");
       if (response.status === 403) throw new VaultWithheld(typeof body.reason === "string" ? body.reason : `tier ${tier} withheld`);
-      if (response.status !== 200 || typeof body.password !== "string" || body.password === "") throw new Error(`vault credential: HTTP ${response.status} ${typeof body.reason === "string" ? body.reason : ""}`.trim());
+      if (response.status !== 200) throw new Error(`vault credential: HTTP ${response.status}`);
+      if (typeof body.password !== "string" || body.password === "") throw new Error("vault credential: HTTP 200 with no password in the reply");
       return body.password;
     },
     signer(): Signer {
