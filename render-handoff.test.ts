@@ -212,3 +212,28 @@ test("renders false as no and a negative offset with its sign", () => {
   expect(html).toContain("Entered location text changed: no");
   expect(html).toContain("offset difference: -0.5 s (±2.381 s;");
 });
+
+test("render-handoff rollback line: no rollback write renders as not applicable and an older handoff renders as signed", () => {
+  const root = mkdtempSync(join(tmpdir(), "onvif-render-rollback-"));
+  try {
+    const older = JSON.parse(readFileSync(join(import.meta.dir, "handoff/q6358-2026-08-30T03:34:12.538Z.json"), "utf8"));
+    expect(older.rollback).toEqual({ performed: true, verified: true });
+    for (const [handoff, line] of [
+      [{ ...fixture, rollback: { performed: false, verified: null } }, "Rollback performed: <b>false</b> · rollback verified: <b>not applicable</b>"],
+      [{ ...fixture, rollback: { performed: false, verified: false } }, "Rollback performed: <b>false</b> · rollback verified: <b>false</b>"],
+      [{ ...fixture, rollback: { performed: true, verified: false } }, "Rollback performed: <b>true</b> · rollback verified: <b>false</b>"],
+      [{ ...fixture, rollback: null }, null],
+      [older, "Rollback performed: <b>true</b> · rollback verified: <b>true</b>"],
+    ] as const) {
+      const file = join(root, "handoff.json");
+      writeFileSync(file, JSON.stringify(handoff));
+      const result = Bun.spawnSync([process.execPath, join(import.meta.dir, "render-handoff.ts"), file], { cwd: root, stdout: "pipe", stderr: "pipe" });
+      expect(result.exitCode).toBe(0);
+      expect(result.stderr.toString()).toBe("");
+      const html = readFileSync(join(root, "handoff.html"), "utf8");
+      if (line === null) expect(html).not.toContain("Rollback performed:");
+      else expect(html).toContain(line);
+      expect(existsSync(join(root, "handoff.pdf"))).toBeFalse();
+    }
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});

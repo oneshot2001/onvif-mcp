@@ -51,7 +51,7 @@ type Handoff = {
   plan: Diff[];
   applied: Applied[];
   verify: { passed: boolean; failed: Failure[] };
-  rollback: { performed: boolean; verified: boolean } | null;
+  rollback: { performed: boolean; verified: boolean | null } | null;
   scenarios: ScenarioResult[];
   observation: Observation | null;
   notes: string | null;
@@ -615,8 +615,9 @@ export function registerCommission(server: McpServer, d: CommissionDeps) {
       const observation = await observe("commission_apply", camera, p, checked.scenarios, checked.verify.passed);
       let rollback: Handoff["rollback"] = null;
       if (!checked.verify.passed) {
-        let rollbackWrites = true;
+        let rollbackWrites = true, rollbackSent = false;
         for (const item of applied.filter((a): a is Extract<Applied, { param: string }> => "param" in a).reverse()) {
+          rollbackSent = true;
           const r = await d.vapix("commission_apply", camera, `/axis-cgi/param.cgi?action=update&${encodeURIComponent(item.param)}=${encodeURIComponent(item.previous)}`);
           const ok = r.ok && !/^(# )?Error/m.test(r.body);
           rollbackWrites &&= ok;
@@ -627,6 +628,7 @@ export function registerCommission(server: McpServer, d: CommissionDeps) {
           let ok = false, why = "";
           try {
             await guardAoaConfiguration("commission_apply", camera, p.aoa.config, p.aoa.plan);
+            rollbackSent = true;
             const r = await d.vapixPost("commission_apply", camera, "/local/objectanalytics/control.cgi", { apiVersion: "1.0", method: "setConfiguration", params: p.aoa.config });
             ok = r.ok;
             if (ok) parseRpc(r.body, "setConfiguration");
@@ -634,7 +636,8 @@ export function registerCommission(server: McpServer, d: CommissionDeps) {
           rollbackWrites &&= ok;
           d.receipt("commission_apply", { ...params, rollback: "aoa-configuration" }, "allow", ok ? "restored prior AOA configuration" : `AOA rollback FAILED${why ? `: ${why}` : ""}`, undefined, ok ? "device_acknowledged" : "unknown");
         }
-        rollback = { performed: true, verified: rollbackWrites && (await checkParams("commission_apply", camera, rollbackSpec)).length === 0 };
+        const restored = rollbackWrites && (await checkParams("commission_apply", camera, rollbackSpec)).length === 0;
+        rollback = { performed: rollbackSent, verified: applied.some((a) => !("preset" in a)) ? restored : null };
       }
       const { file } = await finish("commission_apply", params, started, firstSeq, p, applied, checked.verify, rollback, checked.scenarios, observation, notes, location);
       const out = { ...verifyOutput(checked.verify), rolled_back: rollback?.performed ?? false, rollback_verified: rollback?.verified ?? null, scenarios: scenarioOutput(checked.scenarios), observation: observationOutput(observation), handoff: file };

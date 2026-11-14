@@ -86,7 +86,7 @@ ${changesSection()}
 <h2>Plan (live → desired)</h2>${rows(h.plan, ["param", "current", "desired"])}
 <h2>Applied</h2>${rows(h.applied.map((a: any) => a.param ? a : a.preset ? { param: `preset:${a.preset}`, previous: "", desired: `pan ${a.pan} tilt ${a.tilt} zoom ${a.zoom}` } : { param: `scenario:${a.scenario}`, previous: "", desired: `${a.type} (id ${a.id})` }), ["param", "previous", "desired"])}
 <h2>Verification — ${status}</h2>${rows(h.verify.failed, ["param", "desired", "observed"])}
-${h.rollback ? `<p>Rollback performed: <b>${h.rollback.performed}</b> · rollback verified: <b>${h.rollback.verified}</b></p>` : ""}
+${h.rollback ? `<p>Rollback performed: <b>${h.rollback.performed}</b> · rollback verified: <b>${h.rollback.verified ?? "not applicable"}</b></p>` : ""}
 ${h.scenarios ? `<h2>Analytics scenarios</h2>${rows(h.scenarios.map((s: any) => ({ ...s, readback_diff: (s.readback_diff ?? []).length })), ["name", "id", "type", "deployed", "readback_diff"])}` : ""}
 ${h.observation ? `<h2>Observation window (${esc(h.observation.window_seconds)}s)</h2>${rows(fired, ["name", "count", "first", "last"])}${(h.observation.warnings ?? []).map((w: string) => `<p class="muted">⚠ ${esc(w)}</p>`).join("")}` : ""}
 <h2>Provenance</h2>

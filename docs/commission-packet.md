@@ -48,9 +48,10 @@ Receipt observation, `result_sha256` = hash of plan JSON.
 output as commission_plan). `approve:true`: snapshot pre-state (the plan's `current` values are
 the rollback set), write each param via `param.cgi?action=update`, set presets via
 `com/ptz.cgi?setserverpresetname=<name>` after `pan=..&tilt=..&zoom=..` absolute move, then
-**verify** (re-read; every value must equal desired). On ANY verify mismatch: roll back every
-param written in this run to its pre-state, re-verify rollback, and report
-`{ passed:false, failed:[...], rolled_back:true }`. Receipt `action_attempt`,
+**verify** (re-read; every value must equal desired). On ANY verify mismatch: restore parameters written in this run to their pre-state and restore the prior AOA configuration if this run deployed a scenario, then report
+`{ passed:false, failed:[...], rolled_back, rollback_verified }`. `rollback.performed` (`rolled_back`) is true only when a rollback write was issued to the camera (a parameter restore or the AOA restore), whether or not the device accepted it. Presets are not rolled back. `rollback.verified` (`rollback_verified`) is `null` when the run applied no parameter and no scenario; otherwise it is true only when every restore was issued and acknowledged and the parameters read back at their pre-state.
+Handoffs signed before this change use the older meaning: `performed: true` on every failed verify, even when nothing was written back.
+Older handoffs can also hold `verified: true` when nothing was restored. The version remains `camspec-handoff/0.1` and does not identify which meaning a record was signed under. Readers must not turn `null` into `false`. The AOA restore counts as verified on the device's acknowledgement alone; its configuration is not read back after the restore. A parameter restore or closing parameter re-read that throws still ends the call as an error with no handoff. Receipt `action_attempt`,
 `outcome_evidence: "device_acknowledged"` for writes, plus one final receipt whose
 `result_sha256` = hash of the handoff JSON.
 

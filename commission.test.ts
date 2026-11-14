@@ -862,7 +862,7 @@ observe: { seconds: 0 }
     writeFileSync(join(h.root, "specs", "duplicates.yaml"), "spec: camspec/0.1\nname: duplicates\nscenarios:\n  - name: lab-motion\n    type: motion\n    objects: [human]\n    area: [[-0.9,-0.9],[0.9,-0.9],[0.9,0.9],[-0.9,0.9]]\nobserve: { seconds: 0 }\n");
     const out = JSON.parse((await h.handlers.commission_apply!({ camera: "cam", spec: "duplicates", approve: true })).content[0]!.text);
     const message = "AOA getConfiguration returned duplicate scenario names";
-    expect(out).toMatchObject({ passed: false, rolled_back: true, rollback_verified: false });
+    expect(out).toMatchObject({ passed: false, rolled_back: false, rollback_verified: false });
     expect(out.scenarios[0].readback_diff).toEqual([deviceText(message)]);
     expect(h.receipts).toContainEqual(expect.objectContaining({ detail: "deployed scenario lab-motion" }));
     expect(h.receipts).toContainEqual(expect.objectContaining({ detail: "verification FAILED" }));
@@ -876,7 +876,7 @@ observe: { seconds: 0 }
     const handoff = JSON.parse(readFileSync(out.handoff, "utf8"));
     expect(handoff.verify.passed).toBeFalse();
     expect(handoff.scenarios[0].readback_diff).toEqual([message]);
-    expect(handoff.rollback).toEqual({ performed: true, verified: false });
+    expect(handoff.rollback).toEqual({ performed: false, verified: false });
     expect(h.receipts.find((receipt) => receipt.detail === "verification FAILED")!.resultHash).toBe(h.deps.sha256(handoff.verify));
     expect(verifyHandoffs(h.root, h.publicKey)).toMatchObject({ count: 1, bad: [] });
   });
@@ -2050,4 +2050,148 @@ observe: { seconds: 1 }
       expect(fixed.state["Image.I0.Appearance.Rotation"]).toBe("180");
     } finally { vapix.mockRestore(); }
   });
+});
+
+const rollbackParam = "Image.I0.Appearance.Rotation";
+const rollbackScenario = `scenarios:
+  - name: lab-motion
+    type: motion
+    objects: [human]
+    area: [[-0.9,-0.9],[0.9,-0.9],[0.9,0.9],[-0.9,0.9]]
+observe: { seconds: 0 }
+`;
+
+async function expectRollback(h: ReturnType<typeof harness>, spec: string, rollback: { performed: boolean; verified: boolean | null }, details: string[]) {
+  writeFileSync(join(h.root, "specs/rollback.yaml"), `spec: camspec/0.1\nname: rollback\n${spec}`);
+  const out = JSON.parse((await h.handlers.commission_apply!({ camera: "cam", spec: "rollback", approve: true })).content[0]!.text);
+  expect(out).toMatchObject({ passed: false, rolled_back: rollback.performed, rollback_verified: rollback.verified });
+  const handoff = JSON.parse(readFileSync(out.handoff, "utf8"));
+  expect(handoff.verify.passed).toBeFalse();
+  expect(handoff.rollback).toEqual(rollback);
+  expect(verifyHandoffs(h.root, h.publicKey)).toMatchObject({ count: 1, bad: [] });
+  expect(h.receipts.map(r => r.detail).filter(detail => /^(rolled back |rollback FAILED |restored prior AOA configuration|AOA rollback FAILED)/.test(detail))).toEqual(details);
+  return handoff;
+}
+
+test("commission rollback performed: a scenario-only spec on a camera without AOA signs no rollback write", async () => {
+  const h = harness({ aoaInstalled: false });
+  const handoff = await expectRollback(h, rollbackScenario, { performed: false, verified: null }, []);
+  expect(handoff.applied).toEqual([]);
+  expect(h.writes).toEqual([]);
+  expect(plannedScopeWrites(h)).toEqual([]);
+});
+
+test("commission rollback performed: a rejected first parameter write signs no rollback write", async () => {
+  const h = harness();
+  h.state["Image.I0.Appearance.Mirror"] = "no";
+  const before = { ...h.state };
+  const vapix = h.deps.vapix;
+  h.deps.vapix = async (tool, camera, path) => {
+    if (!path.includes("action=update")) return vapix(tool, camera, path);
+    h.writes.push(path);
+    return { ok: true, body: "# Error: rejected" };
+  };
+  const handoff = await expectRollback(h, `params:\n  ${rollbackParam}: '180'\n  Image.I0.Appearance.Mirror: 'yes'\n`, { performed: false, verified: null }, []);
+  expect(handoff.applied).toEqual([]);
+  expect(h.writes).toEqual([`/axis-cgi/param.cgi?action=update&${rollbackParam}=180`]);
+  expect(h.state).toEqual(before);
+});
+
+test("commission rollback performed: a failed preset signs no rollback write", async () => {
+  for (const refused of [true, false]) {
+    const h = harness({ ptz: true });
+    const vapix = h.deps.vapix;
+    const saves: string[] = [];
+    h.deps.vapix = async (tool, camera, path) => {
+      if (path.includes("setserverpresetname=")) {
+        saves.push(path);
+        if (refused) return { ok: true, body: "Error: refused" };
+      }
+      if (path.includes("query=presetposcam")) return { ok: true, body: "" };
+      return vapix(tool, camera, path);
+    };
+    const handoff = await expectRollback(h, "presets:\n  Dock: { pan: 10, tilt: -5, zoom: 100 }\n", { performed: false, verified: null }, []);
+    expect(handoff.applied).toEqual(refused ? [] : [{ preset: "Dock", pan: 10, tilt: -5, zoom: 100 }]);
+    expect(saves).toEqual(["/axis-cgi/com/ptz.cgi?setserverpresetname=Dock"]);
+    expect([...h.presets]).toEqual(refused ? [] : ["Dock"]);
+    expect(h.writes).toEqual([]);
+    expect(plannedScopeWrites(h)).toEqual([]);
+  }
+});
+
+test("commission rollback performed: an unreported parameter signs no rollback write", async () => {
+  const h = harness();
+  const before = { ...h.state };
+  const handoff = await expectRollback(h, `params:\n  Image.I0.Appearance.Mirror: 'yes'\n  ${rollbackParam}: '180'\n`, { performed: false, verified: null }, []);
+  expect(handoff.applied).toEqual([]);
+  expect(h.writes).toEqual([]);
+  expect(h.state).toEqual(before);
+});
+
+test("commission rollback performed: an AOA restore refused before its write signs performed false and verified false", async () => {
+  let edited: ReturnType<typeof h.aoa> | undefined;
+  const h = harness({ beforeAoaRead: read => {
+    if (read !== 4) return;
+    h.aoa().scenarios.find(s => s.name === "keep-me")!.objectClassifications = [{ type: "human" }];
+    edited = structuredClone(h.aoa());
+  } });
+  process.env.COMMISSION_FAIL_PARAM = rollbackParam;
+  const handoff = await expectRollback(h, `params:\n  ${rollbackParam}: '0'\n${rollbackScenario}`,
+    { performed: false, verified: false }, ["AOA rollback FAILED: AOA configuration changed underneath this run (keep-me)"]);
+  expect(handoff.applied).toEqual([{ scenario: "lab-motion", id: 5, type: "motion" }]);
+  expect(plannedScopeWrites(h)).toHaveLength(1);
+  expect(h.writes).toEqual(["AOA:setConfiguration"]);
+  expect(edited).toBeDefined();
+  expect(h.aoa()).toEqual(edited!);
+});
+
+test("commission rollback performed: a parameter restore counts as a rollback write whether or not the device accepts it", async () => {
+  for (const mode of ["applied", "not applied", "error", "ok false"]) {
+    const h = harness();
+    process.env.COMMISSION_FAIL_PARAM = rollbackParam;
+    const vapix = h.deps.vapix;
+    h.deps.vapix = async (tool, camera, path) => {
+      if (!path.includes(`action=update&${rollbackParam}=0`) || mode === "applied") return vapix(tool, camera, path);
+      h.writes.push(path);
+      return { ok: mode !== "ok false", body: mode === "error" ? "# Error: refused" : "OK" };
+    };
+    const acknowledged = mode === "applied" || mode === "not applied";
+    const handoff = await expectRollback(h, `params:\n  ${rollbackParam}: '180'\n`,
+      { performed: true, verified: mode === "applied" }, [`${acknowledged ? "rolled back" : "rollback FAILED"} ${rollbackParam}`]);
+    expect(handoff.applied).toEqual([{ param: rollbackParam, previous: "0", desired: "180" }]);
+    expect(h.writes).toEqual([
+      `/axis-cgi/param.cgi?action=update&${rollbackParam}=180`,
+      `/axis-cgi/param.cgi?action=update&${rollbackParam}=0`,
+    ]);
+    expect(h.state[rollbackParam]).toBe(mode === "applied" ? "0" : "180");
+  }
+});
+
+test("commission rollback performed: an AOA restore counts as a rollback write whether or not the device accepts it", async () => {
+  for (const mode of ["acknowledged", "RPC error", "ok false", "throw"]) {
+    const h = harness();
+    const before = structuredClone(h.aoa());
+    process.env.COMMISSION_FAIL_PARAM = rollbackParam;
+    const vapixPost = h.deps.vapixPost;
+    let sets = 0;
+    h.deps.vapixPost = async (tool, camera, path, body) => {
+      if ((body as { method: string }).method !== "setConfiguration" || ++sets !== 2 || mode === "acknowledged") return vapixPost(tool, camera, path, body);
+      h.posts.push(structuredClone(body));
+      h.writes.push("AOA:setConfiguration");
+      if (mode === "throw") throw new Error("restore threw");
+      return { ok: mode !== "ok false", body: JSON.stringify({ error: { message: "restore refused" } }) };
+    };
+    const detail = mode === "acknowledged" ? "restored prior AOA configuration"
+      : mode === "RPC error" ? "AOA rollback FAILED: AOA setConfiguration failed: restore refused"
+      : mode === "throw" ? "AOA rollback FAILED: restore threw" : "AOA rollback FAILED";
+    const handoff = await expectRollback(h, `params:\n  ${rollbackParam}: '0'\n${rollbackScenario}`,
+      { performed: true, verified: mode === "acknowledged" }, [detail]);
+    expect(handoff.applied).toEqual([{ scenario: "lab-motion", id: 5, type: "motion" }]);
+    expect(sets).toBe(2);
+    expect(plannedScopeWrites(h)).toHaveLength(2);
+    expect(plannedScopeWrites(h)[1]!.params).toEqual(before);
+    expect(h.writes).toEqual(["AOA:setConfiguration", "AOA:setConfiguration"]);
+    if (mode === "acknowledged") expect(h.aoa()).toEqual(before);
+    else expect(h.aoa().scenarios.map(s => s.name)).toEqual(["keep-me", "lab-motion"]);
+  }
 });
