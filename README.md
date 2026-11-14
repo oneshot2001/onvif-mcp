@@ -82,6 +82,8 @@ Grant agents authority in `policy.json` (anything not granted is denied):
 }
 ```
 
+The `policy.json` file is checked once at startup, and a wrong-typed value in any agent's grant stops the server with one line naming the agent and the field. Required keys are checked too, so a `ptz` grant without `maxStep`, a `config` grant without `groups`, or `null` in place of a grant stops the server even when that grant is never used, and a gateway restarted with such a file stays down until the file is corrected.
+
 Register with an MCP client (Claude Code shown):
 
 ```bash

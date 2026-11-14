@@ -31,7 +31,7 @@ import { accountFor, type CameraAccounts } from "./account-for";
 import { keyModeProblem } from "./key-perms";
 import { missingPasswords, unsafeCredentials } from "./creds-check";
 import { makeLimiter } from "./rate-limit";
-import { allowed as policyAllowed, baselineDenied, configDenied as policyConfigDenied, ptzBound, ptzGranted, unknownAgentKey, type Policy } from "./policy-check";
+import { allowed as policyAllowed, baselineDenied, configDenied as policyConfigDenied, ptzBound, ptzGranted, policyShapeProblem, unknownAgentKey, type Policy } from "./policy-check";
 
 const ROOT = import.meta.dir;
 const KEYDIR = join(ROOT, ".keys");
@@ -137,7 +137,12 @@ if (gateway !== null) {
 // server evaluates (parsed once here) — never a fresh disk read (TOCTOU).
 const policyBytes = readFileSync(join(ROOT, "policy.json"));
 const policy: Policy =
-  JSON.parse(policyBytes.toString("utf8")).agents;
+  JSON.parse(policyBytes.toString("utf8"))?.agents;
+const shapeProblem = policyShapeProblem(policy);
+if (shapeProblem !== null) {
+  console.error(shapeProblem);
+  process.exit(1);
+}
 const policyKeyProblem = unknownAgentKey(policy);
 if (policyKeyProblem !== null) {
   console.error(policyKeyProblem);

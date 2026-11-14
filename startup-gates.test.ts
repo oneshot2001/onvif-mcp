@@ -68,7 +68,7 @@ function expectContinued(result: ReturnType<typeof runGate>) {
 function runPolicyKeyGate(agents: unknown) {
   writeFileSync(join(root, "policy.json"), JSON.stringify({ agents }));
   return runGate(`
-    ${importHelper("unknownAgentKey", "policy-check.ts")}
+    ${importHelper("policyShapeProblem, unknownAgentKey", "policy-check.ts")}
     const AGENT = "viewer";
   `, slice('const policyBytes = readFileSync(join(ROOT, "policy.json"));', "const limiter = makeLimiter(Date.now);"));
 }
@@ -349,4 +349,34 @@ test("credential gate wiring: blank vault passwords retain the missing diagnosti
 
 test("credential gate wiring: clean vault passwords pass both gates", () => {
   expectContinued(runCredentialLoad("gateway", "stand-in-password", { bothGates: true }));
+});
+
+function runPolicyShapeGate(document: string) {
+  writeFileSync(join(root, "policy.json"), document);
+  return runGate(`
+    ${importHelper("policyShapeProblem, unknownAgentKey", "policy-check.ts")}
+    const AGENT = "viewer";
+  `, slice('const policyBytes = readFileSync(join(ROOT, "policy.json"));', "const limiter = makeLimiter(Date.now);"));
+}
+
+test("policy shape wiring: a wrong-typed policy file exits 1 with the one-line diagnostic before startup continues", () => {
+  const cases: [string, string][] = [
+    ['{"agents":{"viewer":{"tools":[],"cameras":[]},"guard":{"tools":[],"cameras":"lobby2"}}}',
+      "policy agent 'guard' field 'cameras' must be an array of strings"],
+    ['{"agents":{"viewer":{"tools":[],"cameras":[]},"guard":{"tools":[],"cameras":[],"config":{"groups":[],"remediate":"false"}}}}',
+      "policy agent 'guard' field 'config.remediate' must be a boolean"],
+    ['{"agents":{"viewer":{"tools":[],"cameras":[]},"guard":{"tools":[],"cameras":[],"config":{"groups":[],"aoa":"no"}}}}',
+      "policy agent 'guard' field 'config.aoa' must be a boolean"],
+    ['{"agents":{"guard":"all"}}', "policy agent 'guard' must be an object"],
+    ['{}', "policy 'agents' must be an object"],
+    ['null', "policy 'agents' must be an object"],
+    ['[]', "policy 'agents' must be an object"],
+    ['7', "policy 'agents' must be an object"],
+  ];
+  for (const [document, message] of cases) expectRejected(runPolicyShapeGate(document), message);
+});
+
+test("policy shape wiring: the committed policy file and a full valid policy continue", () => {
+  expectContinued(runPolicyShapeGate(readFileSync(join(import.meta.dir, "policy.json"), "utf8")));
+  expectContinued(runPolicyShapeGate('{"agents":{"guard":{"tools":["ptz_move"],"cameras":["lobby"],"ptz":{"maxStep":30,"maxZoomStep":-1},"rate":{"actuationPerMin":6,"snapshotPerMin":30},"config":{"groups":["Image"],"remediate":true,"aoa":true,"rebaseline":true}}}}'));
 });

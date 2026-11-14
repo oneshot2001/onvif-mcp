@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import { allowed, baselineDenied, configDenied, ptzBound, unknownAgentKey, type Policy } from "./policy-check";
+import { allowed, baselineDenied, configDenied, ptzBound, policyShapeProblem, unknownAgentKey, type Policy } from "./policy-check";
 
 test.each(["rateLimit", "rate_limit", "ratelimits", "rate ", "Rate", "ptzz", "_note"])("policy unknown agent key: rejects %s", (key) => {
   expect(unknownAgentKey({ operator: { tools: [], cameras: [], [key]: { actuationPerMin: 2 } } }))
@@ -175,4 +175,110 @@ describe("policy checks", () => {
     expect(configDenied(policy, "auditor", "config_drift", "cam")).toBeNull();
     expect(configDenied(policy, "operator", "config_remediate", "cam", true)).toBeNull();
   });
+});
+
+test("policy shape: a string cameras value, a string remediate and a string aoa are each refused naming the agent and the field", () => {
+  expect(policyShapeProblem(JSON.parse('{"guard":{"tools":[],"cameras":"lobby2"}}')))
+    .toBe("policy agent 'guard' field 'cameras' must be an array of strings");
+  expect(policyShapeProblem(JSON.parse('{"guard":{"tools":[],"cameras":[],"config":{"groups":[],"remediate":"false"}}}')))
+    .toBe("policy agent 'guard' field 'config.remediate' must be a boolean");
+  expect(policyShapeProblem(JSON.parse('{"guard":{"tools":[],"cameras":[],"config":{"groups":[],"aoa":"no"}}}')))
+    .toBe("policy agent 'guard' field 'config.aoa' must be a boolean");
+});
+
+test("policy shape: one wrong type per key is refused with the message for that key", () => {
+  const cases: [string, string][] = [
+    ['null', "policy 'agents' must be an object"],
+    ['[]', "policy 'agents' must be an object"],
+    ['"all"', "policy 'agents' must be an object"],
+    ['{"guard":"all"}', "policy agent 'guard' must be an object"],
+    ['{"guard":null}', "policy agent 'guard' must be an object"],
+    ['{"guard":[]}', "policy agent 'guard' must be an object"],
+  ];
+  const fields: [string, string, string][] = [
+    ['"cameras":[]', "tools", "an array of strings"],
+    ['"tools":"all","cameras":[]', "tools", "an array of strings"],
+    ['"tools":[1],"cameras":[]', "tools", "an array of strings"],
+    ['"tools":[]', "cameras", "an array of strings"],
+    ['"tools":[],"cameras":{}', "cameras", "an array of strings"],
+    ['"tools":[],"cameras":[1]', "cameras", "an array of strings"],
+  ];
+  const grants: [string, string, string][] = [
+    ['"ptz":null', "ptz", "an object"],
+    ['"ptz":[]', "ptz", "an object"],
+    ['"ptz":1', "ptz", "an object"],
+    ['"ptz":{}', "ptz.maxStep", "a finite number"],
+    ['"ptz":{"maxStep":"30"}', "ptz.maxStep", "a finite number"],
+    ['"ptz":{"maxStep":1e999}', "ptz.maxStep", "a finite number"],
+    ['"ptz":{"maxStep":30,"maxZoomStep":"25"}', "ptz.maxZoomStep", "a finite number"],
+    ['"ptz":{"maxStep":30,"maxZoomStep":null}', "ptz.maxZoomStep", "a finite number"],
+    ['"ptz":{"maxStep":30,"maxZoomStep":-1e999}', "ptz.maxZoomStep", "a finite number"],
+    ['"rate":null', "rate", "an object"],
+    ['"rate":[]', "rate", "an object"],
+    ['"rate":1', "rate", "an object"],
+    ['"rate":{"actuationPerMin":"6"}', "rate.actuationPerMin", "a finite number"],
+    ['"rate":{"actuationPerMin":1e999}', "rate.actuationPerMin", "a finite number"],
+    ['"rate":{"snapshotPerMin":null}', "rate.snapshotPerMin", "a finite number"],
+    ['"rate":{"snapshotPerMin":true}', "rate.snapshotPerMin", "a finite number"],
+    ['"config":true', "config", "an object"],
+    ['"config":null', "config", "an object"],
+    ['"config":[]', "config", "an object"],
+    ['"config":{}', "config.groups", "an array of strings"],
+    ['"config":{"groups":"Image"}', "config.groups", "an array of strings"],
+    ['"config":{"groups":[1]}', "config.groups", "an array of strings"],
+    ['"config":{"groups":[],"remediate":1}', "config.remediate", "a boolean"],
+    ['"config":{"groups":[],"aoa":0}', "config.aoa", "a boolean"],
+    ['"config":{"groups":[],"rebaseline":"true"}', "config.rebaseline", "a boolean"],
+    ['"config":{"groups":[],"rebaseline":null}', "config.rebaseline", "a boolean"],
+  ];
+  fields.push(...grants.map(([json, field, shape]): [string, string, string] => [`"tools":[],"cameras":[],${json}`, field, shape]));
+  cases.push(...fields.map(([json, field, shape]): [string, string] => [
+    `{"guard":{${json}}}`, `policy agent 'guard' field '${field}' must be ${shape}`,
+  ]));
+  for (const [json, message] of cases) expect(policyShapeProblem(JSON.parse(json)), json).toBe(message);
+});
+
+test("policy shape: a wrong type on a later agent is caught when the first agent is clean", () => {
+  expect(policyShapeProblem(JSON.parse('{"first":{"tools":[],"cameras":[]},"guard":{"tools":[],"cameras":"lobby2"}}')))
+    .toBe("policy agent 'guard' field 'cameras' must be an array of strings");
+  expect(policyShapeProblem(JSON.parse('{"first":{"tools":[],"cameras":[]},"second":{"tools":[],"cameras":[]},"guard":{"tools":[],"cameras":"lobby2"}}')))
+    .toBe("policy agent 'guard' field 'cameras' must be an array of strings");
+  expect(policyShapeProblem(JSON.parse('{"z-guard":{"tools":[],"cameras":"lobby2"},"a-guard":{"tools":"all","cameras":[]}}')))
+    .toBe("policy agent 'z-guard' field 'cameras' must be an array of strings");
+  expect(policyShapeProblem(JSON.parse('{"10":{"tools":"all","cameras":[]},"2":{"tools":[],"cameras":"lobby2"}}')))
+    .toBe("policy agent '2' field 'cameras' must be an array of strings");
+  expect(policyShapeProblem(JSON.parse('{"guard":{"config":null,"rate":null,"ptz":null,"cameras":null,"tools":null}}')))
+    .toBe("policy agent 'guard' field 'tools' must be an array of strings");
+  expect(policyShapeProblem(JSON.parse('{"guard":{"config":null,"rate":null,"ptz":null,"cameras":null,"tools":[]}}')))
+    .toBe("policy agent 'guard' field 'cameras' must be an array of strings");
+  expect(policyShapeProblem(JSON.parse('{"guard":{"config":null,"rate":null,"ptz":null,"cameras":[],"tools":[]}}')))
+    .toBe("policy agent 'guard' field 'ptz' must be an object");
+  expect(policyShapeProblem(JSON.parse('{"guard":{"config":null,"rate":null,"ptz":{"maxStep":30},"cameras":[],"tools":[]}}')))
+    .toBe("policy agent 'guard' field 'rate' must be an object");
+});
+
+test("policy shape: valid policies return null", () => {
+  expect(policyShapeProblem(JSON.parse(readFileSync(join(import.meta.dir, "policy.json"), "utf8")).agents)).toBeNull();
+  expect(policyShapeProblem(JSON.parse('{}'))).toBeNull();
+  expect(policyShapeProblem(JSON.parse('{"guard":{"tools":[],"cameras":[]}}'))).toBeNull();
+  const readme = readFileSync(join(import.meta.dir, "README.md"), "utf8");
+  const example = readme.slice(readme.indexOf("Grant agents authority in `policy.json`"))
+    .match(/```json\n([\s\S]*?)\n```/)![1]!;
+  expect(policyShapeProblem(JSON.parse(example).agents)).toBeNull();
+  const grants = [
+    '"ptz":{"maxStep":30,"maxZoomStep":25},"rate":{"actuationPerMin":6,"snapshotPerMin":30},"config":{"groups":["Image"],"remediate":true,"aoa":true,"rebaseline":true}',
+    '"ptz":{"maxStep":30,"maxZoomStep":-1}',
+    '"ptz":{"maxStep":0,"maxZoomStep":5}',
+    '"ptz":{"maxStep":-1}',
+    '"ptz":{"maxStep":0.5,"maxZoomStep":0}',
+    '"rate":{}',
+    '"rate":{"actuationPerMin":0,"snapshotPerMin":-1}',
+    '"rate":{"actuationPerMin":-1,"snapshotPerMin":0}',
+    '"config":{"groups":[]}',
+    '"config":{"groups":[],"remediate":false,"aoa":false,"rebaseline":false}',
+    '"ptz":{"maxStep":30,"unknown":null},"rate":{"unknown":true},"config":{"groups":[],"unknown":1}',
+  ];
+  for (const grant of grants) {
+    expect(policyShapeProblem(JSON.parse(`{"guard":{"tools":[],"cameras":[],${grant}}}`)), grant).toBeNull();
+  }
 });

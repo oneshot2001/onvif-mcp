@@ -31,6 +31,43 @@ export function ptzGranted(ptz: unknown): boolean {
     (maxZoomStep === undefined || (typeof maxZoomStep === "number" && Number.isFinite(maxZoomStep)));
 }
 
+export function policyShapeProblem(agents: unknown): string | null {
+  const isObject = (value: unknown): value is Record<string, unknown> =>
+    value !== null && typeof value === "object" && !Array.isArray(value);
+  const isStrings = (value: unknown): boolean =>
+    Array.isArray(value) && value.every((entry) => typeof entry === "string");
+  const isFiniteNumber = (value: unknown): boolean =>
+    typeof value === "number" && Number.isFinite(value);
+  if (!isObject(agents)) return "policy 'agents' must be an object";
+  for (const [agent, grants] of Object.entries(agents)) {
+    if (!isObject(grants)) return `policy agent '${agent}' must be an object`;
+    const problem = (field: string, shape: string) => `policy agent '${agent}' field '${field}' must be ${shape}`;
+    for (const field of ["tools", "cameras"]) {
+      if (!isStrings(grants[field])) return problem(field, "an array of strings");
+    }
+    const { ptz, rate, config } = grants;
+    if (ptz !== undefined) {
+      if (!isObject(ptz)) return problem("ptz", "an object");
+      if (!isFiniteNumber(ptz.maxStep)) return problem("ptz.maxStep", "a finite number");
+      if (ptz.maxZoomStep !== undefined && !isFiniteNumber(ptz.maxZoomStep)) return problem("ptz.maxZoomStep", "a finite number");
+    }
+    if (rate !== undefined) {
+      if (!isObject(rate)) return problem("rate", "an object");
+      for (const field of ["actuationPerMin", "snapshotPerMin"]) {
+        if (rate[field] !== undefined && !isFiniteNumber(rate[field])) return problem(`rate.${field}`, "a finite number");
+      }
+    }
+    if (config !== undefined) {
+      if (!isObject(config)) return problem("config", "an object");
+      if (!isStrings(config.groups)) return problem("config.groups", "an array of strings");
+      for (const field of ["remediate", "aoa", "rebaseline"]) {
+        if (config[field] !== undefined && typeof config[field] !== "boolean") return problem(`config.${field}`, "a boolean");
+      }
+    }
+  }
+  return null;
+}
+
 export function allowed(policy: Policy, agent: string, tool: string, camera?: string): string | null {
   const p = policy[agent];
   if (!p) return `agent '${agent}' not in policy (fail closed)`;
