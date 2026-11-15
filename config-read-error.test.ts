@@ -101,3 +101,28 @@ test("param.cgi read error: successful listing still reports drift and remediati
     .toEqual(textResult('would set Image.X: "live" → "saved"'));
   expect(h.calls).toEqual([listCall("config_drift"), listCall("config_remediate", "Image.X")]);
 });
+
+test("param.cgi read error: a reply with no parameter lines is not a listing", async () => {
+  for (const body of ["", "\r\n", "<html><body>Login required</body></html>",
+    "<html>\n<body>\nLogin required\n</body></html>"]) {
+    const options = { readReply: { ok: true, body } };
+    const helper = configHarness(root, options);
+    expect(await helper.configParams("config_drift", "cam", ["Image"]))
+      .toEqual({ ok: false, params: {} });
+    expect(helper.calls).toEqual([listCall("config_drift")]);
+
+    const h = configHarness(root, options);
+    expect(await h.handlers.config_baseline!({ camera: "cam" })).toEqual(textResult("baseline fetch failed"));
+    expect(h.chain).toEqual([["config_baseline", { camera: "cam" }, "allow", "fetch FAILED"]]);
+    expect(h.calls).toEqual([listCall("config_baseline")]);
+    expect(existsSync(join(root, "baselines", "cam.json"))).toBe(false);
+
+    saveBaseline();
+    const drift = configHarness(root, options);
+    expect(await drift.handlers.config_drift!({ camera: "cam" })).toEqual(textResult("drift fetch failed"));
+    expect(drift.chain).toEqual([["config_drift", { camera: "cam" }, "allow", "fetch FAILED"]]);
+    expect(drift.calls).toEqual([listCall("config_drift")]);
+    expect(readFileSync(join(root, "baselines", "cam.json"), "utf8")).toBe(saved);
+    rmSync(join(root, "baselines"), { recursive: true });
+  }
+});

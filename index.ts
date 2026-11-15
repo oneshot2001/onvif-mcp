@@ -385,7 +385,8 @@ function configDenied(tool: string, camera: string, approve = false): string | n
 async function configParams(tool: string, camera: string, groups: string[]): Promise<{ ok: boolean; params: Record<string, string> }> {
   if (!groups.length) return { ok: true, params: {} };
   const r = await vapix(tool, camera, `/axis-cgi/param.cgi?action=list&group=${groups.map(encodeURIComponent).join(",")}`);
-  return { ok: r.ok && !/^(# )?Error/m.test(r.body), params: parseParams(r.body) };
+  const params = parseParams(r.body);
+  return { ok: r.ok && !/^(# )?Error/m.test(r.body) && Object.keys(params).length > 0, params };
 }
 
 // ONVIF SOAP call. AXIS serves every ONVIF service at /onvif/services (per GetServices).
@@ -588,6 +589,11 @@ server.tool("config_baseline", "Capture allowed VAPIX parameters as the camera c
   const deny = configDenied("config_baseline", camera) ?? tierDenied("config_baseline", camera) ?? baselineDenied(config, existsSync(file));
   if (deny) { receipt("config_baseline", params, "deny", deny); return { content: [{ type: "text", text: `DENIED: ${deny}` }] }; }
   const groups = policy[AGENT]!.config!.groups;
+  if (!groups.length) {
+    const reason = "no config groups are granted for baselining";
+    receipt("config_baseline", params, "deny", reason);
+    return { content: [{ type: "text", text: `DENIED: ${reason}` }] };
+  }
   const live = await configParams("config_baseline", camera, groups);
   if (!live.ok) { receipt("config_baseline", params, "allow", "fetch FAILED"); return { content: [{ type: "text", text: "baseline fetch failed" }] }; }
   const hash = sha256(live.params);
@@ -616,6 +622,11 @@ server.tool("config_drift", "Compare live VAPIX parameters with the saved config
   const baseline = readBaseline(file);
   if (!baseline) { receipt("config_drift", params, "allow", "baseline unreadable"); return { content: [{ type: "text", text: "baseline unreadable" }] }; }
   const groups = baseline.groups.filter((g) => policy[AGENT]!.config!.groups.includes(g));
+  if (!groups.length) {
+    const reason = "none of the baseline's groups are granted to this agent";
+    receipt("config_drift", params, "deny", reason);
+    return { content: [{ type: "text", text: `DENIED: ${reason}` }] };
+  }
   const base = Object.fromEntries(Object.entries(baseline.params).filter(([param]) => inGroup(param, groups)));
   const live = await configParams("config_drift", camera, groups);
   if (!live.ok) { receipt("config_drift", params, "allow", "fetch FAILED"); return { content: [{ type: "text", text: "drift fetch failed" }] }; }

@@ -151,3 +151,25 @@ for (const tool of tools) {
     });
   }
 }
+
+test("config gate wiring: drift refuses a baseline none of whose groups is granted", async () => {
+  baseline({ "Time.NTP.Server": "old-server" }, ["Time"]);
+  const before = fs.readFileSync(file);
+  policy.test!.config!.groups = ["Image"];
+  for (const readReply of [undefined, { ok: true, body: "root.Image.X=live" }]) {
+    const h = configHarness(root, { policy, readReply });
+    const input = { camera: "cam" };
+    denied(h, "config_drift", input, await h.handlers.config_drift!(input),
+      "none of the baseline's groups are granted to this agent");
+    expect(fs.readFileSync(file)).toEqual(before);
+  }
+});
+
+test("config gate wiring: baseline refuses an empty group grant before transport", async () => {
+  policy.test!.config!.groups = [];
+  const h = configHarness(root, { policy });
+  const input = { camera: "cam" };
+  denied(h, "config_baseline", input, await h.handlers.config_baseline!(input),
+    "no config groups are granted for baselining");
+  expect(fs.existsSync(file)).toBe(false);
+});
