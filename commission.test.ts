@@ -2195,3 +2195,50 @@ test("commission rollback performed: an AOA restore counts as a rollback write w
     else expect(h.aoa().scenarios.map(s => s.name)).toEqual(["keep-me", "lab-motion"]);
   }
 });
+
+test("camera request encoding: commission_apply percent-encodes the parameter name and value in the update request", async () => {
+  const h = harness();
+  const name = "Image.I0.Text.String&a=b #%+é?/x";
+  const value = "a&b=c d#e%f+g?é/h";
+  h.state[name] = "p&q=r s#t%u+v?é/w";
+  writeFileSync(join(h.root, "specs/encoding.yaml"), `spec: camspec/0.1\nname: encoding\nparams:\n  ${JSON.stringify(name)}: ${JSON.stringify(value)}\n`);
+  const result = await h.handlers.commission_apply!({ camera: "cam", spec: "encoding", approve: true });
+  expect(h.writes).toEqual([
+    "/axis-cgi/param.cgi?action=update&Image.I0.Text.String%26a%3Db%20%23%25%2B%C3%A9%3F%2Fx=a%26b%3Dc%20d%23e%25f%2Bg%3F%C3%A9%2Fh",
+  ]);
+  expect(h.state[name]).toBe(value);
+  expect(JSON.parse(result.content[0]!.text)).toMatchObject({ passed: true, rolled_back: false });
+});
+
+test("camera request encoding: commission_apply rollback percent-encodes the parameter name and the previous value", async () => {
+  const h = harness();
+  const name = "Image.I0.Text.String&a=b #%+é?/x";
+  const value = "a&b=c d#e%f+g?é/h";
+  const previous = "p&q=r s#t%u+v?é/w";
+  h.state[name] = previous;
+  process.env.COMMISSION_FAIL_PARAM = name;
+  writeFileSync(join(h.root, "specs/encoding.yaml"), `spec: camspec/0.1\nname: encoding\nparams:\n  ${JSON.stringify(name)}: ${JSON.stringify(value)}\n`);
+  const result = await h.handlers.commission_apply!({ camera: "cam", spec: "encoding", approve: true });
+  expect(h.writes).toEqual([
+    "/axis-cgi/param.cgi?action=update&Image.I0.Text.String%26a%3Db%20%23%25%2B%C3%A9%3F%2Fx=a%26b%3Dc%20d%23e%25f%2Bg%3F%C3%A9%2Fh",
+    "/axis-cgi/param.cgi?action=update&Image.I0.Text.String%26a%3Db%20%23%25%2B%C3%A9%3F%2Fx=p%26q%3Dr%20s%23t%25u%2Bv%3F%C3%A9%2Fw",
+  ]);
+  expect(h.state[name]).toBe(previous);
+  expect(JSON.parse(result.content[0]!.text)).toMatchObject({ passed: false, rolled_back: true, rollback_verified: true });
+});
+
+test("camera request encoding: commission_apply percent-encodes the preset name in the save request", async () => {
+  const h = harness({ ptz: true });
+  const preset = "Dock & Gate=1 #2 50%+é?/x";
+  writeFileSync(join(h.root, "specs/encoding.yaml"), `spec: camspec/0.1\nname: encoding\npresets:\n  ${JSON.stringify(preset)}: { pan: 1, tilt: 2, zoom: 3 }\n`);
+  const vapix = spyOn(h.deps, "vapix");
+  try {
+    const result = await h.handlers.commission_apply!({ camera: "cam", spec: "encoding", approve: true });
+    expect(vapix.mock.calls.map(call => call[2]).filter(path => path.includes("/ptz.cgi?") && !path.includes("query="))).toEqual([
+      "/axis-cgi/com/ptz.cgi?pan=1&tilt=2&zoom=3",
+      "/axis-cgi/com/ptz.cgi?setserverpresetname=Dock%20%26%20Gate%3D1%20%232%2050%25%2B%C3%A9%3F%2Fx",
+    ]);
+    expect([...h.presets]).toEqual([preset]);
+    expect(JSON.parse(result.content[0]!.text).passed).toBeTrue();
+  } finally { vapix.mockRestore(); }
+});

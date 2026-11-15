@@ -64,6 +64,7 @@ function harness(mode: string, password = "fake-password", options: HarnessOptio
   const policy = options.policy ?? freshPolicy();
   let captureCount = 0;
   const calls: string[] = [];
+  const paths: string[] = [];
   const toolCalls: Array<{ call: string; tool: string }> = [];
   const dispatchScopes: Array<{ call: string; digest: string | undefined }> = [];
   const recordCall = (call: string, tool: string) => {
@@ -145,6 +146,7 @@ function harness(mode: string, password = "fake-password", options: HarnessOptio
       return true;
     },
     vapix: async (tool: string, _camera: string, path: string) => {
+      paths.push(path);
       credentialChannel(path);
       const readback = path.includes("query=position");
       recordCall(readback ? "readback" : "recall", tool);
@@ -157,7 +159,7 @@ function harness(mode: string, password = "fake-password", options: HarnessOptio
     },
   };
   const emitAar = new Function(...Object.keys(dependencies), code + "\nreturn emitAar;")(...Object.values(dependencies));
-  return { handlers, rawHandlers, calls, toolCalls, dispatchScopes, emitAar, lines, signedReceipts, assertCommitted,
+  return { handlers, rawHandlers, calls, paths, toolCalls, dispatchScopes, emitAar, lines, signedReceipts, assertCommitted,
     publicKey: publicKey.export({ type: "spki", format: "pem" }).toString(),
     get chain(): any[][] { return signedReceipts().map(r => [r.action.tool, r.action.params, r.decision, r.detail]); },
   };
@@ -934,4 +936,17 @@ test("W2b invocation binding: actual emitAar outside a run signs a null-ID failu
   expect(h.signedReceipts()).toHaveLength(1);
   expect(h.signedReceipts()[0]).toMatchObject({ action: { tool: "aar_emit" }, decision: "allow", detail: "wire emission FAILED: no invocation context" });
   assertSigned(h, null);
+});
+
+test("camera request encoding: ptz_preset percent-encodes the preset name in the recall request", async () => {
+  const h = harness("ok");
+  const preset = "Dock & Gate=1 #2 50%+é?/x";
+  const result = await h.handlers.ptz_preset!({ camera: "cam", preset });
+  expect(h.paths).toEqual([
+    "/axis-cgi/com/ptz.cgi?gotoserverpresetname=Dock%20%26%20Gate%3D1%20%232%2050%25%2B%C3%A9%3F%2Fx",
+    "/axis-cgi/com/ptz.cgi?query=position",
+    "/axis-cgi/com/ptz.cgi?query=position",
+  ]);
+  expect(h.chain).toEqual([["ptz_preset", { camera: "cam", preset }, "allow", "preset recalled (vapix)"]]);
+  expect(outputText(result)).not.toContain("DENIED:");
 });
