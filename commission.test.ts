@@ -2242,3 +2242,52 @@ test("camera request encoding: commission_apply percent-encodes the preset name 
     expect(JSON.parse(result.content[0]!.text).passed).toBeTrue();
   } finally { vapix.mockRestore(); }
 });
+
+test("observe window bound: a spec whose observe.seconds exceeds the timer limit is refused at load", () => {
+  const h = harness();
+  const message = "observe.seconds must be at most 2147483 (the event window timer limit)";
+  for (const seconds of [2147484, 2147483.5, 1000000000, 1e300]) {
+    writeFileSync(join(h.root, "specs/window.yaml"), `spec: camspec/0.1\nname: window\nparams:\n  Image.I0.Appearance.Rotation: '180'\nscenarios:\n  - name: lab-motion\n    type: motion\n    objects: [human]\n    area: [[-0.9,-0.9],[0.9,-0.9],[0.9,0.9],[-0.9,0.9]]\nobserve: { seconds: ${seconds} }\n`);
+    let caught: unknown;
+    try { readCommissionSpec(h.root, "window"); } catch (error) { caught = error; }
+    expect(caught).toBeInstanceOf(Error);
+    expect((caught as Error).message).toBe(message);
+  }
+});
+
+test("observe window bound: commission_apply refuses an over-limit window before any camera call", async () => {
+  const h = harness();
+  const before = structuredClone(h.state);
+  const message = "observe.seconds must be at most 2147483 (the event window timer limit)";
+  writeFileSync(join(h.root, "specs/window.yaml"), "spec: camspec/0.1\nname: window\nparams:\n  Image.I0.Appearance.Rotation: '180'\nscenarios:\n  - name: lab-motion\n    type: motion\n    objects: [human]\n    area: [[-0.9,-0.9],[0.9,-0.9],[0.9,0.9],[-0.9,0.9]]\nobserve: { seconds: 2147484 }\n");
+  const spies = (["vapix", "vapixPost", "configParams", "observeEvents", "snapshot", "clockCheck"] as const).map(name => spyOn(h.deps, name));
+  try {
+    const result = await h.handlers.commission_apply!({ camera: "cam", spec: "window", approve: true });
+    const expected = { content: [{ type: "text", text: message }], isError: true };
+    expect(result).toEqual(expected);
+    for (const spy of spies) expect(spy).not.toHaveBeenCalled();
+    expect(h.receipts).toEqual([expect.objectContaining({ tool: "commission_apply", decision: "allow", detail: `FAILED: ${message}` })]);
+    expect(h.writes).toEqual([]);
+    expect(h.posts).toEqual([]);
+    expect(h.state).toEqual(before);
+    expect(readdirSync(h.root)).toEqual(["specs"]);
+  } finally { for (const spy of spies) spy.mockRestore(); }
+});
+
+test("observe window bound: a window at the timer limit still loads and is observed for that length", async () => {
+  const h = harness();
+  for (const seconds of [0, 60, 2147483]) {
+    writeFileSync(join(h.root, "specs/window.yaml"), `spec: camspec/0.1\nname: window\nparams:\n  Image.I0.Appearance.Rotation: '180'\nscenarios:\n  - name: lab-motion\n    type: motion\n    objects: [human]\n    area: [[-0.9,-0.9],[0.9,-0.9],[0.9,0.9],[-0.9,0.9]]\nobserve: { seconds: ${seconds} }\n`);
+    expect(readCommissionSpec(h.root, "window").spec.observe).toEqual({ seconds });
+  }
+  const observeEvents = spyOn(h.deps, "observeEvents");
+  try {
+    const out = JSON.parse((await h.handlers.commission_apply!({ camera: "cam", spec: "window", approve: true })).content[0]!.text);
+    expect(out.passed).toBeTrue();
+    expect(observeEvents).toHaveBeenCalledTimes(1);
+    expect(observeEvents.mock.calls[0]![3]).toBe(2147483);
+    const handoff = JSON.parse(readFileSync(out.handoff, "utf8"));
+    expect(handoff.observation.window_seconds).toBe(2147483);
+    expect(verifyHandoffs(h.root, h.publicKey)).toMatchObject({ count: 1, bad: [] });
+  } finally { observeEvents.mockRestore(); }
+});

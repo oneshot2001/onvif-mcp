@@ -165,6 +165,7 @@ export function readCommissionSpec(root: string, ref: string): { spec: Spec; sha
   const observeValue = doc.observe;
   if (observeValue !== undefined && (!observeValue || typeof observeValue !== "object" || Array.isArray(observeValue) || Object.keys(observeValue).some((key) => key !== "seconds") || typeof (observeValue as { seconds?: unknown }).seconds !== "number" || !Number.isFinite((observeValue as { seconds: number }).seconds) || (observeValue as { seconds: number }).seconds < 0)) throw new Error("observe must contain only a non-negative seconds number");
   const observe = { seconds: observeValue ? (observeValue as { seconds: number }).seconds : scenarios.length ? 60 : 0 };
+  if (observe.seconds > 2147483) throw new Error("observe.seconds must be at most 2147483 (the event window timer limit)");
   return { spec: { spec: "camspec/0.1", name: doc.name, ...(applies ? { applies_to: applies as { models: string[] } } : {}), params: params as Record<string, string>, presets, scenarios, observe }, sha256: new Bun.CryptoHasher("sha256").update(bytes).digest("hex") };
 }
 
