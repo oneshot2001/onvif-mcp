@@ -33,7 +33,7 @@ provide correlation, not proof of dispatch.
 `profile: "aar-0.2-draft-alignment"` marks these receipts as vocabulary-aligned,
 **explicitly not conformance-claiming**.
 
-AOA event stream observation (`observe:`) is outside the transport witness's view and uses `wss://…/vapix/ws-data-stream` with `rejectUnauthorized: false` and Basic auth; pinned cameras refuse it outright, so every observation that actually happens uses unverified TLS and is unwitnessed, including the camera traffic behind a `commission_apply` observation window (receipted `device_acknowledged`).
+AOA event stream observation (`observe:`) is outside the transport witness's view and uses `wss://…/vapix/ws-data-stream` with `rejectUnauthorized: false` and Basic auth; pinned cameras refuse it outright, so every observation that actually happens uses unverified TLS and is unwitnessed, including the camera traffic behind a `commission_apply` observation window (receipted `device_acknowledged`). Because the event stream does not check the camera's certificate, whoever answers that connection receives the camera credential in the Basic `Authorization` header: this holds on every camera without a pin, whatever the scheme of its `base` (an http:// camera is still contacted over wss://), and a pinned camera refuses the observation instead of sending it.
 
 ## What conformance requires (the gap — build packet for the systems lane)
 
