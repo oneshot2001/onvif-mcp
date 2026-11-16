@@ -2291,3 +2291,33 @@ test("observe window bound: a window at the timer limit still loads and is obser
     expect(verifyHandoffs(h.root, h.publicKey)).toMatchObject({ count: 1, bad: [] });
   } finally { observeEvents.mockRestore(); }
 });
+
+
+test("commission unreported parameter: a parameter the camera does not report stops the apply before any write", async () => {
+  const h = harness({ ptz: true });
+  const before = { ...h.state };
+  const beforeAoa = structuredClone(h.aoa());
+  const vapix = spyOn(h.deps, "vapix");
+  try {
+    const handoff = await expectRollback(h, `params:
+  ${rollbackParam}: '180'
+  Image.I0.Appearance.Mirror: 'yes'
+  Image.I0.Appearance.Flip: 'yes'
+presets:
+  Dock: { pan: 10, tilt: -5, zoom: 100 }
+${rollbackScenario}`, { performed: false, verified: null }, []);
+    expect(handoff.verify.failed.slice(0, 3)).toEqual([
+      { param: "Image.I0.Appearance.Mirror", desired: "yes", observed: null },
+      { param: rollbackParam, desired: "180", observed: "0" },
+      { param: "Image.I0.Appearance.Flip", desired: "yes", observed: null },
+    ]);
+    expect(handoff.applied).toEqual([]);
+    expect(h.writes).toEqual([]);
+    expect(vapix.mock.calls.map(call => call[2]).filter(path => path.includes("ptz.cgi?pan=") || path.includes("setserverpresetname="))).toEqual([]);
+    expect(h.state).toEqual(before);
+    expect(h.aoa()).toEqual(beforeAoa);
+    const details = h.receipts.map(receipt => receipt.detail);
+    expect(details.filter(detail => /^(wrote |write FAILED |moved |saved preset |deployed scenario )/.test(detail))).toEqual([]);
+    expect(details).toContain("verification FAILED");
+  } finally { vapix.mockRestore(); }
+});

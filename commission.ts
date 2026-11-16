@@ -576,7 +576,9 @@ export function registerCommission(server: McpServer, d: CommissionDeps) {
       }
       const applied: Applied[] = [];
       let writeFailed: Failure | null = null;
-      for (const item of p.plan) {
+      const unreported = p.plan.find((item) => item.current === null);
+      if (unreported) writeFailed = { param: unreported.param, desired: unreported.desired, observed: null };
+      if (!writeFailed) for (const item of p.plan) {
         if (item.current === null) { writeFailed = { param: item.param, desired: item.desired, observed: null }; break; }
         const r = await d.vapix("commission_apply", camera, `/axis-cgi/param.cgi?action=update&${encodeURIComponent(item.param)}=${encodeURIComponent(item.desired)}`);
         const ok = r.ok && !/^(# )?Error/m.test(r.body);
