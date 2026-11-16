@@ -2321,3 +2321,55 @@ ${rollbackScenario}`, { performed: false, verified: null }, []);
     expect(details).toContain("verification FAILED");
   } finally { vapix.mockRestore(); }
 });
+
+async function expectGuardedObservation(observeEvents: CommissionDeps["observeEvents"], count: number) {
+  const h = harness({ observeEvents });
+  writeFileSync(join(h.root, "specs/evidence.yaml"), "spec: camspec/0.1\nname: evidence\nscenarios:\n  - name: lab-motion\n    type: motion\n    objects: [human]\n    area: [[-0.9,-0.9],[0.9,-0.9],[0.9,0.9],[-0.9,0.9]]\nobserve: { seconds: 1 }\n");
+  const out = JSON.parse((await h.handlers.commission_apply!({ camera: "cam", spec: "evidence", approve: true })).content[0]!.text);
+  expect(out.passed).toBeTrue();
+  const handoff = JSON.parse(readFileSync(out.handoff, "utf8"));
+  expect(out.observation).toEqual(handoff.observation);
+  expect(handoff.observation.window_seconds).toBe(1);
+  expect(Object.keys(handoff.observation.fired)).toEqual(["lab-motion"]);
+  expect(handoff.observation.fired["lab-motion"].count).toBe(count);
+  expect(handoff.observation.warnings).toEqual(count ? [] : ["lab-motion: 0 events in window"]);
+  expect(h.receipts.filter((receipt) => receipt.detail.startsWith("observed "))).toEqual([
+    expect.objectContaining({ tool: "commission_apply", decision: "allow", detail: "observed 1s AOA event window", resultHash: h.deps.sha256(handoff.observation), evidence: "device_acknowledged" }),
+  ]);
+  expect(verifyHandoffs(h.root, h.publicKey)).toMatchObject({ count: 1, bad: [] });
+}
+
+test("commission handoff evidence guards: an event on a foreign topic is credited to no scenario", async () => {
+  for (const ownEvent of [true, false]) {
+    await expectGuardedObservation(async (_tool, _camera, topics) => ({
+      events: [
+        { topic: "tnsaxis:CameraApplicationPlatform/ObjectAnalytics/Device1Scenario99", message: { data: { active: "1" } } },
+        { topic: "tnsaxis:CameraApplicationPlatform/ObjectAnalytics/Device1Scenario99", message: { data: {} } },
+        ...(ownEvent ? [{ topic: topics[0]!, message: { data: { active: "1" } } }] : []),
+      ], warnings: [],
+    }), ownEvent ? 1 : 0);
+  }
+});
+
+test("commission handoff evidence guards: an inactive state value without an active value is not counted", async () => {
+  await expectGuardedObservation(async (_tool, _camera, topics) => ({
+    events: ["0", false, 0, "1", true].map((state) => ({ topic: topics[0]!, message: { data: { state } } })), warnings: [],
+  }), 2);
+});
+
+test("commission handoff evidence guards: a frame without the JPEG start-of-image marker fails and leaves no frame", async () => {
+  const fixture = readFileSync(join(import.meta.dir, "fixtures/scene/synthetic-8x8.jpg"));
+  expect([...fixture.subarray(0, 2)]).toEqual([0xff, 0xd8]);
+  for (const index of [0, 1]) {
+    const bytes = Buffer.from(fixture);
+    bytes[index] = 0x00;
+    const h = harness({ snapshot: async (_tool, _camera, file) => { writeFileSync(file, bytes); return true; } });
+    writeFileSync(join(h.root, "specs/evidence.yaml"), "spec: camspec/0.1\nname: evidence\n");
+    const out = JSON.parse((await h.handlers.commission_verify!({ camera: "cam", spec: "evidence" })).content[0]!.text);
+    expect(out.passed).toBeTrue();
+    const handoff = JSON.parse(readFileSync(out.handoff, "utf8"));
+    expect(handoff.scene.reference_frame).toEqual({ state: "failed", reason: "not a complete JPEG" });
+    expect(readdirSync(join(h.root, "handoff")).filter((file) => file.endsWith(".jpg"))).toEqual([]);
+    expect(verifyHandoffs(h.root, h.publicKey)).toMatchObject({ count: 1, bad: [] });
+  }
+});
