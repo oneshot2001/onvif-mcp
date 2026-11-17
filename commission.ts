@@ -22,7 +22,7 @@ type AoaScenario = Record<string, unknown> & { id: number; name: string; type: s
 type AoaConfiguration = Record<string, unknown> & { devices?: Array<{ id?: unknown }>; scenarios: AoaScenario[] };
 type ScenarioPlan = { name: string; id: number; type: Scenario["type"]; action: "deploy" };
 type ScenarioResult = { name: string; id: number | null; type: Scenario["type"]; deployed: boolean; readback_diff: string[] };
-type EventNotification = { topic: string; timestamp?: string | number; message?: { data?: Record<string, unknown> } };
+type EventNotification = { topic: string; timestamp?: string | number; received?: string; message?: { data?: Record<string, unknown> } };
 type Observation = { window_seconds: number; started: string; finished: string; fired: Record<string, { count: number; first: string | null; last: string | null }>; warnings: string[] };
 type ReceiptHead = { seq: number; hash: string };
 type PtzPosition = { pan: number; tilt: number; zoom: number };
@@ -401,7 +401,7 @@ export function registerCommission(server: McpServer, d: CommissionDeps) {
           const data = event.message?.data ?? {};
           const active = data.active ?? data.state;
           if (active !== undefined && ![true, 1, "1", "true"].includes(active as never)) continue;
-          const at = new Date().toISOString(); // host receive time — camera clocks drift (P3285 ran 17s ahead with no NTP)
+          const at = event.received ?? new Date().toISOString(); // host receive time — camera clocks drift (P3285 ran 17s ahead with no NTP)
           const item = fired[name]!;
           item.count++;
           item.first ??= at;

@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, spyOn, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, setSystemTime, spyOn, test } from "bun:test";
 import { createHash, generateKeyPairSync, sign } from "node:crypto";
 import { copyFileSync, readdirSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -10,6 +10,7 @@ import type { ClockResult } from "./clock";
 import { currentInvocationId, withInvocations } from "./invocation";
 import { parseParams as parseVapixParams } from "./vapix-params";
 import { accountFor } from "./account-for";
+import { parseEventMessage } from "./event-parse";
 
 const fakeClock: Extract<ClockResult, { state: "ok" }> = {
   state: "ok", camera_time: "2026-10-17T00:09:40.000Z",
@@ -2372,4 +2373,97 @@ test("commission handoff evidence guards: a frame without the JPEG start-of-imag
     expect(readdirSync(join(h.root, "handoff")).filter((file) => file.endsWith(".jpg"))).toEqual([]);
     expect(verifyHandoffs(h.root, h.publicKey)).toMatchObject({ count: 1, bad: [] });
   }
+});
+
+test("commission event times: fired first and last are the times the events arrived, not the end of the window", async () => {
+  const h = harness({ observeEvents: async (_tool, _camera, topics) => ({
+    events: [
+      { topic: topics[0]!, timestamp: "2099-01-01T00:00:01.000Z", received: "2026-11-16T10:00:01.000Z", message: { data: { active: "1" } } },
+      { topic: topics[0]!, timestamp: "2099-01-01T00:00:12.000Z", received: "2026-11-16T10:00:12.000Z", message: { data: { active: "1" } } },
+      { topic: topics[0]!, timestamp: "2099-01-01T00:00:15.000Z", received: "2026-11-16T10:00:15.000Z", message: { data: { active: "0" } } },
+    ], warnings: [],
+  }) });
+  writeFileSync(join(h.root, "specs/events.yaml"), "spec: camspec/0.1\nname: events\nscenarios:\n  - name: lab-motion\n    type: motion\n    objects: [human]\n    area: [[-0.9,-0.9],[0.9,-0.9],[0.9,0.9],[-0.9,0.9]]\nobserve: { seconds: 30 }\n");
+  const out = JSON.parse((await h.handlers.commission_apply!({ camera: "cam", spec: "events", approve: true })).content[0]!.text);
+  expect(out.passed).toBeTrue();
+  const handoff = JSON.parse(readFileSync(out.handoff, "utf8"));
+  for (const observation of [out.observation, handoff.observation]) {
+    expect(observation.window_seconds).toBe(30);
+    expect(observation.fired).toEqual({ "lab-motion": { count: 2, first: "2026-11-16T10:00:01.000Z", last: "2026-11-16T10:00:12.000Z" } });
+  }
+  expect(out.observation).toEqual(handoff.observation);
+  expect(h.receipts.filter(receipt => receipt.detail.startsWith("observed "))).toEqual([
+    expect.objectContaining({ tool: "commission_apply", decision: "allow", detail: "observed 30s AOA event window", resultHash: h.deps.sha256(handoff.observation), evidence: "device_acknowledged" }),
+  ]);
+  expect(verifyHandoffs(h.root, h.publicKey)).toMatchObject({ count: 1, bad: [] });
+});
+
+test("commission event times: the event listener stamps each event with the host time it arrived", async () => {
+  const source = readFileSync(join(import.meta.dir, "index.ts"), "utf8");
+  const start = source.indexOf("async function observeEvents(");
+  const end = source.indexOf("type Baseline =", start);
+  if (start < 0 || end <= start || !source.slice(start, end).trimEnd().endsWith("}")) throw new Error("observeEvents slice boundaries missing");
+  const code = new Bun.Transpiler({ loader: "ts" }).transformSync(source.slice(start, end));
+  const h = harness();
+  writeFileSync(join(h.root, "specs/events.yaml"), "spec: camspec/0.1\nname: events\nscenarios:\n  - name: lab-motion\n    type: motion\n    objects: [human]\n    area: [[-0.9,-0.9],[0.9,-0.9],[0.9,0.9],[-0.9,0.9]]\nobserve: { seconds: 30 }\n");
+  const arrivals = ["2026-11-16T10:00:01.000Z", "2026-11-16T10:00:05.000Z", "2026-11-16T10:00:09.000Z"];
+  const camera = { base: "http://camera.invalid", user: "admin", credKey: "admin" };
+  const socket = new EventTarget();
+  const timers = new Map<number, () => void>();
+  let timerId = 0;
+  let topic: string;
+  const ws = {
+    readyState: 0,
+    close() { ws.readyState = 3; },
+    send(data: string) { topic = JSON.parse(data).params.eventFilterList[0].topicFilter; },
+    addEventListener(type: string, listener: EventListener) { socket.addEventListener(type, listener); },
+  };
+  const dependencies = {
+    accountFor, parseEventMessage, camOf: () => camera, passwords: { admin: "stand-in-password" },
+    process: { env: {} }, WebSocket: { OPEN: 1, CONNECTING: 0 },
+    openEventWebSocket(_cam: typeof camera, credential: () => { user: string; password: string }) {
+      expect(credential()).toEqual({ user: "admin", password: "stand-in-password" });
+      queueMicrotask(() => { ws.readyState = 1; socket.dispatchEvent(new Event("open")); });
+      return ws;
+    },
+    setTimeout(callback: () => void, ms: number) {
+      const id = ++timerId;
+      timers.set(id, callback);
+      if (ms === 30_000) queueMicrotask(() => {
+        for (const received of arrivals) {
+          setSystemTime(new Date(received));
+          socket.dispatchEvent(new MessageEvent("message", { data: JSON.stringify({
+            method: "events:notify", params: { notification: {
+              topic, timestamp: "2099-01-01T00:00:00.000Z", received: "2099-01-01T00:00:00.000Z", message: { data: { active: "1" } },
+            } },
+          }) }));
+        }
+        setSystemTime(new Date("2026-11-16T10:00:30.000Z"));
+        timers.get(id)?.();
+      });
+      return id;
+    },
+    clearTimeout(id: number) { timers.delete(id); },
+  };
+  const observeEvents: CommissionDeps["observeEvents"] = new Function(...Object.keys(dependencies), `${code}\nreturn observeEvents;`)(...Object.values(dependencies));
+  let sensed: Awaited<ReturnType<CommissionDeps["observeEvents"]>> | undefined;
+  h.deps.observeEvents = async (...args) => { sensed = await observeEvents(...args); return sensed; };
+  try {
+    setSystemTime(new Date("2026-11-16T10:00:00.000Z"));
+    const out = JSON.parse((await h.handlers.commission_apply!({ camera: "cam", spec: "events", approve: true })).content[0]!.text);
+    expect(sensed!.events.map(event => event.received)).toEqual(arrivals);
+    expect(out.passed).toBeTrue();
+    const handoff = JSON.parse(readFileSync(out.handoff, "utf8"));
+    for (const observation of [out.observation, handoff.observation]) {
+      expect(observation.window_seconds).toBe(30);
+      expect(observation.fired).toEqual({ "lab-motion": { count: 3, first: arrivals[0], last: arrivals[2] } });
+      expect(Date.parse(observation.finished)).toBeGreaterThanOrEqual(Date.parse("2026-11-16T10:00:30.000Z"));
+      const { first, last } = observation.fired["lab-motion"];
+      expect(Date.parse(observation.started)).toBeLessThanOrEqual(Date.parse(first));
+      expect(Date.parse(first)).toBeLessThanOrEqual(Date.parse(last));
+      expect(Date.parse(last)).toBeLessThanOrEqual(Date.parse(observation.finished));
+    }
+    expect(out.observation).toEqual(handoff.observation);
+    expect(verifyHandoffs(h.root, h.publicKey)).toMatchObject({ count: 1, bad: [] });
+  } finally { setSystemTime(); }
 });

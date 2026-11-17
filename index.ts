@@ -320,9 +320,9 @@ async function vapixPost(tool: string, camera: string, path: string, body: unkno
   return { ok: p.exitCode === 0, body: p.stdout.toString() };
 }
 
-async function observeEvents(tool: string, camera: string, topics: string[], seconds: number): Promise<{ events: Array<{ topic: string; timestamp?: string | number; message?: { data?: Record<string, unknown> } }>; warnings: string[] }> {
+async function observeEvents(tool: string, camera: string, topics: string[], seconds: number): Promise<{ events: Array<{ topic: string; timestamp?: string | number; received?: string; message?: { data?: Record<string, unknown> } }>; warnings: string[] }> {
   const cam = camOf(camera);
-  const events: Array<{ topic: string; timestamp?: string | number; message?: { data?: Record<string, unknown> } }> = [];
+  const events: Array<{ topic: string; timestamp?: string | number; received?: string; message?: { data?: Record<string, unknown> } }> = [];
   const warnings: string[] = [];
   if (process.env.GATEWAY_WITNESS_SOCKET !== undefined) return { events, warnings: ["event observation unavailable in gateway mode: the witness carries HTTP only (P1)"] };
   return await new Promise((resolve) => {
@@ -351,7 +351,7 @@ async function observeEvents(tool: string, camera: string, topics: string[], sec
     ws.addEventListener("message", ({ data }) => {
       const { event, warning } = parseEventMessage(data);
       if (warning) warnings.push(warning);
-      if (event) events.push(event);
+      if (event) events.push({ ...event, received: new Date().toISOString() });
     });
     ws.addEventListener("error", () => finish("event WebSocket failed"));
     ws.addEventListener("close", () => { if (!done) finish(opened ? "event WebSocket closed before the observation window finished" : "event WebSocket connection rejected"); });
