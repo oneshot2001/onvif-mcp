@@ -11,6 +11,17 @@ export function unknownAgentKey(policy: Policy): string | null {
   return null;
 }
 
+export function unknownPolicyCamera(policy: Policy, cameras: Record<string, unknown>): string | null {
+  for (const [agent, grants] of Object.entries(policy)) {
+    for (const camera of grants.cameras) {
+      if (!Object.hasOwn(cameras, camera)) {
+        return `policy agent '${agent}' names camera '${camera}' that is not in cameras.json`;
+      }
+    }
+  }
+  return null;
+}
+
 export function baselineDenied(config: { agent: string; rebaseline?: boolean }, exists: boolean): string | null {
   if (exists && config.rebaseline !== true) return `baseline exists; agent '${config.agent}' has no rebaseline grant`;
   return null;

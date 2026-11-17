@@ -31,7 +31,7 @@ import { accountFor, type CameraAccounts } from "./account-for";
 import { keyModeProblem } from "./key-perms";
 import { missingPasswords, unsafeCredentials } from "./creds-check";
 import { makeLimiter } from "./rate-limit";
-import { allowed as policyAllowed, baselineDenied, configDenied as policyConfigDenied, ptzBound, ptzGranted, policyShapeProblem, unknownAgentKey, type Policy } from "./policy-check";
+import { allowed as policyAllowed, baselineDenied, configDenied as policyConfigDenied, ptzBound, ptzGranted, policyShapeProblem, unknownAgentKey, unknownPolicyCamera, type Policy } from "./policy-check";
 
 const ROOT = import.meta.dir;
 const KEYDIR = join(ROOT, ".keys");
@@ -149,6 +149,11 @@ if (policyKeyProblem !== null) {
   process.exit(1);
 }
 const limiter = makeLimiter(Date.now);
+const policyCameraProblem = unknownPolicyCamera(policy, cameras);
+if (policyCameraProblem !== null) {
+  console.error(policyCameraProblem);
+  process.exit(1);
+}
 function rateDenied(key: "actuation" | "snapshot"): string | null {
   if (Object.keys(policy[AGENT] ?? {}).some(name => /^rates?$/i.test(name) && name !== "rate")) {
     return "rate limit: policy has a misspelled rate container";

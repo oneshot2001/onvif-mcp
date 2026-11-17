@@ -438,3 +438,29 @@ test("vault failure wiring: malformed replies print fixed text", () => {
     }
   }
 });
+
+function runPolicyCameraGate(policy: unknown, cameras: Record<string, unknown>) {
+  return runGate(`
+    ${importHelper("unknownPolicyCamera", "policy-check.ts")}
+    const policy = ${JSON.stringify(policy)};
+    const cameras = ${JSON.stringify(cameras)};
+  `, slice("const policyCameraProblem = unknownPolicyCamera(policy, cameras);", "function rateDenied("));
+}
+
+test("policy camera wiring: a camera another agent names that cameras.json lacks exits 1 naming the agent and camera", () => {
+  expectRejected(runPolicyCameraGate({
+    viewer: { tools: [], cameras: ["lobby"] },
+    operator: { tools: [], cameras: ["lobby", "retired"] },
+  }, { lobby: {} }), "policy agent 'operator' names camera 'retired' that is not in cameras.json");
+  expectRejected(runPolicyCameraGate({
+    viewer: { tools: [], cameras: ["toString"] },
+  }, {}), "policy agent 'viewer' names camera 'toString' that is not in cameras.json");
+});
+
+test("policy camera wiring: the committed policy and cameras files continue", () => {
+  expectContinued(runPolicyCameraGate(
+    JSON.parse(readFileSync(join(import.meta.dir, "policy.json"), "utf8")).agents,
+    JSON.parse(readFileSync(join(import.meta.dir, "cameras.json"), "utf8")),
+  ));
+  expectContinued(runPolicyCameraGate({ viewer: { tools: [], cameras: [] } }, {}));
+});
