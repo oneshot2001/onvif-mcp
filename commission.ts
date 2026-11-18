@@ -244,6 +244,7 @@ export function registerCommission(server: McpServer, d: CommissionDeps) {
   const checkScenarioIds = (config: AoaConfiguration): AoaConfiguration => {
     const ids = config.scenarios.map((scenario) => (scenario as { id?: unknown } | null)?.id);
     if (!ids.every((id) => Number.isSafeInteger(id) && (id as number) >= 0)) throw new Error("AOA getConfiguration returned an invalid scenario id");
+    if (new Set(ids).size !== ids.length) throw new Error("AOA getConfiguration returned duplicate scenario ids");
     return config;
   };
   const checkScenarioNames = (config: AoaConfiguration): AoaConfiguration => {

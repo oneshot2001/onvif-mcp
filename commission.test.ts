@@ -2521,3 +2521,92 @@ observe: { seconds: 0 }
     expect(verifyHandoffs(h.root, h.publicKey)).toMatchObject({ count: 1, bad: [] });
   } finally { vapix.mockRestore(); }
 });
+
+test("commission scenario ids: two scenarios the camera reports on one id after an apply fail verification", async () => {
+  const h = harness();
+  const beforeAoa = structuredClone(h.aoa());
+  const geometry = [[-0.9, -0.9], [0.9, -0.9], [0.9, 0.9], [-0.9, 0.9]];
+  const scenarios = [
+    { name: "lab-motion", type: "motion", objects: ["human"], geometry },
+    { name: "yard-motion", type: "motion", objects: ["vehicle"], geometry },
+  ];
+  const message = "AOA getConfiguration returned duplicate scenario ids";
+  writeFileSync(join(h.root, "specs/ids.yaml"), `spec: camspec/0.1
+name: ids
+scenarios:
+  - name: lab-motion
+    type: motion
+    objects: [human]
+    area: ${JSON.stringify(geometry)}
+  - name: yard-motion
+    type: motion
+    objects: [vehicle]
+    area: ${JSON.stringify(geometry)}
+observe: { seconds: 1 }
+`);
+  const vapixPost = h.deps.vapixPost;
+  let changed = false;
+  h.deps.vapixPost = async (...args) => {
+    const result = await vapixPost(...args);
+    if ((args[3] as { method?: string }).method === "setConfiguration" && !changed) {
+      changed = true;
+      h.aoa().scenarios.find(scenario => scenario.name === "yard-motion")!.id = h.aoa().scenarios.find(scenario => scenario.name === "lab-motion")!.id;
+    }
+    return result;
+  };
+  const observeEvents = spyOn(h.deps, "observeEvents");
+  try {
+    const out = JSON.parse((await h.handlers.commission_apply!({ camera: "cam", spec: "ids", approve: true })).content[0]!.text);
+    const handoff = JSON.parse(readFileSync(out.handoff, "utf8"));
+    const failed = scenarios.map(scenario => ({ param: `scenario:${scenario.name}`, desired: JSON.stringify(scenario), observed: null }));
+    expect(handoff.verify).toEqual({ passed: false, failed });
+    expect(out).toMatchObject({ passed: false, rolled_back: true });
+    expect(out.failed).toEqual(failed);
+    const results = scenarios.map(({ name, type }) => ({ name, id: null, type, deployed: false, readback_diff: [message] }));
+    expect(handoff.scenarios).toEqual(results);
+    expect(out.scenarios).toEqual(results.map(result => ({ ...result, readback_diff: [deviceText(message)] })));
+    for (const observation of [handoff.observation, out.observation]) {
+      expect(observation.window_seconds).toBe(0);
+      expect(observation.fired).toEqual({
+        "lab-motion": { count: 0, first: null, last: null },
+        "yard-motion": { count: 0, first: null, last: null },
+      });
+    }
+    expect(observeEvents).not.toHaveBeenCalled();
+    expect(changed).toBeTrue();
+    expect(h.aoa()).toEqual(beforeAoa);
+    expect(h.writes).toEqual(["AOA:setConfiguration", "AOA:setConfiguration"]);
+    const details = h.receipts.map(receipt => receipt.detail);
+    expect(details).toContain("verification FAILED");
+    expect(details).not.toContain("verification passed");
+    expect(verifyHandoffs(h.root, h.publicKey)).toMatchObject({ count: 1, bad: [] });
+  } finally { observeEvents.mockRestore(); }
+});
+
+test("commission scenario ids: a configuration that already holds two scenarios on one id is refused before any write", async () => {
+  const message = "AOA getConfiguration returned duplicate scenario ids";
+  for (const tool of ["commission_plan", "commission_apply", "commission_verify"]) {
+    const h = harness();
+    const existing = h.aoa().scenarios[0]!;
+    h.aoa().scenarios.push({ ...structuredClone(existing), name: "spare", id: 9 }, { ...structuredClone(existing), name: "other", id: 4 });
+    writeFileSync(join(h.root, "specs/ids.yaml"), `spec: camspec/0.1
+name: ids
+params:
+  Image.I0.Appearance.Rotation: '180'
+scenarios:
+  - name: lab-motion
+    type: motion
+    objects: [human]
+    area: [[-0.9,-0.9],[0.9,-0.9],[0.9,0.9],[-0.9,0.9]]
+observe: { seconds: 1 }
+`);
+    const result = await h.handlers[tool]!({ camera: "cam", spec: "ids", ...(tool === "commission_apply" ? { approve: true } : {}) });
+    const expected = { content: [{ type: "text", text: deviceText(message) }], isError: true };
+    expect(result).toEqual(expected);
+    expect(h.receipts).toEqual([expect.objectContaining({ tool, decision: "allow", detail: `FAILED: ${message}` })]);
+    expect(h.writes).toEqual([]);
+    expect(h.posts.filter(post => (post as { method?: string }).method === "setConfiguration")).toEqual([]);
+    expect(h.state["Image.I0.Appearance.Rotation"]).toBe("0");
+    expect(readdirSync(h.root)).toEqual(["specs"]);
+  }
+});
