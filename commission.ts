@@ -578,6 +578,8 @@ export function registerCommission(server: McpServer, d: CommissionDeps) {
       let writeFailed: Failure | null = null;
       const unreported = p.plan.find((item) => item.current === null);
       if (unreported) writeFailed = { param: unreported.param, desired: unreported.desired, observed: null };
+      const undeployable = p.aoa.installed ? undefined : p.spec.scenarios[0];
+      if (!writeFailed && undeployable) writeFailed = { param: `scenario:${undeployable.name}`, desired: JSON.stringify(viewDesired(undeployable)), observed: null };
       if (!writeFailed) for (const item of p.plan) {
         if (item.current === null) { writeFailed = { param: item.param, desired: item.desired, observed: null }; break; }
         const r = await d.vapix("commission_apply", camera, `/axis-cgi/param.cgi?action=update&${encodeURIComponent(item.param)}=${encodeURIComponent(item.desired)}`);

@@ -2467,3 +2467,57 @@ test("commission event times: the event listener stamps each event with the host
     expect(verifyHandoffs(h.root, h.publicKey)).toMatchObject({ count: 1, bad: [] });
   } finally { setSystemTime(); }
 });
+
+test("commission undeployable scenarios: an approved apply whose scenarios cannot be deployed writes nothing", async () => {
+  const h = harness({ ptz: true, aoaInstalled: false });
+  const vapix = spyOn(h.deps, "vapix");
+  const geometry = [[-0.9, -0.9], [0.9, -0.9], [0.9, 0.9], [-0.9, 0.9]];
+  const scenarios = [
+    { name: "lab-motion", type: "motion", objects: ["human"], geometry },
+    { name: "yard-motion", type: "motion", objects: ["vehicle"], geometry },
+  ];
+  const warning = "AOA application unavailable; scenarios skipped";
+  try {
+    writeFileSync(join(h.root, "specs/undeployable.yaml"), `spec: camspec/0.1
+name: undeployable
+params:
+  Image.I0.Appearance.Rotation: '180'
+presets:
+  Gate: { pan: 10, tilt: -5, zoom: 1 }
+scenarios:
+  - name: lab-motion
+    type: motion
+    objects: [human]
+    area: ${JSON.stringify(geometry)}
+  - name: yard-motion
+    type: motion
+    objects: [vehicle]
+    area: ${JSON.stringify(geometry)}
+observe: { seconds: 0 }
+`);
+    const out = JSON.parse((await h.handlers.commission_apply!({ camera: "cam", spec: "undeployable", approve: true })).content[0]!.text);
+    const failed = [
+      { param: "scenario:lab-motion", desired: JSON.stringify(scenarios[0]), observed: null },
+      { param: "Image.I0.Appearance.Rotation", desired: "180", observed: "0" },
+      { param: "preset:Gate", desired: "Gate", observed: null },
+      { param: "scenario:yard-motion", desired: JSON.stringify(scenarios[1]), observed: null },
+    ];
+    expect(out).toMatchObject({ passed: false, rolled_back: false, rollback_verified: null });
+    expect(out.failed).toEqual(failed);
+    const handoff = JSON.parse(readFileSync(out.handoff, "utf8"));
+    expect(handoff.verify).toEqual({ passed: false, failed });
+    expect(handoff.applied).toEqual([]);
+    expect(handoff.rollback).toEqual({ performed: false, verified: null });
+    const results = scenarios.map(({ name, type }) => ({ name, id: null, type, deployed: false, readback_diff: [warning] }));
+    expect(handoff.scenarios).toEqual(results);
+    expect(out.scenarios).toEqual(results.map(result => ({ ...result, readback_diff: [deviceText(warning)] })));
+    expect(h.writes).toEqual([]);
+    expect(vapix.mock.calls.map(call => call[2]).filter(path => /ptz\.cgi\?pan=|setserverpresetname=|action=update/.test(path))).toEqual([]);
+    expect([...h.presets]).toEqual([]);
+    expect(h.state["Image.I0.Appearance.Rotation"]).toBe("0");
+    const details = h.receipts.map(receipt => receipt.detail);
+    expect(details.filter(detail => /^(wrote |write FAILED |moved |saved preset |deployed scenario |rolled back )/.test(detail))).toEqual([]);
+    expect(details).toContain("verification FAILED");
+    expect(verifyHandoffs(h.root, h.publicKey)).toMatchObject({ count: 1, bad: [] });
+  } finally { vapix.mockRestore(); }
+});
