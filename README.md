@@ -6,7 +6,7 @@
 
 ### The governed doorway between AI agents and video infrastructure.
 
-Every tool call passes a **fail-closed policy gate** and emits a **hash-chained,
+Every tool call the server handles passes a **fail-closed policy gate** and emits a **hash-chained,
 signed receipt — including denials**.<br>
 The audit trail records what agents *tried*, not just what they did.
 
@@ -39,7 +39,7 @@ attempt.
 - **Inline snapshots** — JPEG snapshots return MCP image content alongside the saved file path and SHA-256 hash
 - **Fail-closed per-agent policy** — tool allowlist, camera allowlist, PTZ step
   bounds per agent identity; unknown agents get nothing
-- **Signed receipts on every call** — hash-chained JSONL, ed25519-signed,
+- **Signed receipts on every handled call** — hash-chained JSONL, ed25519-signed,
   produced frames content-hashed into the receipt; verification detects changes
   to signed receipt content at the affected sequence number. Verifiers also
   require each receipt line to equal `JSON.stringify(parsed)` and each handoff
@@ -90,6 +90,8 @@ Register with an MCP client (Claude Code shown):
 claude mcp add cameras -- env AGENT_ID=claude-main bun /path/to/onvif-mcp/index.ts
 ```
 
+Run one server process per root. The AAR producer state under `receipts/` is read-modify-write with no lock, so two processes on one root (two agents started on one checkout, for example) lose AAR bundles while `--verify-aar` still reports conformant, and two first starts at once can leave a mismatched receipt key pair, which the next start detects but nothing prevents.
+
 Audit the receipt chain any time:
 
 ```bash
@@ -113,7 +115,7 @@ All tools persist receipts; some also save artifacts, replace baselines, or chan
 | `commission_verify` | Check parameter, preset-name, and AOA scenario conformance; emit a signed handoff; optional `notes` (string, max 2000 characters) | + camera granted, config groups granted, all params allowed, AOA grant for scenarios |
 | `get_receipts` | Tail the signed receipt chain | agent known, tool granted |
 
-Every call — allowed or denied — appends a receipt. A denial looks like this:
+Every call that reaches a tool handler — allowed or denied — appends a receipt. A call the MCP SDK rejects first (an unknown tool, or arguments that fail the tool's input schema) makes no policy decision and no camera request, and leaves no receipt. A denial looks like this:
 
 ```json
 { "seq": 19, "profile": "aar-0.2-draft-alignment",
