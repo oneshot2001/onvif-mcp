@@ -6,7 +6,7 @@ import { ptzGranted } from "./policy-check";
 import { deviceText, escapeInvisible } from "./device-text";
 import type { ClockResult } from "./clock";
 import { createHash, createPublicKey, randomUUID, sign as edSign, verify as edVerify } from "node:crypto";
-import { existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, realpathSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, realpathSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { basename, join, resolve, sep } from "node:path";
 
 type Policy = { tools: string[]; cameras: string[]; ptz?: unknown; config?: { groups: string[]; remediate?: boolean; aoa?: boolean } };
@@ -117,6 +117,7 @@ export function readCommissionSpec(root: string, ref: string): { spec: Spec; sha
   const file = resolve(dir, /\.ya?ml$/.test(ref) ? ref : `${ref}.yaml`);
   if (file !== dir && !file.startsWith(`${dir}${sep}`)) throw new Error(`spec '${ref}' is outside specs/`);
   if (!existsSync(file)) throw new Error(`spec '${ref}' not found`);
+  if (!statSync(file).isFile()) throw new Error(`spec '${ref}' is not a regular file`);
   const realDir = realpathSync(dir);
   const realFile = realpathSync(file);
   if (!realFile.startsWith(`${realDir}${sep}`)) throw new Error(`spec '${ref}' is outside specs/`);

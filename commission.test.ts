@@ -2610,3 +2610,73 @@ observe: { seconds: 1 }
     expect(readdirSync(h.root)).toEqual(["specs"]);
   }
 });
+
+function runSpecFileTypeProbe(body: string) {
+  const root = mkdtempSync(join(tmpdir(), "onvif-commission-file-type-"));
+  roots.push(root);
+  mkdirSync(join(root, "specs"));
+  mkdirSync(join(root, "outside"));
+  mkdirSync(join(root, "specs/dir.yaml"));
+  const fifo = Bun.spawnSync(["mkfifo", join(root, "specs/fifo.yaml"), join(root, "outside/fifo.yaml")]);
+  expect(fifo.exitCode).toBe(0);
+  symlinkSync("fifo.yaml", join(root, "specs/link.yaml"));
+  symlinkSync("../outside/fifo.yaml", join(root, "specs/away.yaml"));
+  const script = `
+    import { readCommissionSpec, registerCommission } from ${JSON.stringify(join(import.meta.dir, "commission.ts"))};
+    const root = ${JSON.stringify(root)};
+    ${body}
+  `;
+  const child = Bun.spawnSync([process.execPath, "-e", script], { timeout: 4000 });
+  expect(child.exitCode).toBe(0);
+  expect(child.signalCode).toBeUndefined();
+  expect(child.stderr.toString()).toBe("");
+  return JSON.parse(child.stdout.toString());
+}
+
+test("commission spec file type: a FIFO spec is refused before it is opened", () => {
+  const refs = ["fifo", "fifo.yaml", "link", "away", "dir", "missing"];
+  const result = runSpecFileTypeProbe(`
+    const errors = ${JSON.stringify(refs)}.map(ref => {
+      try { readCommissionSpec(root, ref); return null; }
+      catch (error) { return error.message; }
+    });
+    console.log(JSON.stringify(errors));
+  `);
+  expect(result).toEqual(refs.map(ref => ref === "missing" ? "spec 'missing' not found" : `spec '${ref}' is not a regular file`));
+}, 15000);
+
+test("commission spec file type: plan, apply and verify refuse a FIFO spec with one receipt and no camera call", () => {
+  const result = runSpecFileTypeProbe(`
+    const handlers = {};
+    const server = { tool(name, ...args) { handlers[name] = args.at(-1); } };
+    const calls = [];
+    const receipts = [];
+    const deps = {
+      root, agent: "test",
+      policy: { test: { tools: ["commission_plan", "commission_apply", "commission_verify"], cameras: ["cam"], config: { groups: ["Image"], remediate: true } } },
+      cameras: { cam: { ptz: false } }, policyBytes: Buffer.from("policy"), privateKey: "",
+      parseParams: () => ({}), inGroup: () => true, sha256: () => "hash",
+      lastReceipt: () => ({ seq: 0, hash: "genesis" }),
+      checkActuation: () => null, checkSnapshot: () => null,
+      receipt: (...args) => receipts.push(args),
+    };
+    for (const name of ["vapix", "vapixPost", "configParams", "observeEvents", "snapshot", "clockCheck"]) {
+      deps[name] = async (...args) => { calls.push([name, ...args]); throw new Error("unexpected camera call"); };
+    }
+    registerCommission(server, deps);
+    const results = [];
+    for (const tool of ["commission_plan", "commission_apply", "commission_verify"]) {
+      calls.length = 0;
+      receipts.length = 0;
+      const params = { camera: "cam", spec: "fifo", ...(tool === "commission_apply" ? { approve: true } : {}) };
+      const result = await handlers[tool](params);
+      results.push({ result, receipts: [...receipts], calls: [...calls] });
+    }
+    console.log(JSON.stringify(results));
+  `);
+  expect(result).toEqual(["commission_plan", "commission_apply", "commission_verify"].map(tool => ({
+    result: { content: [{ type: "text", text: "spec 'fifo' is not a regular file" }], isError: true },
+    receipts: [[tool, { camera: "cam", spec: "fifo", ...(tool === "commission_apply" ? { approve: true } : {}) }, "allow", "FAILED: spec 'fifo' is not a regular file"]],
+    calls: [],
+  })));
+}, 15000);
