@@ -42,3 +42,6 @@ handoff/*.pdf
 
 # receipt-chain lock (a crashed server can leave one behind)
 receipts/*.lock
+
+# baseline temporary files (a crashed server can leave one behind)
+baselines/*.tmp

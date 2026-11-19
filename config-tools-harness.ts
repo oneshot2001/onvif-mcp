@@ -1,7 +1,7 @@
 import { TOOL_HINTS } from "./tool-hints";
 import * as fs from "node:fs";
 import { join } from "node:path";
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { z } from "zod";
 import { cameraId, paramName } from "./schemas";
 import { baselineDenied, configDenied as policyConfigDenied, type Policy } from "./policy-check";
@@ -24,6 +24,8 @@ const readCode = new Bun.Transpiler({ loader: "ts" }).transformSync(source.slice
 export function configHarness(root: string, options: {
   statSync?: typeof fs.statSync;
   readFileSync?: typeof fs.readFileSync;
+  fs?: Partial<typeof fs>;
+  randomUUID?: () => string;
   policy?: Policy;
   rateDenied?: (kind: string) => string | null;
   tierDenied?: (tool: string, camera: string) => string | null;
@@ -40,13 +42,17 @@ export function configHarness(root: string, options: {
     config: { groups: ["Image"], remediate: true },
   } });
   const liveParams = { ...(options.liveParams ?? { "Image.X": "live" }) };
+  const io = { ...fs, ...options.fs };
   const dependencies = {
     TOOL_HINTS,
     ROOT: root, AGENT: "test", policy, join, createHash, z, cameraId, paramName,
     baselineDenied, policyConfigDenied, hardDenied, formatDriftLines, deviceText,
     existsSync: fs.existsSync, statSync: options.statSync ?? fs.statSync,
     readFileSync: options.readFileSync ?? fs.readFileSync,
-    mkdirSync: fs.mkdirSync, writeFileSync: fs.writeFileSync,
+    mkdirSync: io.mkdirSync, openSync: io.openSync, writeFileSync: io.writeFileSync,
+    fsyncSync: io.fsyncSync, closeSync: io.closeSync, linkSync: io.linkSync,
+    renameSync: io.renameSync, rmSync: io.rmSync,
+    randomUUID: options.randomUUID ?? randomUUID,
     rateDenied: options.rateDenied ?? (() => null),
     tierDenied: options.tierDenied ?? (() => null),
     receipt: (...args: any[]) => chain.push(args),

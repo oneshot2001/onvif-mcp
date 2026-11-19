@@ -7,8 +7,8 @@ import { createVaultClient, curlVaultCall, VaultWithheld, type Signer } from "./
 import { z } from "zod";
 import { cameraId, presetName, paramName } from "./schemas";
 import { TOOL_HINTS } from "./tool-hints";
-import { generateKeyPairSync, sign as edSign, createHash, createPublicKey } from "node:crypto";
-import { existsSync, readFileSync, writeFileSync, mkdirSync, statSync, openSync, appendFileSync, fsyncSync, closeSync } from "node:fs";
+import { generateKeyPairSync, sign as edSign, createHash, createPublicKey, randomUUID } from "node:crypto";
+import { existsSync, readFileSync, writeFileSync, mkdirSync, statSync, openSync, appendFileSync, fsyncSync, closeSync, linkSync, renameSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { AarWireProducer, verifyBundleDir, type WireEmitInput } from "./receipts-aar/producer";
 import { checkAarJournal } from "./receipts-aar/journal";
@@ -603,15 +603,33 @@ server.tool("config_baseline", "Capture allowed VAPIX parameters as the camera c
   if (!live.ok) { receipt("config_baseline", params, "allow", "fetch FAILED"); return { content: [{ type: "text", text: "baseline fetch failed" }] }; }
   const hash = sha256(live.params);
   const baseline: Baseline = { camera, captured: new Date().toISOString(), groups, params: live.params, sha256: hash };
-  mkdirSync(BASELINES, { recursive: true });
+  const temp = file + "." + randomUUID() + ".tmp";
+  let raced: string | null = null, published = false;
   try {
-    // Exclusive creation also protects against another caller baselining during the fetch.
-    writeFileSync(file, JSON.stringify(baseline, null, 2) + "\n", { flag: config.rebaseline === true ? "w" : "wx" });
-  } catch (error) {
-    const deny = (error as NodeJS.ErrnoException).code === "EEXIST" ? baselineDenied(config, true) : null;
-    if (!deny) throw error;
-    receipt("config_baseline", params, "deny", deny);
-    return { content: [{ type: "text", text: `DENIED: ${deny}` }] };
+    mkdirSync(BASELINES, { recursive: true });
+    const fd = openSync(temp, "wx", config.rebaseline === true && existsSync(file) ? statSync(file).mode & 0o777 : 0o666);
+    try {
+      writeFileSync(fd, JSON.stringify(baseline, null, 2) + "\n");
+      fsyncSync(fd);
+    } finally { closeSync(fd); }
+    if (config.rebaseline === true) renameSync(temp, file);
+    else {
+      // Exclusive publication also protects against another caller baselining during the fetch.
+      try { linkSync(temp, file); } catch (error) {
+        if ((error as NodeJS.ErrnoException).code === "EEXIST") raced = baselineDenied(config, true);
+        else throw error;
+      }
+    }
+    published = raced === null;
+  } catch { /* receipted below as write FAILED */ }
+  try { rmSync(temp, { force: true }); } catch { console.error("baseline temp cleanup failed"); }
+  if (raced) {
+    receipt("config_baseline", params, "deny", raced);
+    return { content: [{ type: "text", text: `DENIED: ${raced}` }] };
+  }
+  if (!published) {
+    receipt("config_baseline", params, "allow", "write FAILED");
+    return { content: [{ type: "text", text: "baseline write failed" }] };
   }
   receipt("config_baseline", params, "allow", `baselined ${Object.keys(live.params).length} params`, hash, "device_acknowledged");
   return { content: [{ type: "text", text: `baselined ${camera}: ${Object.keys(live.params).length} params sha256:${hash}` }] };

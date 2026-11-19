@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, expect, test } from "bun:test";
+import { afterEach, beforeEach, expect, spyOn, test } from "bun:test";
 import * as fs from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -131,3 +131,135 @@ for (const symlink of [false, true]) {
     });
   }
 }
+
+const publishSteps = [
+  "mkdirSync", "openSync", "writeFileSync", "fsyncSync", "closeSync", "linkSync", "renameSync", "rmSync",
+] as const;
+type PublishStep = typeof publishSteps[number];
+function recordingFs(failures: Partial<Record<PublishStep, string>> = {}) {
+  const steps: PublishStep[] = [];
+  const io = Object.fromEntries(publishSteps.map(name => [name, (...args: any[]) => {
+    steps.push(name);
+    if (failures[name]) {
+      if (name === "writeFileSync") fs.writeFileSync(args[0], "{");
+      throw Object.assign(new Error(`injected ${name} failure`), { code: failures[name] });
+    }
+    return (fs[name] as (...args: any[]) => unknown)(...args);
+  }])) as Partial<typeof fs>;
+  return { io, steps };
+}
+
+const baselineArgs = { camera: "cam" };
+const writeFailure = { content: [{ type: "text", text: "baseline write failed" }] };
+const writeFailureChain = [["config_baseline", baselineArgs, "allow", "write FAILED"]];
+const liveParams = { "Image.X": "live" };
+const baselineSuccess = { content: [{ type: "text", text: `baselined cam: 1 params sha256:${hash(liveParams)}` }] };
+const rebaselinePolicy = { test: {
+  tools: ["config_baseline", "config_drift", "config_remediate"], cameras: ["cam"],
+  config: { groups: ["Image"], rebaseline: true },
+} };
+
+test("baseline atomic write: a write that fails part way leaves no baseline file and is receipted", async () => {
+  const failed = recordingFs({ writeFileSync: "ENOSPC" });
+  const h = configHarness(root, { fs: failed.io });
+  expect(await h.handlers.config_baseline!(baselineArgs)).toEqual(writeFailure);
+  expect(h.chain).toEqual(writeFailureChain);
+  expect(h.calls).toEqual([["configParams", "config_baseline", "cam", ["Image"]]]);
+  expect(fs.readdirSync(join(root, "baselines"))).toEqual([]);
+
+  const retry = recordingFs();
+  const fresh = configHarness(root, { fs: retry.io });
+  expect(await fresh.handlers.config_baseline!(baselineArgs)).toEqual(baselineSuccess);
+  expect(retry.steps).toEqual(["mkdirSync", "openSync", "writeFileSync", "fsyncSync", "closeSync", "linkSync", "rmSync"]);
+  expect(await fresh.handlers.config_drift!(baselineArgs)).toEqual({
+    content: [{ type: "text", text: "drift: 0 changed, 0 added, 0 removed" }],
+  });
+  expect(fs.readdirSync(join(root, "baselines"))).toEqual(["cam.json"]);
+});
+
+test("baseline atomic write: a rebaseline that fails part way keeps the previous baseline byte for byte", async () => {
+  fs.writeFileSync(file, valid);
+  const previous = fs.readFileSync(file);
+  const failed = recordingFs({ writeFileSync: "ENOSPC" });
+  const h = configHarness(root, { fs: failed.io, policy: rebaselinePolicy });
+  expect(await h.handlers.config_baseline!(baselineArgs)).toEqual(writeFailure);
+  expect(h.chain).toEqual(writeFailureChain);
+  expect(fs.readFileSync(file)).toEqual(previous);
+  expect(fs.readdirSync(join(root, "baselines"))).toEqual(["cam.json"]);
+
+  const retry = recordingFs();
+  const fresh = configHarness(root, { fs: retry.io, policy: rebaselinePolicy });
+  expect(await fresh.handlers.config_baseline!(baselineArgs)).toEqual(baselineSuccess);
+  expect(retry.steps).toEqual(["mkdirSync", "openSync", "writeFileSync", "fsyncSync", "closeSync", "renameSync", "rmSync"]);
+  expect(JSON.parse(fs.readFileSync(file, "utf8")).params).toEqual(liveParams);
+  expect(fs.readdirSync(join(root, "baselines"))).toEqual(["cam.json"]);
+});
+
+test("baseline atomic write: directory, publish and cleanup errors keep a receipted outcome", async () => {
+  const stderr = spyOn(console, "error").mockImplementation(() => {});
+  const baselines = join(root, "baselines");
+  try {
+    for (const [step, code] of [
+      ["mkdirSync", "EACCES"], ["fsyncSync", "EIO"], ["linkSync", "EPERM"], ["renameSync", "EXDEV"],
+    ] as const) {
+      fs.rmSync(baselines, { recursive: true, force: true });
+      const failed = recordingFs({ [step]: code });
+      const h = configHarness(root, {
+        fs: failed.io, ...(step === "renameSync" ? { policy: rebaselinePolicy } : {}),
+      });
+      expect(await h.handlers.config_baseline!(baselineArgs)).toEqual(writeFailure);
+      expect(h.chain).toEqual(writeFailureChain);
+      expect(fs.existsSync(file)).toBe(false);
+      expect(fs.existsSync(baselines) ? fs.readdirSync(baselines) : []).toEqual([]);
+      expect(stderr.mock.calls).toEqual([]);
+    }
+
+    fs.rmSync(baselines, { recursive: true, force: true });
+    const cleanup = recordingFs({ rmSync: "EPERM" });
+    const h = configHarness(root, { fs: cleanup.io, randomUUID: () => "stand-in" });
+    expect(await h.handlers.config_baseline!(baselineArgs)).toEqual(baselineSuccess);
+    expect(h.chain).toEqual([["config_baseline", baselineArgs, "allow", "baselined 1 params", hash(liveParams), "device_acknowledged"]]);
+    expect(JSON.parse(fs.readFileSync(file, "utf8")).params).toEqual(liveParams);
+    expect(fs.readdirSync(baselines).sort()).toEqual(["cam.json", "cam.json.stand-in.tmp"]);
+    expect(stderr.mock.calls).toEqual([["baseline temp cleanup failed"]]);
+
+    fs.rmSync(baselines, { recursive: true, force: true });
+    const both = recordingFs({ writeFileSync: "ENOSPC", rmSync: "EPERM" });
+    const failed = configHarness(root, { fs: both.io, randomUUID: () => "stand-in" });
+    expect(await failed.handlers.config_baseline!(baselineArgs)).toEqual(writeFailure);
+    expect(failed.chain).toEqual(writeFailureChain);
+    expect(fs.existsSync(file)).toBe(false);
+    expect(fs.readdirSync(baselines)).toEqual(["cam.json.stand-in.tmp"]);
+    expect(stderr.mock.calls).toEqual([["baseline temp cleanup failed"], ["baseline temp cleanup failed"]]);
+  } finally {
+    stderr.mockRestore();
+  }
+});
+
+test("baseline atomic write: a rebaseline keeps an owner-only baseline owner-only and an existing temporary path is never opened", async () => {
+  fs.writeFileSync(file, valid, { mode: 0o600 });
+  const recording = recordingFs();
+  const h = configHarness(root, { fs: recording.io, policy: rebaselinePolicy });
+  expect(await h.handlers.config_baseline!(baselineArgs)).toEqual(baselineSuccess);
+  expect(fs.statSync(file).mode & 0o777).toBe(0o600);
+  expect(JSON.parse(fs.readFileSync(file, "utf8")).params).toEqual(liveParams);
+
+  const victim = join(root, "victim.txt");
+  fs.writeFileSync(victim, "victim");
+  for (const rebaseline of [false, true]) {
+    fs.rmSync(file, { force: true });
+    if (rebaseline) fs.writeFileSync(file, valid);
+    const previous = rebaseline ? fs.readFileSync(file) : null;
+    fs.symlinkSync(victim, file + ".stand-in.tmp");
+    const collision = recordingFs();
+    const attempt = configHarness(root, {
+      fs: collision.io, randomUUID: () => "stand-in", ...(rebaseline ? { policy: rebaselinePolicy } : {}),
+    });
+    expect(await attempt.handlers.config_baseline!(baselineArgs)).toEqual(writeFailure);
+    expect(attempt.chain).toEqual(writeFailureChain);
+    expect(fs.readFileSync(victim, "utf8")).toBe("victim");
+    if (rebaseline) expect(fs.readFileSync(file)).toEqual(previous!);
+    else expect(fs.existsSync(file)).toBe(false);
+    expect(fs.readdirSync(join(root, "baselines"))).toEqual(rebaseline ? ["cam.json"] : []);
+  }
+});
