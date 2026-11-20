@@ -263,3 +263,17 @@ test("baseline atomic write: a rebaseline keeps an owner-only baseline owner-onl
     expect(fs.readdirSync(join(root, "baselines"))).toEqual(rebaseline ? ["cam.json"] : []);
   }
 });
+
+test("baseline atomic write: a rebaseline replaces a symlinked baseline and leaves its target unchanged", async () => {
+  fs.mkdirSync(join(root, "outside"));
+  const target = join(root, "outside", "target.json");
+  fs.writeFileSync(target, "OUTSIDE");
+  fs.symlinkSync("../outside/target.json", file);
+  const recording = recordingFs();
+  const h = configHarness(root, { fs: recording.io, policy: rebaselinePolicy });
+  expect(await h.handlers.config_baseline!(baselineArgs)).toEqual(baselineSuccess);
+  expect(fs.lstatSync(file).isSymbolicLink()).toBe(false);
+  expect(JSON.parse(fs.readFileSync(file, "utf8")).params).toEqual(liveParams);
+  expect(fs.readFileSync(target, "utf8")).toBe("OUTSIDE");
+  expect(fs.readdirSync(join(root, "baselines"))).toEqual(["cam.json"]);
+});
