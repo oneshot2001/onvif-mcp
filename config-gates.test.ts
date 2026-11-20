@@ -173,3 +173,22 @@ test("config gate wiring: baseline refuses an empty group grant before transport
     "no config groups are granted for baselining");
   expect(fs.existsSync(file)).toBe(false);
 });
+
+test("config gate wiring: an Image grant covers neither ImageSource drift nor an ImageSource write", async () => {
+  baseline({ "Image.X": "saved", "ImageSource.I0.Y": "saved-source" }, ["Image", "ImageSource"]);
+  const liveParams = { "Image.X": "live", "ImageSource.I0.Y": "live-source" };
+  const h = configHarness(root, { policy, liveParams });
+  const input = { camera: "cam" };
+  const summary = "drift: 1 changed, 0 added, 0 removed";
+  expect(await h.handlers.config_drift!(input)).toEqual({ content: [
+    { type: "text", text: `changed Image.X: "saved" → "live"\n${summary}` },
+  ] });
+  expect(h.calls).toEqual([["configParams", "config_drift", "cam", ["Image"]]]);
+  expect(h.chain).toEqual([["config_drift", input, "allow", summary,
+    hash({ changed: [{ param: "Image.X", baseline: "saved", live: "live" }], added: [], removed: [] }), "device_acknowledged"]]);
+
+  const remediation = configHarness(root, { policy, liveParams });
+  const write = { camera: "cam", param: "ImageSource.I0.Y", approve: true };
+  denied(remediation, "config_remediate", write, await remediation.handlers.config_remediate!(write),
+    "param 'ImageSource.I0.Y' is outside allowed config groups");
+});
