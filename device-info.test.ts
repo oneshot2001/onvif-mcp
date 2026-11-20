@@ -93,3 +93,12 @@ test("successful empty responses preserve existing fallbacks", () => {
   expect(parseDeviceMeta("vapix", "camera-id", r)).toEqual({ manufacturer: "AXIS", model: "camera-id", firmware: "unknown" });
   expect(parseDeviceMeta("onvif", "camera-id", r)).toEqual({ manufacturer: "unknown", model: "unknown", firmware: "unknown" });
 });
+
+test("device text cannot start a second list_cameras line or a bare id= field", () => {
+  const onvif = { ok: true, body: "<tds:Manufacturer>AXIS</tds:Manufacturer><tds:Model>M\nid=back | x</tds:Model><tds:FirmwareVersion>12\r\nid=back</tds:FirmwareVersion>" };
+  const vapix = { ok: true, body: "root.Brand.ProdShortName=AXIS\nid=back | Model=\"trusted\"\n" };
+  for (const line of [formatDeviceInfo("onvif", onvif), formatDeviceInfo("vapix", vapix)]) {
+    expect(line).not.toMatch(/[\r\n]/);
+    expect(line.split(" | ").filter((field) => field.startsWith("id="))).toEqual([]);
+  }
+});

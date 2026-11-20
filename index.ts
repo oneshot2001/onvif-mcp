@@ -32,7 +32,7 @@ import { keyModeProblem } from "./key-perms";
 import { missingPasswords, unsafeCredentials } from "./creds-check";
 import { makeLimiter } from "./rate-limit";
 import { SERVER_INSTRUCTIONS } from "./server-instructions";
-import { allowed as policyAllowed, baselineDenied, configDenied as policyConfigDenied, ptzBound, ptzGranted, policyShapeProblem, unknownAgentKey, unknownPolicyCamera, type Policy } from "./policy-check";
+import { allowed as policyAllowed, baselineDenied, configDenied as policyConfigDenied, ptzBound, ptzGranted, policyShapeProblem, unknownAgentKey, unknownPolicyCamera, unsafeCameraId, type Policy } from "./policy-check";
 
 const ROOT = import.meta.dir;
 const KEYDIR = join(ROOT, ".keys");
@@ -95,7 +95,7 @@ catch (error) {
 const AGENT = process.env.AGENT_ID ?? "unknown";
 const cameras: Record<string, CameraAccounts & { base: string; pin?: string; auth?: "digest" | "any"; ptz: boolean; protocol: "vapix" | "onvif"; profile?: string }> =
   JSON.parse(readFileSync(join(ROOT, "cameras.json"), "utf8"));
-const pinProblem = cameraPinProblem(cameras);
+const pinProblem = unsafeCameraId(cameras) ?? cameraPinProblem(cameras);
 if (pinProblem !== null) {
   console.error(pinProblem);
   process.exit(1);
@@ -492,7 +492,8 @@ server.tool("list_cameras", "List cameras this agent may access, with live devic
   if (deny) { receipt("list_cameras", {}, "deny", deny); return { content: [{ type: "text", text: `DENIED: ${deny}` }] }; }
   const visible = policy[AGENT]!.cameras;
   const out: string[] = [];
-  for (const id of visible) out.push(`${id}: ${await deviceInfo("list_cameras", id)}`);
+  // Labelled: agents copied the case from "Model=AXIS Q6325-LE" when the line read "q6325: Model=…".
+  for (const id of visible) out.push(`id=${id} | ${await deviceInfo("list_cameras", id)}`);
   receipt("list_cameras", {}, "allow", `returned ${visible.length} cameras`);
   return { content: [{ type: "text", text: out.join("\n") }] };
 });

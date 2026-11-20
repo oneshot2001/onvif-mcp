@@ -1,3 +1,4 @@
+import { escapeInvisible } from "./device-text";
 export type Policy = Record<string, { tools: string[]; cameras: string[]; ptz?: { maxStep: number; maxZoomStep?: number }; config?: { groups: string[]; remediate?: boolean; aoa?: boolean; rebaseline?: boolean }; rate?: { actuationPerMin?: number; snapshotPerMin?: number } }>;
 
 export function unknownAgentKey(policy: Policy): string | null {
@@ -7,6 +8,16 @@ export function unknownAgentKey(policy: Policy): string | null {
         return `policy agent '${agent}' has unknown key '${key}'`;
       }
     }
+  }
+  return null;
+}
+
+// list_cameras prints `id=<id> | <device info>` one camera per line, so an id
+// holding whitespace, "|", "=", quotes or control characters could read as a
+// different id. Checked once at startup.
+export function unsafeCameraId(cameras: Record<string, unknown>): string | null {
+  for (const id of Object.keys(cameras)) {
+    if (!/^[A-Za-z0-9][A-Za-z0-9._:-]*$/.test(id)) return `cameras.json camera id ${escapeInvisible(JSON.stringify(id))} must be letters, digits, ".", "_", ":" or "-"`;
   }
   return null;
 }
@@ -87,8 +98,9 @@ export function allowed(policy: Policy, agent: string, tool: string, camera?: st
   return null;
 }
 
-// Camera ids are case-sensitive. Agents copy the case from the model string that
-// list_cameras prints beside the id (`q6325: Model="AXIS Q6325-LE"`), so an
+// Camera ids are case-sensitive. Agents copied the case from the model string that
+// list_cameras printed beside the id (`q6325: Model="AXIS Q6325-LE"`, before the
+// line was labelled `id=q6325 | …`), so an
 // ASCII-case-only miss names the agent's own granted id when exactly one
 // matches. ASCII folding only: toLowerCase would map U+212A KELVIN SIGN onto
 // "k". Still a denial; the hint never covers another agent's cameras.

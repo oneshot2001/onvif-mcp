@@ -646,7 +646,7 @@ test("tool gate wiring: list_cameras denies a disallowed tool", async () => {
 
 test("tool gate wiring: list_cameras returns only granted cameras", async () => {
   const h = gateHarness();
-  expect(outputText(await h.handlers.list_cameras!({}))).toBe("cam: test device");
+  expect(outputText(await h.handlers.list_cameras!({}))).toBe("id=cam | test device");
   expect(h.calls).toEqual([["deviceInfo", "list_cameras", "cam"]]);
   expect(h.chain).toEqual([["list_cameras", {}, "allow", "returned 1 cameras"]]);
 });

@@ -88,8 +88,17 @@ function runPinGate(base: string) {
   const cameras = { pinned: { base, pin: "sha256//AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=" } };
   return runGate(`
     ${importHelper("cameraPinProblem", "camera-pins.ts")}
+    ${importHelper("unsafeCameraId", "policy-check.ts")}
     const cameras = ${JSON.stringify(cameras)};
-  `, slice("const pinProblem = cameraPinProblem(cameras);", "const gateway = gatewayConfigFromEnv(process.env);"));
+  `, slice("const pinProblem = unsafeCameraId(cameras) ?? cameraPinProblem(cameras);", "const gateway = gatewayConfigFromEnv(process.env);"));
+}
+
+function runCameraIdGate(cameras: Record<string, unknown>) {
+  return runGate(`
+    ${importHelper("cameraPinProblem", "camera-pins.ts")}
+    ${importHelper("unsafeCameraId", "policy-check.ts")}
+    const cameras = ${JSON.stringify(cameras)};
+  `, slice("const pinProblem = unsafeCameraId(cameras) ?? cameraPinProblem(cameras);", "const gateway = gatewayConfigFromEnv(process.env);"));
 }
 
 test("startup gate wiring: pinned HTTP camera exits 1 without continuing", () => {
@@ -455,6 +464,16 @@ test("policy camera wiring: a camera another agent names that cameras.json lacks
   expectRejected(runPolicyCameraGate({
     viewer: { tools: [], cameras: ["toString"] },
   }, {}), "policy agent 'viewer' names camera 'toString' that is not in cameras.json");
+});
+
+test("camera id wiring: an id that could blur a list_cameras line exits 1 on one line, before the pin check", () => {
+  expectRejected(runCameraIdGate({ "west | annex": { base: "http://x.invalid" } }),
+    'cameras.json camera id "west | annex" must be letters, digits, ".", "_", ":" or "-"');
+  expectRejected(runCameraIdGate({ "front\nid=back": { base: "http://x.invalid", pin: "bad" } }),
+    'cameras.json camera id "front\\nid=back" must be letters, digits, ".", "_", ":" or "-"');
+  const separator = runCameraIdGate({ "cam\u2028id=back": { base: "http://x.invalid" } });
+  expect(separator.exitCode).toBe(1);
+  expect(separator.stderr).not.toMatch(/[\u2028\u2029]/);
 });
 
 test("policy camera wiring: the committed policy and cameras files continue", () => {

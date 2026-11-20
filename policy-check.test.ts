@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import { allowed, baselineDenied, configDenied, ptzBound, policyShapeProblem, unknownAgentKey, type Policy } from "./policy-check";
+import { allowed, baselineDenied, configDenied, ptzBound, policyShapeProblem, unknownAgentKey, unsafeCameraId, type Policy } from "./policy-check";
 
 test.each(["rateLimit", "rate_limit", "ratelimits", "rate ", "Rate", "ptzz", "_note"])("policy unknown agent key: rejects %s", (key) => {
   expect(unknownAgentKey({ operator: { tools: [], cameras: [], [key]: { actuationPerMin: 2 } } }))
@@ -301,5 +301,12 @@ test("policy shape: valid policies return null", () => {
   ];
   for (const grant of grants) {
     expect(policyShapeProblem(JSON.parse(`{"guard":{"tools":[],"cameras":[],${grant}}}`)), grant).toBeNull();
+  }
+});
+
+test("camera ids that could blur a list_cameras line stop startup; plain ids pass", () => {
+  expect(unsafeCameraId({ q6325: {}, "dock:west": {}, "lobby-2.cam_1": {} })).toBeNull();
+  for (const id of ["west | annex", "front\nid=back", "a=b", "lobby 2", "\"cam\"", "", "-cam"]) {
+    expect(unsafeCameraId({ ok: {}, [id]: {} })).toBe(`cameras.json camera id ${JSON.stringify(id)} must be letters, digits, ".", "_", ":" or "-"`);
   }
 });

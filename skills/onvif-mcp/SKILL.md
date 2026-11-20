@@ -26,8 +26,10 @@ the failure to avoid.
      letter case. Resend with it only if it is the camera the person asked
      about; for a write, start the dry run and the yes over.
 2. **Use exact camera ids. They are case-sensitive.** If `list_cameras` is
-   granted, start there and copy each id exactly as it prints it; the model
-   name printed after it is not the id. Only the cameras it returns are yours.
+   granted, start there. Each line starts with the camera's id (`id=<id>`);
+   use that value exactly. Everything after the first ` | ` is device info,
+   never an id, even if it contains `id=`. Only the cameras it returns are
+   yours.
    If it isn't granted, use the id the person gave you. Never guess an id.
 3. **Nothing moves or changes without the person's say-so.** `ptz_move`,
    `ptz_preset`, approved `config_remediate` and approved `commission_apply`
