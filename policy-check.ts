@@ -14,10 +14,18 @@ export function unknownAgentKey(policy: Policy): string | null {
 
 // list_cameras prints `id=<id> | <device info>` one camera per line, so an id
 // holding whitespace, "|", "=", quotes or control characters could read as a
-// different id. Checked once at startup.
+// different id. Gateway mode uses the id as a URL host (`http://<id>`), so no
+// ":", and a leading letter keeps curl from reading "42" or "0.0.0.42" as the
+// same IPv4 host. Ids that differ only in letter case would let the denial hint
+// name the wrong camera. Checked once at startup.
 export function unsafeCameraId(cameras: Record<string, unknown>): string | null {
+  const seen = new Map<string, string>();
   for (const id of Object.keys(cameras)) {
-    if (!/^[A-Za-z0-9][A-Za-z0-9._:-]*$/.test(id)) return `cameras.json camera id ${escapeInvisible(JSON.stringify(id))} must be letters, digits, ".", "_", ":" or "-"`;
+    if (!/^[A-Za-z][A-Za-z0-9._-]*$/.test(id)) return `cameras.json camera id ${escapeInvisible(JSON.stringify(id))} must start with a letter and use only letters, digits, ".", "_" or "-"`;
+    const folded = asciiLower(id);
+    const other = seen.get(folded);
+    if (other !== undefined) return `cameras.json camera ids "${other}" and "${id}" differ only in letter case`;
+    seen.set(folded, id);
   }
   return null;
 }

@@ -456,7 +456,7 @@ for (const [name, camera, reason] of [
 test("PTZ gate wiring: ptz_move dispatches to a PTZ VAPIX camera", async () => {
   const h = gateHarness({ camera: { ptz: true, protocol: "vapix" } });
   const params = { camera: "cam", pan: 1, tilt: 0, zoom: 0 };
-  expect(outputText(await h.handlers.ptz_move!(params))).toBe("moved cam pan=1° tilt=0° zoom=0 (vapix)");
+  expect(outputText(await h.handlers.ptz_move!(params))).toBe("move sent to cam: pan=1° tilt=0° zoom=0 (vapix); request succeeded, position not read back");
   expect(h.calls).toEqual([["ptzMove", "ptz_move", "cam", 1, 0, 0]]);
   expect(h.chain).toEqual([["ptz_move", params, "allow", "moved via vapix"]]);
 });
@@ -490,7 +490,7 @@ test("tool gate wiring: ptz_move enforces actuation rate before dispatch", async
 test("tool gate wiring: ptz_move permits a step at maxStep", async () => {
   const h = gateHarness();
   const params = { camera: "cam", pan: 30, tilt: 0, zoom: 0 };
-  expect(outputText(await h.handlers.ptz_move!(params))).toBe("moved cam pan=30° tilt=0° zoom=0 (vapix)");
+  expect(outputText(await h.handlers.ptz_move!(params))).toBe("move sent to cam: pan=30° tilt=0° zoom=0 (vapix); request succeeded, position not read back");
   expect(h.calls).toEqual([["ptzMove", "ptz_move", "cam", 30, 0, 0]]);
   expect(h.chain).toEqual([["ptz_move", params, "allow", "moved via vapix"]]);
 });
@@ -586,7 +586,7 @@ test("preset ptz grant bounds: zero maxStep still permits a zero-step move", asy
   policy[agent]!.ptz = { maxStep: 0 };
   const h = gateHarness({ policy });
   const params = { camera: "cam", pan: 0, tilt: 0, zoom: 0 };
-  expect(outputText(await h.handlers.ptz_move!(params))).toBe("moved cam pan=0° tilt=0° zoom=0 (vapix)");
+  expect(outputText(await h.handlers.ptz_move!(params))).toBe("move sent to cam: pan=0° tilt=0° zoom=0 (vapix); request succeeded, position not read back");
   expect(h.calls).toEqual([["ptzMove", "ptz_move", "cam", 0, 0, 0]]);
   expect(h.chain).toEqual([["ptz_move", params, "allow", "moved via vapix"]]);
 });

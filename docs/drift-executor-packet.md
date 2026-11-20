@@ -50,7 +50,7 @@ Per-agent optional block:
 - Overwrites existing baseline (re-baselining is explicit and receipted — fine).
 
 **config_drift** `{ camera }`
-- Requires existing baseline (else text: "no baseline — run config_baseline"; receipt allow, detail "no baseline").
+- Requires existing baseline (else text: "no baseline — run config_baseline"; receipt allow, detail "no baseline"). *Superseded 2026-11-20: the reply now tells the agent to ask the person whether the current config is known-good before baselining.*
 - Fetch live params for the SAME groups recorded in the baseline (intersected with the
   agent's currently-allowed groups — policy may have shrunk).
 - Diff: report `added` / `removed` / `changed` (param, baseline value, live value).

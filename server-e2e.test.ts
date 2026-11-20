@@ -1,7 +1,7 @@
 import { afterEach, expect, test } from "bun:test";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
-import { copyFileSync, cpSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { copyFileSync, cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { SERVER_INSTRUCTIONS } from "./server-instructions";
@@ -60,6 +60,7 @@ exit 7
   return {
     root, env,
     instructions: () => client.getInstructions(),
+    callRaw: (name: string, args: Record<string, unknown>) => client.callTool({ name, arguments: args }),
     hits: () => readFileSync(hits, "utf8"),
     chain: () => readFileSync(join(root, "receipts", "chain.jsonl"), "utf8").trim().split("\n").map((line) => JSON.parse(line)),
     async call(name: string, args: Record<string, unknown> = {}) {
@@ -119,10 +120,19 @@ test("server e2e: --verify passes the chain the server wrote and fails naming an
 test("server e2e: initialize carries the server instructions and a case-only camera miss names the granted id before any camera request", async () => {
   const server = await startServer("viewer");
   expect(server.instructions()).toBe(SERVER_INSTRUCTIONS);
+  expect(SERVER_INSTRUCTIONS.length).toBeLessThanOrEqual(2048); // older Claude Code cut server instructions at 2,048 characters (4,096 now)
   expect(await server.call("ptz_move", { camera: "DOME", pan: 1 }))
     .toBe("DENIED: camera 'DOME' not allowlisted for agent 'viewer' (camera ids are case-sensitive; did you mean 'dome'?)");
   expect(await server.call("ptz_move", { camera: "GATE", pan: 1 })).toBe("DENIED: camera 'GATE' not allowlisted for agent 'viewer'");
   expect(server.hits()).toBe("");
   expect(server.chain().map((r) => [r.principal.id, r.action.tool, r.decision, r.node_kind]))
     .toEqual([["viewer", "ptz_move", "deny", "authorization"], ["viewer", "ptz_move", "deny", "authorization"]]);
+}, 60_000);
+
+test("server e2e: ptz_preset without a preset name is rejected before any policy decision, receipt or camera request", async () => {
+  const server = await startServer("viewer");
+  const result = await server.callRaw("ptz_preset", { camera: "dome" });
+  expect(result.isError).toBe(true);
+  expect(server.hits()).toBe("");
+  expect(existsSync(join(server.root, "receipts", "chain.jsonl")) ? server.chain() : []).toEqual([]);
 }, 60_000);

@@ -541,7 +541,7 @@ server.tool("get_snapshot", "Capture a JPEG snapshot from a camera; returns the 
 });
 
 server.tool("ptz_preset", "Send a PTZ camera to a named preset (VAPIX cameras only)",
-  { camera: cameraId, preset: presetName.default("Home") }, TOOL_HINTS.ptz_preset, async ({ camera, preset }) => {
+  { camera: cameraId, preset: presetName.describe("exact preset name; required, there is no default") }, TOOL_HINTS.ptz_preset, async ({ camera, preset }) => {
   const startedAt = Math.floor(Date.now() / 1000);
   const deny = allowed("ptz_preset", camera);
   const cam = cameras[camera];
@@ -585,7 +585,7 @@ server.tool("ptz_move", "Relative PTZ move (degrees pan/tilt, zoom steps), bound
   if (reason) { receipt("ptz_move", { camera, pan, tilt, zoom }, "deny", reason); return { content: [{ type: "text", text: `DENIED: ${reason}` }] }; }
   const ok = await ptzMove("ptz_move", camera, pan, tilt, zoom);
   receipt("ptz_move", { camera, pan, tilt, zoom }, "allow", ok ? `moved via ${camOf(camera).protocol}` : "transport error");
-  return { content: [{ type: "text", text: ok ? `moved ${camera} pan=${pan}° tilt=${tilt}° zoom=${zoom} (${camOf(camera).protocol})` : "move failed" }] };
+  return { content: [{ type: "text", text: ok ? `move sent to ${camera}: pan=${pan}° tilt=${tilt}° zoom=${zoom} (${camOf(camera).protocol}); request succeeded, position not read back` : "move failed" }] };
 });
 
 server.tool("config_baseline", "Capture allowed VAPIX parameters as the camera config baseline",
@@ -643,7 +643,7 @@ server.tool("config_drift", "Compare live VAPIX parameters with the saved config
   const deny = configDenied("config_drift", camera) ?? tierDenied("config_drift", camera);
   if (deny) { receipt("config_drift", params, "deny", deny); return { content: [{ type: "text", text: `DENIED: ${deny}` }] }; }
   const file = baselineFile(camera);
-  if (!existsSync(file)) { receipt("config_drift", params, "allow", "no baseline"); return { content: [{ type: "text", text: "no baseline — run config_baseline" }] }; }
+  if (!existsSync(file)) { receipt("config_drift", params, "allow", "no baseline"); return { content: [{ type: "text", text: "no baseline. Ask the person whether this camera's current config is known-good before running config_baseline." }] }; }
   const baseline = readBaseline(file);
   if (!baseline) { receipt("config_drift", params, "allow", "baseline unreadable"); return { content: [{ type: "text", text: "baseline unreadable" }] }; }
   const groups = baseline.groups.filter((g) => policy[AGENT]!.config!.groups.includes(g));

@@ -82,6 +82,8 @@ Grant agents authority in `policy.json` (anything not granted is denied):
 }
 ```
 
+Camera ids must start with a letter and use only letters, digits, `.`, `_` or `-`, and no two may differ only in letter case; startup stops with a one-line diagnostic otherwise. (`list_cameras` prints `id=<id> | <device info>`, and gateway mode uses the id as a URL host.)
+
 The `policy.json` file is checked once at startup, and a wrong-typed value in any agent's grant stops the server with one line naming the agent and the field. Required keys are checked too, so a `ptz` grant without `maxStep`, a `config` grant without `groups`, or `null` in place of a grant stops the server even when that grant is never used, and a gateway restarted with such a file stays down until the file is corrected.
 
 Register with an MCP client (Claude Code shown):
@@ -135,8 +137,9 @@ dry-run the writes that support it, and report read-backs rather than
 acknowledgments. For Claude Code, copy the `skills/onvif-mcp` folder into
 `~/.claude/skills/`. In our live test the agent never opened the skill
 unprompted (0 of 4 runs), so the server also
-sends a short version of these rules to every client when it connects (MCP
-`instructions`, in `server-instructions.ts`). Both are guidance for the client; asking the person
+sends the core rules to every client when it connects (MCP `instructions`, in
+`server-instructions.ts`). Commissioning detail (rollback limits, drift
+order, handoff text) is in the skill only. Both are guidance for the client; asking the person
 for that yes is the client's job, and the server does not record it. The
 server still enforces policy, bounds and rate limits.
 

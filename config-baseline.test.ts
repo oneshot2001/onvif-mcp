@@ -89,7 +89,7 @@ for (const tool of tools) {
     const h = configHarness(root);
     const output = await h.handlers[tool]!(input);
     expect(output).toEqual({ content: [{ type: "text", text: tool === "config_drift"
-      ? "no baseline — run config_baseline" : "DENIED: no baseline" }] });
+      ? "no baseline. Ask the person whether this camera's current config is known-good before running config_baseline." : "DENIED: no baseline" }] });
     expect(h.chain).toEqual([[tool, tool === "config_drift" ? { camera: "cam" } : input,
       tool === "config_drift" ? "allow" : "deny", "no baseline"]]);
     expect(h.calls).toEqual([]);

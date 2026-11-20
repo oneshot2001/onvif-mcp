@@ -468,9 +468,9 @@ test("policy camera wiring: a camera another agent names that cameras.json lacks
 
 test("camera id wiring: an id that could blur a list_cameras line exits 1 on one line, before the pin check", () => {
   expectRejected(runCameraIdGate({ "west | annex": { base: "http://x.invalid" } }),
-    'cameras.json camera id "west | annex" must be letters, digits, ".", "_", ":" or "-"');
+    'cameras.json camera id "west | annex" must start with a letter and use only letters, digits, ".", "_" or "-"');
   expectRejected(runCameraIdGate({ "front\nid=back": { base: "http://x.invalid", pin: "bad" } }),
-    'cameras.json camera id "front\\nid=back" must be letters, digits, ".", "_", ":" or "-"');
+    'cameras.json camera id "front\\nid=back" must start with a letter and use only letters, digits, ".", "_" or "-"');
   const separator = runCameraIdGate({ "cam\u2028id=back": { base: "http://x.invalid" } });
   expect(separator.exitCode).toBe(1);
   expect(separator.stderr).not.toMatch(/[\u2028\u2029]/);

@@ -304,9 +304,10 @@ test("policy shape: valid policies return null", () => {
   }
 });
 
-test("camera ids that could blur a list_cameras line stop startup; plain ids pass", () => {
-  expect(unsafeCameraId({ q6325: {}, "dock:west": {}, "lobby-2.cam_1": {} })).toBeNull();
-  for (const id of ["west | annex", "front\nid=back", "a=b", "lobby 2", "\"cam\"", "", "-cam"]) {
-    expect(unsafeCameraId({ ok: {}, [id]: {} })).toBe(`cameras.json camera id ${JSON.stringify(id)} must be letters, digits, ".", "_", ":" or "-"`);
+test("camera ids that could blur a list_cameras line, break a gateway URL or collide by case stop startup; plain ids pass", () => {
+  expect(unsafeCameraId({ q6325: {}, "lobby-2.cam_1": {}, Gate: {} })).toBeNull();
+  for (const id of ["west | annex", "front\nid=back", "a=b", "lobby 2", "\"cam\"", "", "-cam", "dock:west", "42", "0.0.0.42"]) {
+    expect(unsafeCameraId({ ok: {}, [id]: {} })).toBe(`cameras.json camera id ${JSON.stringify(id)} must start with a letter and use only letters, digits, ".", "_" or "-"`);
   }
+  expect(unsafeCameraId({ dome: {}, lobby: {}, Dome: {} })).toBe('cameras.json camera ids "dome" and "Dome" differ only in letter case');
 });

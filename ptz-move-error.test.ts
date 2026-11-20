@@ -75,7 +75,7 @@ for (const [name, protocol, reply, ok] of cases) {
         expect(h.lines).toEqual([]);
       } else {
         expect(await h.handlers.ptz_move!(input)).toEqual({ content: [{ type: "text", text: ok
-          ? `moved cam pan=18° tilt=-9° zoom=2 (${protocol})` : "move failed" }] });
+          ? `move sent to cam: pan=18° tilt=-9° zoom=2 (${protocol}); request succeeded, position not read back` : "move failed" }] });
         expect(h.lines).toHaveLength(1);
         expect(JSON.parse(h.lines[0]!)).toMatchObject({
           action: { tool: "ptz_move", params: input }, decision: "allow",
