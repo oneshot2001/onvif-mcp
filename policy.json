@@ -80,6 +80,84 @@
       "rate": {
         "snapshotPerMin": 30
       }
+    },
+    "fk-harness": {
+      "tools": [
+        "list_cameras",
+        "clock_check",
+        "get_snapshot",
+        "config_drift",
+        "get_receipts"
+      ],
+      "cameras": [
+        "q6358",
+        "q6325",
+        "p3285"
+      ],
+      "rate": {
+        "snapshotPerMin": 30
+      },
+      "config": {
+        "groups": [
+          "ImageSource",
+          "Time",
+          "Image"
+        ],
+        "remediate": false,
+        "aoa": false
+      }
+    },
+    "fk-plain": {
+      "tools": [
+        "list_cameras",
+        "clock_check",
+        "get_snapshot",
+        "config_drift",
+        "get_receipts"
+      ],
+      "cameras": [
+        "q6358",
+        "q6325",
+        "p3285"
+      ],
+      "rate": {
+        "snapshotPerMin": 30
+      },
+      "config": {
+        "groups": [
+          "ImageSource",
+          "Time",
+          "Image"
+        ],
+        "remediate": false,
+        "aoa": false
+      }
+    },
+    "fk-script": {
+      "tools": [
+        "list_cameras",
+        "clock_check",
+        "get_snapshot",
+        "config_drift",
+        "get_receipts"
+      ],
+      "cameras": [
+        "q6358",
+        "q6325",
+        "p3285"
+      ],
+      "rate": {
+        "snapshotPerMin": 30
+      },
+      "config": {
+        "groups": [
+          "ImageSource",
+          "Time",
+          "Image"
+        ],
+        "remediate": false,
+        "aoa": false
+      }
     }
   }
 }
