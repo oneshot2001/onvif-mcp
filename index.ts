@@ -31,6 +31,7 @@ import { accountFor, type CameraAccounts } from "./account-for";
 import { keyModeProblem } from "./key-perms";
 import { missingPasswords, unsafeCredentials } from "./creds-check";
 import { makeLimiter } from "./rate-limit";
+import { SERVER_INSTRUCTIONS } from "./server-instructions";
 import { allowed as policyAllowed, baselineDenied, configDenied as policyConfigDenied, ptzBound, ptzGranted, policyShapeProblem, unknownAgentKey, unknownPolicyCamera, type Policy } from "./policy-check";
 
 const ROOT = import.meta.dir;
@@ -482,7 +483,7 @@ async function emitAar(tool: string, camera: string, actionName: "camera.stream.
   }
 }
 
-const server = new McpServer({ name: "onvif-mcp", version: "0.1.0" });
+const server = new McpServer({ name: "onvif-mcp", version: "0.1.0" }, { instructions: SERVER_INSTRUCTIONS });
 withInvocations(server);
 registerCommission(server, { root: ROOT, agent: AGENT, policy, policyBytes, cameras, privateKey: PRIV, signer, tierDenied, vapix, vapixPost, observeEvents, configParams, parseParams, inGroup, sha256, receipt, lastReceipt, snapshot, checkSnapshot: () => rateDenied("snapshot"), checkActuation: () => rateDenied("actuation"), clockCheck: (tool, camera) => clockCheck(tool, camera, { now: Date.now, vapixPost }) });
 

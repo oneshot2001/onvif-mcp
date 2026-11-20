@@ -150,6 +150,19 @@ describe("commission handoff evidence", () => {
 describe("commission gates", () => {
   const yaml = "spec: camspec/0.1\nname: gate\nparams:\n  Image.I0.Appearance.Rotation: '180'\n";
 
+  test("commission gate wiring: a case-only camera miss is denied with the granted id before any dependency call", async () => {
+    const h = harness();
+    writeFileSync(join(h.root, "specs/gate.yaml"), yaml);
+    const spies = (["vapix", "vapixPost", "configParams", "observeEvents", "snapshot", "clockCheck"] as const).map(name => spyOn(h.deps, name));
+    try {
+      const reason = "camera 'CAM' not allowlisted for agent 'claude-main' (camera ids are case-sensitive; did you mean 'cam'?)";
+      const denied = await h.handlers.commission_plan!({ camera: "CAM", spec: "gate" });
+      expect(denied.content[0]!.text).toBe(`DENIED: ${reason}`);
+      expect(h.receipts).toEqual([expect.objectContaining({ tool: "commission_plan", decision: "deny", detail: reason })]);
+      for (const spy of spies) expect(spy).not.toHaveBeenCalled();
+    } finally { for (const spy of spies) spy.mockRestore(); }
+  });
+
   test("commission gate wiring: approved apply requires remediation grant before any dependency call; dry-run remains allowed", async () => {
     const h = harness();
     delete h.deps.policy["claude-main"]!.config!.remediate;

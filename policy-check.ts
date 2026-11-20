@@ -83,8 +83,20 @@ export function allowed(policy: Policy, agent: string, tool: string, camera?: st
   const p = policy[agent];
   if (!p) return `agent '${agent}' not in policy (fail closed)`;
   if (!p.tools.includes(tool)) return `tool '${tool}' not allowlisted for agent '${agent}'`;
-  if (camera && !p.cameras.includes(camera)) return `camera '${camera}' not allowlisted for agent '${agent}'`;
+  if (camera && !p.cameras.includes(camera)) return cameraNotAllowlisted(agent, p.cameras, camera);
   return null;
+}
+
+// Camera ids are case-sensitive. Agents copy the case from the model string that
+// list_cameras prints beside the id (`q6325: Model="AXIS Q6325-LE"`), so an
+// ASCII-case-only miss names the agent's own granted id when exactly one
+// matches. ASCII folding only: toLowerCase would map U+212A KELVIN SIGN onto
+// "k". Still a denial; the hint never covers another agent's cameras.
+const asciiLower = (id: string) => id.replace(/[A-Z]/g, (c) => c.toLowerCase());
+export function cameraNotAllowlisted(agent: string, granted: string[], camera: string): string {
+  const matches = granted.filter((id) => asciiLower(id) === asciiLower(camera));
+  const hint = matches.length === 1 ? ` (camera ids are case-sensitive; did you mean '${matches[0]}'?)` : "";
+  return `camera '${camera}' not allowlisted for agent '${agent}'${hint}`;
 }
 
 export function configDenied(policy: Policy, agent: string, tool: string, camera: string, approve = false): string | null {

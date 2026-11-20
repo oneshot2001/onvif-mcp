@@ -156,6 +156,27 @@ describe("policy checks", () => {
     expect(configDenied(policy, "viewer", "config_drift", "other")).toBe("camera 'other' not allowlisted for agent 'viewer'");
   });
 
+  test("a case-only camera miss is still denied and names the granted id", () => {
+    const reason = "camera 'CAM' not allowlisted for agent 'viewer' (camera ids are case-sensitive; did you mean 'cam'?)";
+    expect(allowed(policy, "viewer", "get_snapshot", "CAM")).toBe(reason);
+    expect(configDenied(policy, "viewer", "config_drift", "CAM")).toBe(reason);
+  });
+
+  test("the camera hint names only a unique own grant, folds ASCII only, and never precedes the agent and tool checks", () => {
+    const split: Policy = {
+      viewer: { tools: ["get_snapshot"], cameras: ["cam"] },
+      other: { tools: ["get_snapshot"], cameras: ["cam", "gate"] },
+      twins: { tools: ["get_snapshot"], cameras: ["Dome", "dome"] },
+      kelvin: { tools: ["get_snapshot"], cameras: ["k1"] },
+    };
+    expect(allowed(split, "viewer", "get_snapshot", "GATE")).toBe("camera 'GATE' not allowlisted for agent 'viewer'");
+    expect(allowed(split, "twins", "get_snapshot", "DOME")).toBe("camera 'DOME' not allowlisted for agent 'twins'");
+    expect(allowed({ twins: { ...split.twins!, cameras: ["dome", "Dome"] } }, "twins", "get_snapshot", "DOME")).toBe("camera 'DOME' not allowlisted for agent 'twins'");
+    expect(allowed(split, "kelvin", "get_snapshot", "\u212A1")).toBe("camera '\u212A1' not allowlisted for agent 'kelvin'");
+    expect(allowed(split, "viewer", "config_drift", "CAM")).toBe("tool 'config_drift' not allowlisted for agent 'viewer'");
+    expect(allowed(split, "nobody", "get_snapshot", "CAM")).toBe("agent 'nobody' not in policy (fail closed)");
+  });
+
   test("denies without a config grant", () => {
     expect(configDenied(policy, "viewer", "config_drift", "cam")).toBe("agent 'viewer' has no config grant");
   });

@@ -4,6 +4,7 @@ import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js"
 import { copyFileSync, cpSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { SERVER_INSTRUCTIONS } from "./server-instructions";
 
 const servers: Array<{ dir: string; client: Client }> = [];
 
@@ -58,6 +59,7 @@ exit 7
   await client.connect(new StdioClientTransport({ command: process.execPath, args: ["index.ts"], cwd: root, env }));
   return {
     root, env,
+    instructions: () => client.getInstructions(),
     hits: () => readFileSync(hits, "utf8"),
     chain: () => readFileSync(join(root, "receipts", "chain.jsonl"), "utf8").trim().split("\n").map((line) => JSON.parse(line)),
     async call(name: string, args: Record<string, unknown> = {}) {
@@ -112,4 +114,15 @@ test("server e2e: --verify passes the chain the server wrote and fails naming an
   expect(broken.stdout.toString().startsWith("BROKEN at seq 2: ")).toBe(true);
   expect(broken.stdout.toString().endsWith("\n1 broken receipts or handoffs\n")).toBe(true);
   expect(server.hits()).toBe("");
+}, 60_000);
+
+test("server e2e: initialize carries the server instructions and a case-only camera miss names the granted id before any camera request", async () => {
+  const server = await startServer("viewer");
+  expect(server.instructions()).toBe(SERVER_INSTRUCTIONS);
+  expect(await server.call("ptz_move", { camera: "DOME", pan: 1 }))
+    .toBe("DENIED: camera 'DOME' not allowlisted for agent 'viewer' (camera ids are case-sensitive; did you mean 'dome'?)");
+  expect(await server.call("ptz_move", { camera: "GATE", pan: 1 })).toBe("DENIED: camera 'GATE' not allowlisted for agent 'viewer'");
+  expect(server.hits()).toBe("");
+  expect(server.chain().map((r) => [r.principal.id, r.action.tool, r.decision, r.node_kind]))
+    .toEqual([["viewer", "ptz_move", "deny", "authorization"], ["viewer", "ptz_move", "deny", "authorization"]]);
 }, 60_000);

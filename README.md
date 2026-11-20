@@ -133,7 +133,10 @@ agent how to work with these gates: move or write a camera only when a person
 asked for it, treat a denial as final, snapshot before and after a move,
 dry-run the writes that support it, and report read-backs rather than
 acknowledgments. For Claude Code, copy the `skills/onvif-mcp` folder into
-`~/.claude/skills/`. The skill is guidance for the client; asking the person
+`~/.claude/skills/`. In our live test the agent never opened the skill
+unprompted (0 of 4 runs), so the server also
+sends a short version of these rules to every client when it connects (MCP
+`instructions`, in `server-instructions.ts`). Both are guidance for the client; asking the person
 for that yes is the client's job, and the server does not record it. The
 server still enforces policy, bounds and rate limits.
 

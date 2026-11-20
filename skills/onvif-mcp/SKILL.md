@@ -17,13 +17,18 @@ the failure to avoid.
    and stop that line of work. Do not get around it: no splitting a denied move
    into smaller steps, no trying another camera, no rewording the parameter, no
    other agent identity. The denial is already on the signed receipt chain; a
-   workaround shows up there too. The one exception is a `rate limit: N/min`
-   denial with N above 0: the window is a rolling 60 seconds, so wait, then
-   ask the person before trying again. A `0/min` limit or any other
-   `rate limit:` reason will not clear by waiting.
-2. **Use exact camera ids.** If `list_cameras` is granted, start there; only
-   the cameras it returns are yours. If it isn't, use the id the person gave
-   you. Never guess an id.
+   workaround shows up there too. Two exceptions:
+   - A `rate limit: N/min` denial with N above 0: the window is a rolling 60
+     seconds, so wait, then ask the person before trying again. A `0/min`
+     limit or any other `rate limit:` reason will not clear by waiting.
+   - A camera denial whose reason suggests an id (`did you mean '<id>'?`):
+     the server names one of your own granted cameras that differs only in
+     letter case. Resend with it only if it is the camera the person asked
+     about; for a write, start the dry run and the yes over.
+2. **Use exact camera ids. They are case-sensitive.** If `list_cameras` is
+   granted, start there and copy each id exactly as it prints it; the model
+   name printed after it is not the id. Only the cameras it returns are yours.
+   If it isn't granted, use the id the person gave you. Never guess an id.
 3. **Nothing moves or changes without the person's say-so.** `ptz_move`,
    `ptz_preset`, approved `config_remediate` and approved `commission_apply`
    all change a live camera, and the PTZ tools have no dry run. Before calling
@@ -37,8 +42,8 @@ the failure to avoid.
    live state, so if anything changed in between, dry-run again. Never set
    `approve: true` on your own judgment.
 5. **Report what the evidence shows, not what the command meant to do.**
-   - `remediated …`: the camera read back the target value. This is the only
-     write reply that proves the change.
+   - `remediated …`: the camera read back the target value. For
+     `config_remediate` this is the only reply that proves the change.
    - `write acked but postcondition FAILED (live=…)`: the camera said OK and
      the target value was not confirmed. If `live=` shows a value, that is what
      the camera holds now; if it shows `(read failed)`, the value is unknown.

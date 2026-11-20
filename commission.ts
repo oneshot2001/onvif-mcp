@@ -2,7 +2,7 @@ import { TOOL_HINTS } from "./tool-hints";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import { cameraId, specRef } from "./schemas";
-import { ptzGranted } from "./policy-check";
+import { cameraNotAllowlisted, ptzGranted } from "./policy-check";
 import { deviceText, escapeInvisible } from "./device-text";
 import type { ClockResult } from "./clock";
 import { createHash, createPublicKey, randomUUID, sign as edSign, verify as edVerify } from "node:crypto";
@@ -206,7 +206,7 @@ export function registerCommission(server: McpServer, d: CommissionDeps) {
     const p = d.policy[d.agent];
     if (!p) return `agent '${d.agent}' not in policy (fail closed)`;
     if (!p.tools.includes(tool)) return `tool '${tool}' not granted to agent '${d.agent}'`;
-    if (!p.cameras.includes(camera)) return `camera '${camera}' not allowlisted for agent '${d.agent}'`;
+    if (!p.cameras.includes(camera)) return cameraNotAllowlisted(d.agent, p.cameras, camera);
     if (!d.cameras[camera]) return `unknown camera '${camera}'`;
     if (!p.config?.groups) return `agent '${d.agent}' has no config grant`;
     if (tool === "commission_apply" && approve && !p.config.remediate) return `agent '${d.agent}' has no config remediation grant`;
