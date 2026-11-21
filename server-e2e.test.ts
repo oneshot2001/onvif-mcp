@@ -7,6 +7,35 @@ import { join } from "node:path";
 import { SERVER_INSTRUCTIONS } from "./server-instructions";
 
 const servers: Array<{ dir: string; client: Client }> = [];
+const password = "standin-password";
+
+function writeCurl(bin: string, logs: string, curlExit: number) {
+  for (const name of ["hits", "argv", "stdin"]) writeFileSync(join(logs, name), "");
+  writeFileSync(join(bin, "curl"), `#!/bin/sh
+logs='${logs.replace(/'/g, "'\\''")}'
+printf '%s\\n' "$@" >> "$logs/argv"
+url=''
+for arg do
+  case "$arg" in http*) printf '%s\\n' "$arg" >> "$logs/hits"; url="$arg" ;; esac
+done
+# The sentinel preserves trailing LF bytes through command substitution.
+input="$(cat; printf '.')"
+expected='user = "standin:${password}"
+.'
+if [ "$input" = "$expected" ]; then
+  printf '%s\\n' stdin-ok >> "$logs/stdin"
+else
+  printf '%s\\n' stdin-other >> "$logs/stdin"
+fi
+case "$url" in
+  */axis-cgi/param.cgi*) printf '%s\\n' 'root.Brand.ProdShortName=AXIS STANDIN' 'root.Properties.PTZ.PTZ=no' ;;
+  */onvif/services) printf '%s\\n' '<tds:GetDeviceInformationResponse><tds:Manufacturer>Standin</tds:Manufacturer><tds:Model>E2E-1</tds:Model><tds:FirmwareVersion>0.0.0</tds:FirmwareVersion></tds:GetDeviceInformationResponse>' ;;
+  */axis-cgi/time.cgi) printf '{"apiVersion":"1.0","method":"getDateTimeInfo","data":{"dateTime":"%s"}}\\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" ;;
+  */axis-cgi/ntp.cgi) ;;
+esac
+exit ${curlExit}
+`, { mode: 0o755 });
+}
 
 afterEach(async () => {
   for (const { dir, client } of servers.splice(0)) {
@@ -15,7 +44,7 @@ afterEach(async () => {
   }
 });
 
-async function startServer(agent: string | undefined) {
+async function startServer(agent: string | undefined, curlExit = 7) {
   const dir = mkdtempSync(join(tmpdir(), "onvif-server-e2e-"));
   const client = new Client({ name: "server-e2e", version: "1.0.0" });
   servers.push({ dir, client });
@@ -35,36 +64,38 @@ async function startServer(agent: string | undefined) {
   });
   symlinkSync(join(import.meta.dir, "node_modules"), join(root, "node_modules"), "dir");
   writeFileSync(join(root, "cameras.json"), JSON.stringify(Object.fromEntries(
-    ["lobby", "gate", "dome"].map((id) => [id, {
+    ["lobby", "gate", "dome", "hall"].map((id) => [id, {
       base: `http://${id}.invalid`, user: "standin", credKey: "standin-camera",
-      protocol: "vapix", ptz: id === "dome",
+      protocol: id === "hall" ? "onvif" : "vapix", ptz: id === "dome",
     }]),
   )));
   writeFileSync(join(root, "policy.json"), JSON.stringify({ agents: {
     "claude-main": { tools: ["get_receipts"], cameras: ["lobby"] },
     viewer: { tools: ["get_receipts", "ptz_move"], cameras: ["lobby", "dome"], ptz: { maxStep: 30, maxZoomStep: 5 } },
+    ops: { tools: ["list_cameras", "clock_check"], cameras: ["lobby", "hall"] },
   } }));
-  writeFileSync(join(home, ".claude", "bin", "cred"), "#!/bin/sh\nprintf '%s\\n' 'standin-password'\n", { mode: 0o755 });
+  writeFileSync(join(home, ".claude", "bin", "cred"), `#!/bin/sh\nprintf '%s\\n' '${password}'\n`, { mode: 0o755 });
   const hits = join(dir, "hits");
-  writeFileSync(hits, "");
-  writeFileSync(join(bin, "curl"), `#!/bin/sh
-for arg do
-  case "$arg" in http*) printf '%s\\n' "$arg" >> "$(dirname "$0")/../hits" ;; esac
-done
-cat > /dev/null
-exit 7
-`, { mode: 0o755 });
+  writeCurl(bin, dir, curlExit);
   const env: Record<string, string> = { PATH: `${bin}:${process.env.PATH ?? ""}`, HOME: home };
   if (agent !== undefined) env.AGENT_ID = agent;
   await client.connect(new StdioClientTransport({ command: process.execPath, args: ["index.ts"], cwd: root, env }));
+  const texts: string[] = [];
+  async function callRaw(name: string, args: Record<string, unknown>) {
+    const result = await client.callTool({ name, arguments: args });
+    texts.push((result.content as Array<{ type: string; text?: string }>).filter((part) => part.type === "text").map((part) => part.text).join("\n"));
+    return result;
+  }
   return {
-    root, env,
+    root, env, texts,
     instructions: () => client.getInstructions(),
-    callRaw: (name: string, args: Record<string, unknown>) => client.callTool({ name, arguments: args }),
+    callRaw,
     hits: () => readFileSync(hits, "utf8"),
+    argv: () => readFileSync(join(dir, "argv"), "utf8"),
+    stdin: () => readFileSync(join(dir, "stdin"), "utf8"),
     chain: () => readFileSync(join(root, "receipts", "chain.jsonl"), "utf8").trim().split("\n").map((line) => JSON.parse(line)),
     async call(name: string, args: Record<string, unknown> = {}) {
-      const result = await client.callTool({ name, arguments: args });
+      const result = await callRaw(name, args);
       expect(result.isError).not.toBe(true);
       return (result.content as Array<{ type: string; text?: string }>).filter((part) => part.type === "text").map((part) => part.text).join("\n");
     },
@@ -135,4 +166,48 @@ test("server e2e: ptz_preset without a preset name is rejected before any policy
   expect(result.isError).toBe(true);
   expect(server.hits()).toBe("");
   expect(existsSync(join(server.root, "receipts", "chain.jsonl")) ? server.chain() : []).toEqual([]);
+}, 60_000);
+
+test("server e2e: a curl exit other than 0 fails the camera read even when a reply body arrived, and the password reaches curl on stdin only", async () => {
+  const controls = mkdtempSync(join(tmpdir(), "onvif-curl-controls-"));
+  try {
+    writeCurl(controls, controls, 0);
+    for (const terminator of ["", "\n", "\n\n"]) {
+      const result = Bun.spawnSync([join(controls, "curl")], {
+        cwd: controls, stdin: Buffer.from(`user = "standin:${password}"${terminator}`),
+      });
+      expect(result.exitCode).toBe(0);
+    }
+    expect(readFileSync(join(controls, "stdin"), "utf8")).toBe("stdin-other\nstdin-ok\nstdin-other\n");
+  } finally {
+    rmSync(controls, { recursive: true, force: true });
+  }
+
+  const success = await startServer("ops", 0);
+  expect(await success.call("list_cameras")).toBe('id=lobby | "root.Brand.ProdShortName=AXIS STANDIN root.Properties.PTZ.PTZ=no" | protocol=vapix\nid=hall | Model="Standin E2E-1" | Firmware="0.0.0" | protocol=onvif');
+  expect(await success.call("clock_check", { camera: "lobby" })).toMatch(/^lobby clock: observed [+-]\d+(\.\d+)? s .*\nNTP: unavailable$/);
+
+  const failed = await startServer("ops", 28);
+  expect(await failed.call("list_cameras")).toBe("id=lobby | device info unavailable (request failed) | protocol=vapix\nid=hall | device info unavailable (request failed) | protocol=onvif");
+  expect(await failed.call("clock_check", { camera: "lobby" })).toBe("lobby clock read FAILED: time read failed");
+
+  const readHits = [
+    "http://lobby.invalid/axis-cgi/param.cgi?action=list&group=Brand.ProdShortName,Properties.PTZ.PTZ",
+    "http://hall.invalid/onvif/services",
+    "http://lobby.invalid/axis-cgi/time.cgi",
+  ];
+  expect(failed.hits()).toBe(readHits.join("\n") + "\n");
+  expect(success.hits()).toBe([...readHits, "http://lobby.invalid/axis-cgi/ntp.cgi"].join("\n") + "\n");
+  expect(failed.chain().map((r) => [r.action.tool, r.decision, r.detail, r.outcome_evidence])).toEqual([
+    ["list_cameras", "allow", "returned 2 cameras", null],
+    ["clock_check", "allow", "lobby clock read FAILED: time read failed", "unknown"],
+  ]);
+  expect(success.chain().find((r) => r.action.tool === "clock_check").outcome_evidence).toBe("device_acknowledged");
+  expect(success.stdin()).toBe("stdin-ok\n".repeat(4));
+  expect(failed.stdin()).toBe("stdin-ok\n".repeat(3));
+  for (const server of [success, failed]) {
+    for (const output of [server.argv(), server.hits(), readFileSync(join(server.root, "receipts", "chain.jsonl"), "utf8"), ...server.texts]) {
+      expect(output).not.toContain(password);
+    }
+  }
 }, 60_000);
