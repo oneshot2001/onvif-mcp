@@ -76,7 +76,7 @@ test("server e2e: the policy gate refuses an ungranted tool, an unlisted camera,
   const toolReason = "tool 'get_snapshot' not allowlisted for agent 'viewer'";
   const cameraReason = "camera 'gate' not allowlisted for agent 'viewer'";
   const zoomReason = "zoom step exceeds policy maxZoomStep 5";
-  expect((await server.call("get_snapshot", { camera: "lobby" })).startsWith(`DENIED: ${toolReason}\naar-bundle: `)).toBe(true);
+  expect(await server.call("get_snapshot", { camera: "lobby" })).toStartWith(`DENIED: ${toolReason}\naar-bundle: `);
   expect(await server.call("ptz_move", { camera: "gate", pan: 1 })).toBe(`DENIED: ${cameraReason}`);
   expect(await server.call("ptz_move", { camera: "dome", zoom: 10 })).toBe(`DENIED: ${zoomReason}`);
   await server.call("get_receipts", { n: 10 });
@@ -112,8 +112,8 @@ test("server e2e: --verify passes the chain the server wrote and fails naming an
   writeFileSync(log, lines.join("\n"));
   const broken = Bun.spawnSync([process.execPath, "index.ts", "--verify"], { cwd: server.root, env: server.env });
   expect(broken.exitCode).toBe(1);
-  expect(broken.stdout.toString().startsWith("BROKEN at seq 2: ")).toBe(true);
-  expect(broken.stdout.toString().endsWith("\n1 broken receipts or handoffs\n")).toBe(true);
+  expect(broken.stdout.toString()).toStartWith("BROKEN at seq 2: ");
+  expect(broken.stdout.toString()).toEndWith("\n1 broken receipts or handoffs\n");
   expect(server.hits()).toBe("");
 }, 60_000);
 
