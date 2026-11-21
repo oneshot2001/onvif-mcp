@@ -2693,3 +2693,37 @@ test("commission spec file type: plan, apply and verify refuse a FIFO spec with 
     calls: [],
   })));
 }, 15000);
+
+test("commission preset read-back: a preset is confirmed by its exact name, not by a longer or differently cased name that contains it", async () => {
+  const h = harness({ ptz: true });
+  writeFileSync(join(h.root, "specs/preset.yaml"), "spec: camspec/0.1\nname: preset\npresets:\n  Gate: { pan: 0, tilt: 0, zoom: 1 }\n");
+  const applied = JSON.parse((await h.handlers.commission_apply!({ camera: "cam", spec: "preset", approve: true })).content[0]!.text);
+  expect(applied.passed).toBeTrue();
+  expect(applied.failed).toEqual([]);
+
+  const missing = [{ param: "preset:Gate", desired: "Gate", observed: null }];
+  const verify = async (passed: boolean) => {
+    const out = JSON.parse((await h.handlers.commission_verify!({ camera: "cam", spec: "preset" })).content[0]!.text);
+    expect(out.passed).toBe(passed);
+    expect(out.failed).toEqual(passed ? [] : missing);
+    const handoff = JSON.parse(readFileSync(out.handoff, "utf8"));
+    expect(handoff.verify).toEqual({ passed, failed: passed ? [] : missing });
+    expect(verifyHandoffs(h.root, h.publicKey).bad).toEqual([]);
+  };
+  h.presets.clear();
+  for (const name of ["Gatehouse", "FrontGate", "Gate 2", "gate"]) h.presets.add(name);
+  await verify(false);
+  h.presets.add("Gate");
+  await verify(true);
+
+  const vapix = h.deps.vapix;
+  let body = "presetposno1=1,Gate\n";
+  h.deps.vapix = async (tool, camera, path) => path.includes("query=presetposcam")
+    ? { ok: true, body }
+    : vapix(tool, camera, path);
+  try {
+    await verify(true);
+    body = "presetposno1=1,Gatehouse\n";
+    await verify(false);
+  } finally { h.deps.vapix = vapix; }
+});
