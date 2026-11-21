@@ -25,7 +25,7 @@ import { formatPresetRecall } from "./ptz-output";
 import { formatDriftLines, type ConfigDiff } from "./config-drift";
 import { appendLocked, emptyChainConflict, formatReceiptsText, lastReceiptFrom, missingHandoffHeads, outcomeEvidence, selectReceipts, verifyChain } from "./receipt-chain";
 import { curlRequest } from "./curl-args";
-import { claimInvocationForAar, currentCommandDigest, currentInvocationId, runAsDispatch, setInvocationRecorder, withInvocations } from "./invocation";
+import { claimInvocationForAar, currentClientCall, currentCommandDigest, currentInvocationId, runAsDispatch, setInvocationRecorder, withInvocations } from "./invocation";
 import { cameraPinProblem } from "./camera-pins";
 import { accountFor, type CameraAccounts } from "./account-for";
 import { keyModeProblem } from "./key-perms";
@@ -279,6 +279,7 @@ function receipt(tool: string, params: unknown, decision: "allow" | "deny", deta
     const body = {
       seq: prev.seq + 1, ts: new Date().toISOString(),
       invocation_id: currentInvocationId() ?? null,
+      client_call: currentClientCall(),
       profile: "aar-0.2-draft-alignment",
       principal: { role: "agent", type: "service", id: AGENT },
       enforcement_point: "onvif-mcp/0.1.0",

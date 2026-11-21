@@ -120,13 +120,17 @@ All tools persist receipts; some also save artifacts, replace baselines, or chan
 Every call that reaches a tool handler — allowed or denied — appends a receipt. A call the MCP SDK rejects first (an unknown tool, or arguments that fail the tool's input schema) makes no policy decision and no camera request, and leaves no receipt. A denial looks like this:
 
 ```json
-{ "seq": 19, "profile": "aar-0.2-draft-alignment",
+{ "seq": 19,
+  "client_call": { "id": "toolu_01TzHJ22FCfCW2LGybXUimxs", "source": "claudecode/toolUseId, client-supplied, not verified" },
+  "profile": "aar-0.2-draft-alignment",
   "principal": { "role": "agent", "type": "service", "id": "claude-main" },
   "enforcement_point": "onvif-mcp/0.1.0", "node_kind": "authorization",
   "action": { "tool": "ptz_move", "params": { "camera": "gate", "pan": 90 } },
   "decision": "deny", "detail": "step exceeds policy maxStep 30°",
   "prev": "8fb7…", "hash": "8322…", "sig": "jRld…" }
 ```
+
+`client_call` is the client's own id for the call, read from `_meta["claudecode/toolUseId"]` on the request (Claude Code sends it). It is client-supplied, not verified and not unique: a client can reuse an id or copy another client's, so one id can appear on receipts of different calls. Use it as a key for matching a receipt to the harness's record of the same call, not as proof of who called; policy never reads it. It is `null` when the request carried no acceptable id.
 
 ## Agent skill
 

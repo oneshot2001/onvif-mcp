@@ -16,7 +16,7 @@ import { allowed as policyAllowed, ptzBound, ptzGranted, type Policy } from "../
 import { clockReceipt, formatClock, type ClockResult } from "../clock";
 import { appendLocked, outcomeEvidence, verifyChain, formatReceiptsText, selectReceipts } from "../receipt-chain";
 
-import { claimInvocationForAar, currentCommandDigest, currentInvocationId, runAsDispatch, runWithInvocation } from "../invocation";
+import { claimInvocationForAar, currentClientCall, currentCommandDigest, currentInvocationId, runAsDispatch, runWithInvocation } from "../invocation";
 import { checkAarJournal } from "./journal";
 
 // Execute the actual index.ts wrapper and registrations with fake transports.
@@ -113,7 +113,7 @@ function harness(mode: string, password = "fake-password", options: HarnessOptio
     TOOL_HINTS,
     ptzGranted,
     AarWireProducer, commandDigestHex, runAsDispatch, sendPreset, sendSnapshot, createHash, join, cameraId, presetName, formatPresetRecall, snapshotContent,
-    claimInvocationForAar, currentInvocationId, appendLocked, outcomeEvidence, edSign, LOG: log, PRIV: privateKey,
+    claimInvocationForAar, currentClientCall, currentInvocationId, appendLocked, outcomeEvidence, edSign, LOG: log, PRIV: privateKey,
     signer: { sign: (_kind: string, body: unknown) => edSign(null, Buffer.from(createHash("sha256").update(JSON.stringify(body)).digest("hex")), privateKey).toString("base64") },
     ROOT: root, AGENT: "test-agent", policyBytes: Buffer.from("policy"),
     cameras: { cam: options.camera ?? { ptz: true, protocol: "vapix" } }, policy,
