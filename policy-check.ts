@@ -12,6 +12,12 @@ export function unknownAgentKey(policy: Policy): string | null {
   return null;
 }
 
+// AGENT_ID names an AAR key directory, a public-keys file and a policy entry.
+export function unsafeAgentId(agent: string): string | null {
+  if (/^[A-Za-z0-9_][A-Za-z0-9._-]*$/.test(agent) && !(agent in Object.prototype)) return null;
+  return `AGENT_ID ${escapeInvisible(JSON.stringify(agent))} must start with a letter, digit or "_", use only letters, digits, ".", "_" or "-", and not be a built-in object property name`;
+}
+
 // list_cameras prints `id=<id> | <device info>` one camera per line, so an id
 // holding whitespace, "|", "=", quotes or control characters could read as a
 // different id. Gateway mode uses the id as a URL host (`http://<id>`), so no

@@ -65,6 +65,21 @@ function expectContinued(result: ReturnType<typeof runGate>) {
   expect(result.stdout).toBe("startup continued\n");
 }
 
+function runAgentIdGate(agent: string) {
+  return runGate(`
+    ${importHelper("unsafeAgentId", "policy-check.ts")}
+    const AGENT = ${JSON.stringify(agent)};
+  `, slice("const agentProblem = unsafeAgentId(AGENT);", "const cameras: Record<string, CameraAccounts"));
+}
+
+test("agent id wiring: an AGENT_ID that is not a plain name exits 1 on one line before cameras, keys or policy are read", () => {
+  expect(source).toContain('const AGENT = process.env.AGENT_ID ?? "unknown";\nconst agentProblem = unsafeAgentId(AGENT);\n');
+  for (const agent of ["../escaped-agent", "constructor"]) {
+    expectRejected(runAgentIdGate(agent), `AGENT_ID ${JSON.stringify(agent)} must start with a letter, digit or "_", use only letters, digits, ".", "_" or "-", and not be a built-in object property name`);
+  }
+  for (const agent of ["claude-main", "unknown"]) expectContinued(runAgentIdGate(agent));
+});
+
 function runPolicyKeyGate(agents: unknown) {
   writeFileSync(join(root, "policy.json"), JSON.stringify({ agents }));
   return runGate(`

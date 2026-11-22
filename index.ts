@@ -32,7 +32,7 @@ import { keyModeProblem } from "./key-perms";
 import { missingPasswords, unsafeCredentials } from "./creds-check";
 import { makeLimiter } from "./rate-limit";
 import { SERVER_INSTRUCTIONS } from "./server-instructions";
-import { allowed as policyAllowed, baselineDenied, configDenied as policyConfigDenied, ptzBound, ptzGranted, policyShapeProblem, unknownAgentKey, unknownPolicyCamera, unsafeCameraId, type Policy } from "./policy-check";
+import { allowed as policyAllowed, baselineDenied, configDenied as policyConfigDenied, ptzBound, ptzGranted, policyShapeProblem, unknownAgentKey, unknownPolicyCamera, unsafeAgentId, unsafeCameraId, type Policy } from "./policy-check";
 
 const ROOT = import.meta.dir;
 const KEYDIR = join(ROOT, ".keys");
@@ -93,6 +93,11 @@ catch (error) {
 }
 
 const AGENT = process.env.AGENT_ID ?? "unknown";
+const agentProblem = unsafeAgentId(AGENT);
+if (agentProblem !== null) {
+  console.error(agentProblem);
+  process.exit(1);
+}
 const cameras: Record<string, CameraAccounts & { base: string; pin?: string; auth?: "digest" | "any"; ptz: boolean; protocol: "vapix" | "onvif"; profile?: string }> =
   JSON.parse(readFileSync(join(ROOT, "cameras.json"), "utf8"));
 const pinProblem = unsafeCameraId(cameras) ?? cameraPinProblem(cameras);

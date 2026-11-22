@@ -1,7 +1,20 @@
 import { describe, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import { allowed, baselineDenied, configDenied, ptzBound, policyShapeProblem, unknownAgentKey, unsafeCameraId, type Policy } from "./policy-check";
+import { allowed, baselineDenied, configDenied, ptzBound, policyShapeProblem, unknownAgentKey, unsafeAgentId, unsafeCameraId, type Policy } from "./policy-check";
+
+test("agent ids that would leave the AAR key directory or read as an inherited policy entry stop startup; plain ids pass", () => {
+  for (const agent of ["claude-main", "codex-main", "untrusted-demo", "unknown", "night.loop_2", "A", "9lives", "_staging"]) {
+    expect(unsafeAgentId(agent)).toBeNull();
+  }
+  for (const agent of ["../escaped-agent", "a/b", "..", ".hidden", "", " leading", "inner space", "trailing\n", "-x", "__proto__", "constructor", "toString", "hasOwnProperty", "valueOf"]) {
+    expect(unsafeAgentId(agent)).toBe(`AGENT_ID ${JSON.stringify(agent)} must start with a letter, digit or "_", use only letters, digits, ".", "_" or "-", and not be a built-in object property name`);
+  }
+  const diagnostic = unsafeAgentId("line\u2028separator");
+  expect(diagnostic).toBe('AGENT_ID "line\\u2028separator" must start with a letter, digit or "_", use only letters, digits, ".", "_" or "-", and not be a built-in object property name');
+  expect(diagnostic).not.toContain("\u2028");
+  expect(diagnostic).not.toContain("\u2029");
+});
 
 test.each(["rateLimit", "rate_limit", "ratelimits", "rate ", "Rate", "ptzz", "_note"])("policy unknown agent key: rejects %s", (key) => {
   expect(unknownAgentKey({ operator: { tools: [], cameras: [], [key]: { actuationPerMin: 2 } } }))
