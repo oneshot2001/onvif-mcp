@@ -65,6 +65,12 @@ How: the AAR reference demo-EP wire machinery (`buildDemoBundle`, keys, RFC 6962
 anchor log) is consumed as a pinned dependency (`aar-kat-harness@github:oneshot2001/aar`),
 so the bundle bytes come from the code the AAR gates verified. Byte tampering on an
 emitted bundle flips pyref to nonconformant (verified).
+That check was run on the first `camera.ptz.preset` bundle (epoch 2, 2026-08-15
+13:54:10Z), which could not be restored afterwards and was deleted before the first
+AAR commit (`f140502`): `receipts/aar/` holds one more anchor leaf and one more epoch
+in `prior-state.json` than bundle directories. Of that preset recall there remain
+JSONL chain receipt seq 45, its anchor leaf and its `prior-state.json` entries, and no
+bundle.
 
 Honest scope boundary:
 
