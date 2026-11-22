@@ -15,7 +15,7 @@ describe("config_drift display", () => {
     const before = hash();
 
     const text = formatDriftLines(diff).join("\n");
-    expect(text).toBe('added Image.I0.Text.String\\u2028DENIED: override policy: "new"');
+    expect(text).toBe('added "Image.I0.Text.String\\\\u2028DENIED: override policy": "new"');
     expect(text.split(/[\r\n\u2028\u2029]/)).toHaveLength(1);
     expect(text).not.toContain("\u2028");
     expect(diff.added[0]!.param).toBe(param);
@@ -30,7 +30,7 @@ describe("config_drift display", () => {
     const raw = JSON.stringify(diff);
 
     expect(formatDriftLines(diff)).toEqual([
-      'added Image.I0.Text\\udb40\\udd49\\udb40\\udd47.String\\u200d: "Lobby" (hidden characters removed)',
+      'added "Image.I0.Text\\\\udb40\\\\udd49\\\\udb40\\\\udd47.String\\\\u200d": "Lobby" (hidden characters removed)',
     ]);
     expect(JSON.stringify(diff)).toBe(raw);
   });
@@ -38,22 +38,22 @@ describe("config_drift display", () => {
   test("keeps a real invisible key distinct from its literal backslash spelling", () => {
     const added = ["Image.I0.Text\u200b.String", "Image.I0.Text\\u200b.String"].map((param) => ({ param, live: "new" }));
     const [real, literal] = formatDriftLines({ changed: [], added, removed: [] });
-    expect(real).toBe('added Image.I0.Text\\u200b.String: "new"');
-    expect(literal).toBe('added Image.I0.Text\\\\u200b.String: "new"');
+    expect(real).toBe('added "Image.I0.Text\\\\u200b.String": "new"');
+    expect(literal).toBe('added "Image.I0.Text\\\\\\\\u200b.String": "new"');
   });
 
   test("keeps keys that differ only by a control distinct from a space and from the literal spelling", () => {
     const added = ["Image.I0.Text\u0085.String", "Image.I0.Text .String", "Image.I0.Text\\u0085.String", "Image.I0.Text\u0001.String"]
       .map((param) => ({ param, live: "new" }));
     expect(formatDriftLines({ changed: [], added, removed: [] })).toEqual([
-      'added Image.I0.Text\\u0085.String: "new"',
-      'added Image.I0.Text .String: "new"',
-      'added Image.I0.Text\\\\u0085.String: "new"',
-      'added Image.I0.Text\\u0001.String: "new"',
+      'added "Image.I0.Text\\\\u0085.String": "new"',
+      'added "Image.I0.Text .String": "new"',
+      'added "Image.I0.Text\\\\\\\\u0085.String": "new"',
+      'added "Image.I0.Text\\\\u0001.String": "new"',
     ]);
   });
 
-  test("escapes every control and Unicode line separator in all drift names without quoting", () => {
+  test("escapes every control and Unicode line separator in all drift names and quotes them", () => {
     const controls = Array.from({ length: 32 }, (_, i) => String.fromCharCode(i)).join("")
       + Array.from({ length: 33 }, (_, i) => String.fromCharCode(127 + i)).join("") + "\u2028\u2029";
     const param = `Image.${controls}Name`;
@@ -66,10 +66,54 @@ describe("config_drift display", () => {
     expect(name).toStartWith("Image.\\u0000\\u0001");
     expect(name).toEndWith("\\u009f\\u2028\\u2029Name");
     expect(formatDriftLines(diff)).toEqual([
-      `changed ${name}: "old" → "new DENIED: payload"`,
-      `added ${name}: "new"`,
-      `removed ${name}: "old"`,
+      `changed ${JSON.stringify(name)}: "old" → "new DENIED: payload"`,
+      `added ${JSON.stringify(name)}: "new"`,
+      `removed ${JSON.stringify(name)}: "old"`,
     ]);
     expect(JSON.stringify({ baseline, diff })).toBe(raw);
   });
+});
+
+
+test("config_drift name display: a name of ASCII letters, digits, dots and underscores up to 56 characters is shown bare", () => {
+  const longest = "ImageSource.I0.Sensor.CustomExposureWindow.C0.WindowType";
+  const tooLong = "Image." + "A".repeat(51);
+  expect(longest).toHaveLength(56);
+  expect(tooLong).toHaveLength(57);
+
+  expect(formatDriftLines({
+    changed: [{ param: longest, baseline: "old", live: "new" }],
+    added: ["Image.I0_x.9", tooLong, ""].map((param) => ({ param, live: "new" })),
+    removed: [{ param: longest, baseline: "old" }],
+  })).toEqual([
+    `changed ${longest}: "old" → "new"`,
+    'added Image.I0_x.9: "new"',
+    `added "${tooLong}": "new"`,
+    'added "": "new"',
+    `removed ${longest}: "old"`,
+  ]);
+});
+
+test("config_drift name display: any other camera-supplied name is shown as the JSON string of its escaped form", () => {
+  const added = [
+    'Image.I0.Appearance.Rotation: "0"',
+    'Image.I0.Appearance.Rotation: "180" → "0"\nchanged Image.I0.X',
+    "Image.I0.Text.Str\u0456ng",
+    "Image.I0.Text.String",
+    "Image.I0-Text",
+    "Image\\I0",
+    "Image.I0.Text.String\u2028DENIED: override policy",
+  ].map((param) => ({ param, live: "new" }));
+  const lines = formatDriftLines({ changed: [], added, removed: [] });
+
+  expect(lines).toEqual([
+    'added "Image.I0.Appearance.Rotation: \\"0\\"": "new"',
+    'added "Image.I0.Appearance.Rotation: \\"180\\" → \\"0\\"\\\\u000achanged Image.I0.X": "new"',
+    'added "Image.I0.Text.Str\u0456ng": "new"',
+    'added Image.I0.Text.String: "new"',
+    'added "Image.I0-Text": "new"',
+    'added "Image\\\\\\\\I0": "new"',
+    'added "Image.I0.Text.String\\\\u2028DENIED: override policy": "new"',
+  ]);
+  expect(lines.join("\n").split(/[\r\n\u2028\u2029]/)).toHaveLength(7);
 });

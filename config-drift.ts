@@ -7,10 +7,13 @@ export type ConfigDiff = {
 };
 
 // Escape controls, line separators and invisible code points in names as \uXXXX, so two keys that differ only by
-// hidden characters display differently; evidence retains the raw keys.
+// hidden characters display differently; evidence retains the raw keys. Only raw names of 1–56 ASCII
+// letters, digits, dots and underscores stay bare; all others display as JSON strings of the escaped form.
+// The 56-character cap is the longest of the 271 distinct names in the three committed baselines.
 function displayParamName(param: string): string {
-  return escapeInvisible(param.replace(/\\/g, "\\\\")
+  const escaped = escapeInvisible(param.replace(/\\/g, "\\\\")
     .replace(/[\u0000-\u001f]/g, (c) => "\\u" + c.charCodeAt(0).toString(16).padStart(4, "0")));
+  return /^[A-Za-z0-9._]{1,56}$/.test(param) ? escaped : JSON.stringify(escaped);
 }
 
 export function formatDriftLines(diff: ConfigDiff): string[] {
