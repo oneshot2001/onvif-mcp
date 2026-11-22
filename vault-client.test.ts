@@ -14,6 +14,28 @@ function fakeVault(routes: Record<string, (body: unknown) => { status: number; b
 }
 const PEM = "-----BEGIN PUBLIC KEY-----\nMCowBQYDK2VwAyEA\n-----END PUBLIC KEY-----\n";
 
+test("vault curl ignores ~/.curlrc and proxy environment variables", () => {
+  const seen: string[][] = [];
+  const spawn = spyOn(Bun, "spawnSync").mockImplementation(((args: string[]) => {
+    seen.push(args);
+    return { exitCode: 0, stdout: Buffer.from("{}\n200"), stderr: Buffer.alloc(0) };
+  }) as typeof Bun.spawnSync);
+  try {
+    const socket = "/tmp/stand-in-vault.sock";
+    const call = curlVaultCall(socket);
+    call("GET", "/public-key");
+    call("POST", "/sign", { kind: "receipt", body: {} });
+    expect(spawn).toHaveBeenCalledTimes(2);
+    for (const args of seen) {
+      expect(args.slice(0, 2)).toEqual(["curl", "-q"]);
+      expect(args[args.indexOf("--noproxy") + 1]).toBe("*");
+      expect(args[args.indexOf("--unix-socket") + 1]).toBe(socket);
+    }
+  } finally {
+    spawn.mockRestore();
+  }
+});
+
 for (const status of [500, 201]) {
   test(`vault status gate: credential HTTP ${status} rejects a password without leaking it`, () => {
     const password = "vault-status-credential-stand-in";

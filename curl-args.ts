@@ -25,7 +25,8 @@ export function curlRequest(
   // does offer Digest keeps it, so a misbehaving witness cannot downgrade it to Basic
   // and learn a reusable password. P2 switches the Basic-only cameras to Digest.
   const auth = opts.unixSocket !== undefined && cam.auth === "any" ? "--anyauth" : "--digest";
-  const args = ["curl", "-sk", "--globoff", auth, "--fail", "--config", "-", "--max-time", String(opts.maxTime ?? CURL_TIMEOUT_SECONDS)];
+  // -q must be first to ignore ~/.curlrc; camera calls must bypass environment proxies.
+  const args = ["curl", "-q", "-sk", "--globoff", auth, "--fail", "--noproxy", "*", "--config", "-", "--max-time", String(opts.maxTime ?? CURL_TIMEOUT_SECONDS)];
   if (opts.unixSocket !== undefined) {
     // Gateway mode: the witness is the only path. It owns TLS and the pin; the
     // URL names the camera by id and the request-target is passed unchanged.

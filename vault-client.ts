@@ -23,7 +23,7 @@ export interface Signer {
 
 export function curlVaultCall(socket: string): VaultCall {
   return (method, path, body) => {
-    const args = ["curl", "-s", "--unix-socket", socket, "--max-time", "5", "-X", method, "-o", "-", "-w", "\n%{http_code}"];
+    const args = ["curl", "-q", "-s", "--noproxy", "*", "--unix-socket", socket, "--max-time", "5", "-X", method, "-o", "-", "-w", "\n%{http_code}"];
     if (body !== undefined) args.push("-H", "content-type: application/json", "--data-binary", "@-");
     args.push(`http://vault${path}`);
     const p = Bun.spawnSync(args, { stdin: body === undefined ? undefined : Buffer.from(JSON.stringify(body)) });
