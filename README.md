@@ -94,6 +94,8 @@ claude mcp add cameras -- env AGENT_ID=claude-main bun /path/to/onvif-mcp/index.
 
 Run one server process per root. The AAR producer state under `receipts/` is read-modify-write with no lock, so two processes on one root (two agents started on one checkout, for example) lose AAR bundles while `--verify-aar` still reports conformant, and two first starts at once can leave a mismatched receipt key pair, which the next start detects but nothing prevents.
 
+On stdio the launcher chooses `AGENT_ID` and the server runs as the launcher's account, so the policy guards against an agent's mistakes, not against a caller that has a shell in that account: such a caller can use the account's files (`policy.json`, `cameras.json`, `specs/`, the receipt key) and its credential helper without going through the MCP policy. In gateway mode (`GATEWAY_LISTEN`) a bearer token binds the MCP client to the configured agent, and the server takes camera passwords from a vault and asks it for receipt signatures; the server process still receives the passwords the vault releases. Keeping those away from a caller depends on deployment permissions that restrict access to the server account, its files and the service sockets, which this repository does not set up.
+
 Audit the receipt chain any time:
 
 ```bash
