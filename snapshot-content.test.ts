@@ -1,4 +1,6 @@
 import { describe, expect, test } from "bun:test";
+import { ReadBuffer, serializeMessage } from "@modelcontextprotocol/sdk/shared/stdio.js";
+import { CAMERA_REPLY_MAX_BYTES } from "./curl-args";
 import { snapshotContent } from "./snapshot-content";
 
 const file = "/receipts/snap-camera.jpg";
@@ -21,4 +23,23 @@ describe("snapshot content", () => {
       ]);
     }
   });
+});
+
+test("snapshot reply size: a frame of CAMERA_REPLY_MAX_BYTES fits one MCP stdio message and a frame 1 MiB larger does not", () => {
+  for (const size of [CAMERA_REPLY_MAX_BYTES, CAMERA_REPLY_MAX_BYTES + 1024 * 1024]) {
+    const jpeg = Buffer.alloc(size);
+    jpeg[0] = 0xff;
+    jpeg[1] = 0xd8;
+    const content = snapshotContent(jpeg, "/" + "p".repeat(1023), hash, "\n" + "a".repeat(1023));
+    expect(content[0]!.type).toBe("image");
+    const message = { jsonrpc: "2.0" as const, id: Number.MAX_SAFE_INTEGER, result: { content } };
+    const serialized = Buffer.from(serializeMessage(message));
+    const reader = new ReadBuffer();
+    if (size === CAMERA_REPLY_MAX_BYTES) {
+      reader.append(serialized);
+      expect(reader.readMessage()).toEqual(message);
+    } else {
+      expect(() => reader.append(serialized)).toThrow("ReadBuffer exceeded maximum size");
+    }
+  }
 });

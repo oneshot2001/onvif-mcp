@@ -1,4 +1,9 @@
 export const CURL_TIMEOUT_SECONDS = 10;
+// The actor's curl limits downloaded camera bodies to 7 MiB. Enforcing the limit on
+// a response of unknown length requires curl 8.4.0 or later. A frame goes back inline
+// as base64: 7 MiB encodes to 9.33 MiB, under the SDK's default 10 MiB stdio read
+// buffer with room for the reply's text. An 8 MiB frame ended the client's session (L3-04).
+export const CAMERA_REPLY_MAX_BYTES = 7 * 1024 * 1024;
 
 export function hasLineBreakOrNul(value: string): boolean {
   return /[\r\n\0]/.test(value);
@@ -26,7 +31,7 @@ export function curlRequest(
   // and learn a reusable password. P2 switches the Basic-only cameras to Digest.
   const auth = opts.unixSocket !== undefined && cam.auth === "any" ? "--anyauth" : "--digest";
   // -q must be first to ignore ~/.curlrc; camera calls must bypass environment proxies.
-  const args = ["curl", "-q", "-sk", "--globoff", auth, "--fail", "--noproxy", "*", "--config", "-", "--max-time", String(opts.maxTime ?? CURL_TIMEOUT_SECONDS)];
+  const args = ["curl", "-q", "-sk", "--globoff", auth, "--fail", "--noproxy", "*", "--config", "-", "--max-time", String(opts.maxTime ?? CURL_TIMEOUT_SECONDS), "--max-filesize", String(CAMERA_REPLY_MAX_BYTES)];
   if (opts.unixSocket !== undefined) {
     // Gateway mode: the witness is the only path. It owns TLS and the pin; the
     // URL names the camera by id and the request-target is passed unchanged.

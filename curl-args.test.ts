@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { curlRequest, validatePin } from "./curl-args";
+import { CAMERA_REPLY_MAX_BYTES, curlRequest, validatePin } from "./curl-args";
 
 const cam = { base: "https://camera.example", user: "root" };
 const password = "camera-secret-password";
@@ -86,6 +86,30 @@ describe("curl request", () => {
     }
   });
 
+  test("caps the reply size of every request shape at CAMERA_REPLY_MAX_BYTES", () => {
+    expect(CAMERA_REPLY_MAX_BYTES).toBe(7 * 1024 * 1024);
+    const invocationId = "0123456789abcdef0123456789abcdef";
+    const assertCap = (args: string[]) => {
+      expect(args.filter(arg => arg === "--max-filesize")).toHaveLength(1);
+      expect(args[args.indexOf("--max-filesize") + 1]).toBe("7340032");
+      expect(args.indexOf("--max-filesize")).toBeLessThan(args.findIndex(arg => arg.startsWith("http")));
+    };
+    for (const [camera, opts] of [
+      [cam, {}],
+      [cam, { jsonBody, maxTime: 15 }],
+      [cam, { soapBody }],
+      [cam, { outFile: "/tmp/stand-in-snapshot.jpg" }],
+      [{ ...cam, pin: "sha256//AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=" }, {}],
+      [{ ...cam, base: "http://camera.invalid" }, { unixSocket: "/tmp/stand-in-witness.sock" }],
+    ] as const) {
+      assertCap(curlRequest(camera, password, "/request", opts).args);
+      assertCap(curlRequest(camera, password, "/request", { ...opts, invocationId }).args);
+    }
+    assertCap(curlRequest(cam, password, "/request", {
+      outFile: "/tmp/stand-in-snapshot.jpg", invocationId, commandDigest: "0123456789abcdef".repeat(4),
+    }).args);
+  });
+
   for (const [name, opts] of [
     ["GET", {}],
     ["JSON POST", { jsonBody, maxTime: 15 }],
@@ -161,7 +185,7 @@ describe("curl request", () => {
   test("leaves requests without a pin unchanged", () => {
     const { args } = curlRequest(cam, password, "/request");
     expect(args).not.toContain("--pinnedpubkey");
-    expect(args).toEqual(["curl", "-q", "-sk", "--globoff", "--digest", "--fail", "--noproxy", "*", "--config", "-", "--max-time", "10", "https://camera.example/request"]);
+    expect(args).toEqual(["curl", "-q", "-sk", "--globoff", "--digest", "--fail", "--noproxy", "*", "--config", "-", "--max-time", "10", "--max-filesize", "7340032", "https://camera.example/request"]);
   });
 
   test("rejects a pin with an HTTP base", () => {
@@ -178,7 +202,7 @@ describe("curl request", () => {
 
   test("leaves HTTP requests without a pin unchanged", () => {
     const { args, stdin } = curlRequest({ ...cam, base: "http://camera.example" }, password, "/request");
-    expect(args).toEqual(["curl", "-q", "-sk", "--globoff", "--digest", "--fail", "--noproxy", "*", "--config", "-", "--max-time", "10", "http://camera.example/request"]);
+    expect(args).toEqual(["curl", "-q", "-sk", "--globoff", "--digest", "--fail", "--noproxy", "*", "--config", "-", "--max-time", "10", "--max-filesize", "7340032", "http://camera.example/request"]);
     expect(stdin).toBe(`user = "root:${password}"\n`);
   });
 
@@ -265,7 +289,7 @@ for (const [label, user, secret, stdin] of [
     test(`credential control characters: curl preserves ${label} stdin and argv for ${mode}`, () => {
       const request = curlRequest({ base: "http://camera.invalid", user, auth: "any" }, secret, "/request", opts);
       expect(request).toEqual({
-        args: ["curl", "-q", "-sk", "--globoff", mode === "unix-socket" ? "--anyauth" : "--digest", "--fail", "--noproxy", "*", "--config", "-", "--max-time", "10",
+        args: ["curl", "-q", "-sk", "--globoff", mode === "unix-socket" ? "--anyauth" : "--digest", "--fail", "--noproxy", "*", "--config", "-", "--max-time", "10", "--max-filesize", "7340032",
           ...extraArgs, "http://camera.invalid/request", ...(mode === "outFile" ? ["-o", "/tmp/stand-in-snapshot.jpg"] : [])],
         stdin,
       });
