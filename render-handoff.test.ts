@@ -237,3 +237,25 @@ test("render-handoff rollback line: no rollback write renders as not applicable 
     }
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
+
+test("render-handoff rollback line: markup in either rollback field is escaped", () => {
+  const root = mkdtempSync(join(tmpdir(), "onvif-render-rollback-"));
+  try {
+    for (const [rollback, line] of [
+      [{ performed: "<img src=x onerror=alert(1)>", verified: "</b><script>x()</script>&" }, "Rollback performed: <b>&lt;img src=x onerror=alert(1)&gt;</b> · rollback verified: <b>&lt;/b&gt;&lt;script&gt;x()&lt;/script&gt;&amp;</b>"],
+      [{ performed: "<i>&", verified: null }, "Rollback performed: <b>&lt;i&gt;&amp;</b> · rollback verified: <b>not applicable</b>"],
+    ] as const) {
+      const file = join(root, "handoff.json");
+      writeFileSync(file, JSON.stringify({ ...fixture, rollback }));
+      const result = Bun.spawnSync([process.execPath, join(import.meta.dir, "render-handoff.ts"), file], { cwd: root, stdout: "pipe", stderr: "pipe" });
+      expect(result.exitCode).toBe(0);
+      expect(result.stderr.toString()).toBe("");
+      const html = readFileSync(join(root, "handoff.html"), "utf8");
+      expect(html).toContain(line);
+      expect(html).not.toContain("<img");
+      expect(html).not.toContain("<script");
+      expect(html).not.toContain("<i>");
+      expect(existsSync(join(root, "handoff.pdf"))).toBeFalse();
+    }
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
