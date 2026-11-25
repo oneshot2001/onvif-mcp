@@ -23,7 +23,7 @@ import { clockCheck, clockReceipt, formatClock } from "./clock";
 import { formatDeviceInfo, parseDeviceMeta, parseSnapshotUri, snapshotPath } from "./device-info";
 import { formatPresetRecall } from "./ptz-output";
 import { formatDriftLines, type ConfigDiff } from "./config-drift";
-import { appendLocked, emptyChainConflict, formatReceiptsText, lastReceiptFrom, missingHandoffHeads, outcomeEvidence, selectReceipts, verifyChain } from "./receipt-chain";
+import { appendLocked, cameraEntrySha256, emptyChainConflict, formatReceiptsText, lastReceiptFrom, missingHandoffHeads, outcomeEvidence, selectReceipts, verifyChain } from "./receipt-chain";
 import { curlRequest } from "./curl-args";
 import { claimInvocationForAar, currentClientCall, currentCommandDigest, currentInvocationId, runAsDispatch, setInvocationRecorder, withInvocations } from "./invocation";
 import { cameraPinProblem } from "./camera-pins";
@@ -278,6 +278,8 @@ function lastReceipt(): { seq: number; hash: string } {
 // outcome-evidence levels). Wire conformance (deterministic CBOR + detached
 // COSE_Sign1 ES256) is NOT claimed — this JSONL+ed25519 chain is a draft
 // transport; the conformant producer is scoped in docs/aar-alignment.md.
+// Bind the exact policy bytes evaluated at startup, without re-reading the file.
+const POLICY_SHA256 = createHash("sha256").update(policyBytes).digest("hex");
 const NODE_KIND: Record<string, string> = { ptz_move: "action_attempt", ptz_preset: "action_attempt", get_snapshot: "observation", clock_check: "observation", list_cameras: "observation", get_receipts: "observation", config_baseline: "observation", config_drift: "observation", config_remediate: "action_attempt", commission_plan: "observation", commission_apply: "action_attempt", commission_verify: "observation" };
 function receipt(tool: string, params: unknown, decision: "allow" | "deny", detail: string, resultHash?: string, evidence?: string) {
   appendLocked(LOG, (prev) => {
@@ -290,6 +292,8 @@ function receipt(tool: string, params: unknown, decision: "allow" | "deny", deta
       enforcement_point: "onvif-mcp/0.1.0",
       node_kind: decision === "deny" ? "authorization" : NODE_KIND[tool] ?? "action_attempt",
       action: { tool, params },
+      policy_sha256: POLICY_SHA256,
+      camera_entry_sha256: cameraEntrySha256(cameras, policy[AGENT]?.cameras, params),
       decision, detail,
       outcome_evidence: outcomeEvidence(tool, decision, detail, resultHash, evidence),
       result_sha256: resultHash ?? null, prev: prev.hash,

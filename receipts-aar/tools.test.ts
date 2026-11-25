@@ -14,7 +14,7 @@ import { curlRequest } from "../curl-args";
 import { z } from "zod";
 import { allowed as policyAllowed, ptzBound, ptzGranted, type Policy } from "../policy-check";
 import { clockReceipt, formatClock, type ClockResult } from "../clock";
-import { appendLocked, outcomeEvidence, verifyChain, formatReceiptsText, selectReceipts } from "../receipt-chain";
+import { cameraEntrySha256, appendLocked, outcomeEvidence, verifyChain, formatReceiptsText, selectReceipts } from "../receipt-chain";
 
 import { claimInvocationForAar, currentClientCall, currentCommandDigest, currentInvocationId, runAsDispatch, runWithInvocation } from "../invocation";
 import { checkAarJournal } from "./journal";
@@ -110,6 +110,7 @@ function harness(mode: string, password = "fake-password", options: HarnessOptio
     expect(request.stdin).toContain(password.replace(/\\/g, "\\\\").replace(/"/g, '\\"')); // Only credential channel; no process/network.
   };
   const dependencies = {
+    POLICY_SHA256: "stand-in-policy-sha256", cameraEntrySha256,
     TOOL_HINTS,
     ptzGranted,
     AarWireProducer, commandDigestHex, runAsDispatch, sendPreset, sendSnapshot, createHash, join, cameraId, presetName, formatPresetRecall, snapshotContent,

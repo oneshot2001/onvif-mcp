@@ -6,7 +6,7 @@ import { join } from "node:path";
 import { z } from "zod";
 import { cameraId } from "./schemas";
 import { allowed as policyAllowed, ptzBound } from "./policy-check";
-import { outcomeEvidence, verifyChain } from "./receipt-chain";
+import { cameraEntrySha256, outcomeEvidence, verifyChain } from "./receipt-chain";
 
 // Execute the actual helper, registration and receipt builder without importing
 // index.ts: no startup, credentials, repository keys, listener or camera access.
@@ -31,6 +31,7 @@ function harness(protocol: "vapix" | "onvif", reply: Reply) {
   const policy = { test: { tools: ["ptz_move"], cameras: ["cam"], ptz: { maxStep: 30, maxZoomStep: 2 } } };
   const { privateKey, publicKey } = generateKeyPairSync("ed25519");
   const dependencies = {
+    POLICY_SHA256: "stand-in-policy-sha256", cameraEntrySha256,
     TOOL_HINTS,
     z, cameraId, ptzBound, policy, cameras, AGENT: "test",
     createHash, edSign, PRIV: privateKey, outcomeEvidence, LOG: "in-memory",

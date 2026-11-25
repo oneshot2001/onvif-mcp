@@ -9,7 +9,7 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import { createSessionRouter, type TokenRecord } from "./gateway-listen";
 import { currentClientCall, currentInvocationId, runWithInvocation, setInvocationRecorder, withInvocations, type InvocationRecord } from "./invocation";
-import { appendLocked, outcomeEvidence, verifyChain } from "./receipt-chain";
+import { cameraEntrySha256, appendLocked, outcomeEvidence, verifyChain } from "./receipt-chain";
 
 // Execute the real writer without index.ts startup, credentials, keys or MCP.
 const source = readFileSync(join(import.meta.dir, "index.ts"), "utf8");
@@ -26,7 +26,9 @@ function harness() {
   const log = join(root, "chain.jsonl");
   const { privateKey, publicKey } = generateKeyPairSync("ed25519");
   const dependencies = {
+    POLICY_SHA256: "stand-in-policy-sha256", cameraEntrySha256,
     appendLocked, currentClientCall, currentInvocationId, outcomeEvidence, createHash, edSign,
+    cameras: {}, policy: {},
     LOG: log, PRIV: privateKey, AGENT: "test-agent",
     signer: { sign: (_kind: string, body: unknown) => edSign(null, Buffer.from(createHash("sha256").update(JSON.stringify(body)).digest("hex")), privateKey).toString("base64") },
   };

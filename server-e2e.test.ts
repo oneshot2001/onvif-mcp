@@ -1,4 +1,5 @@
 import { afterEach, expect, test } from "bun:test";
+import { createHash } from "node:crypto";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
 import { copyFileSync, cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
@@ -44,7 +45,7 @@ afterEach(async () => {
   }
 });
 
-async function startServer(agent: string | undefined, curlExit = 7) {
+async function startServer(agent: string | undefined, curlExit = 7, cameraOverrides: Record<string, Record<string, unknown>> = {}) {
   const dir = mkdtempSync(join(tmpdir(), "onvif-server-e2e-"));
   const client = new Client({ name: "server-e2e", version: "1.0.0" });
   servers.push({ dir, client });
@@ -67,13 +68,14 @@ async function startServer(agent: string | undefined, curlExit = 7) {
     ["lobby", "gate", "dome", "hall"].map((id) => [id, {
       base: `http://${id}.invalid`, user: "standin", credKey: "standin-camera",
       protocol: id === "hall" ? "onvif" : "vapix", ptz: id === "dome",
+      ...cameraOverrides[id],
     }]),
   )));
   writeFileSync(join(root, "policy.json"), JSON.stringify({ agents: {
     "claude-main": { tools: ["get_receipts"], cameras: ["lobby"] },
     viewer: { tools: ["get_receipts", "ptz_move"], cameras: ["lobby", "dome"], ptz: { maxStep: 30, maxZoomStep: 5 } },
     ops: { tools: ["list_cameras", "clock_check"], cameras: ["lobby", "hall"] },
-  } }));
+  } }, null, 2) + "\n");
   writeFileSync(join(home, ".claude", "bin", "cred"), `#!/bin/sh\nprintf '%s\\n' '${password}'\n`, { mode: 0o755 });
   const hits = join(dir, "hits");
   writeCurl(bin, dir, curlExit);
@@ -210,4 +212,65 @@ test("server e2e: a curl exit other than 0 fails the camera read even when a rep
       expect(output).not.toContain(password);
     }
   }
+}, 60_000);
+
+test("server e2e: every receipt binds the startup policy bytes and the configured entry of a granted camera, null for an ungranted or unknown camera", async () => {
+  const server = await startServer("viewer", 7, {
+    lobby: { base: "https://lobby.invalid", pin: "sha256//AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=" },
+  });
+  const sha256 = (bytes: string | Buffer) => createHash("sha256").update(bytes).digest("hex");
+  const policyBytes = readFileSync(join(server.root, "policy.json"));
+  const policyDigest = sha256(policyBytes);
+  expect(policyDigest).not.toBe(sha256(JSON.stringify(JSON.parse(policyBytes.toString("utf8")))));
+  const cameras = JSON.parse(readFileSync(join(server.root, "cameras.json"), "utf8"));
+  const domeDigest = sha256(JSON.stringify(cameras.dome));
+  const lobbyDigest = sha256(JSON.stringify(cameras.lobby));
+  expect(domeDigest).not.toBe(lobbyDigest);
+  const { pin, ...lobbyWithoutPin } = cameras.lobby;
+  expect(lobbyDigest).not.toBe(sha256(JSON.stringify(lobbyWithoutPin)));
+
+  // Disk edits after startup must not change what the running server receipts.
+  writeFileSync(join(server.root, "policy.json"), '{"agents":{"viewer":{"tools":[],"cameras":[]}}}');
+  cameras.dome.base = "http://elsewhere.invalid";
+  writeFileSync(join(server.root, "cameras.json"), JSON.stringify(cameras));
+  await server.call("ptz_move", { camera: "dome", pan: 1 });
+  await server.call("ptz_move", { camera: "dome", zoom: 10 });
+  for (const camera of ["gate", "hall", "nope"]) {
+    await server.call("ptz_move", { camera, pan: 1 });
+  }
+  expect(await server.call("commission_plan", { camera: "lobby", spec: "stand-in" }))
+    .toBe("DENIED: tool 'commission_plan' not granted to agent 'viewer'");
+  const receiptsText = await server.call("get_receipts", { n: 10 });
+  const chain = server.chain();
+  expect(chain.map((r) => [r.action.tool, r.decision, r.detail, r.policy_sha256, r.camera_entry_sha256])).toEqual([
+    ["ptz_move", "allow", "transport error", policyDigest, domeDigest],
+    ["ptz_move", "deny", "zoom step exceeds policy maxZoomStep 5", policyDigest, domeDigest],
+    ["ptz_move", "deny", "camera 'gate' not allowlisted for agent 'viewer'", policyDigest, null],
+    ["ptz_move", "deny", "camera 'hall' not allowlisted for agent 'viewer'", policyDigest, null],
+    ["ptz_move", "deny", "camera 'nope' not allowlisted for agent 'viewer'", policyDigest, null],
+    ["commission_plan", "deny", "tool 'commission_plan' not granted to agent 'viewer'", policyDigest, lobbyDigest],
+    ["get_receipts", "allow", "returned 6", policyDigest, null],
+  ]);
+  for (const receipt of chain) {
+    const keys = Object.keys(receipt);
+    const actionIndex = keys.indexOf("action");
+    expect(keys.slice(actionIndex + 1, actionIndex + 3)).toEqual(["policy_sha256", "camera_entry_sha256"]);
+  }
+  expect(receiptsText).toContain(`"policy_sha256":"${policyDigest}","camera_entry_sha256":"${domeDigest}"`);
+  expect(receiptsText).toContain(`"policy_sha256":"${policyDigest}","camera_entry_sha256":null`);
+  expect(server.hits()).toBe("http://dome.invalid/axis-cgi/com/ptz.cgi?rpan=1&rtilt=0&rzoom=0\n");
+  const verified = Bun.spawnSync([process.execPath, "index.ts", "--verify"], { cwd: server.root, env: server.env });
+  expect(verified.exitCode).toBe(0);
+  expect(verified.stdout.toString()).toBe("chain OK — 7 receipts, every hash linked + signature valid; 0 handoff signatures valid, heads present\n");
+
+  const ops = await startServer("ops", 0);
+  const opsPolicyDigest = sha256(readFileSync(join(ops.root, "policy.json")));
+  expect(await ops.call("list_cameras")).toStartWith("id=lobby | ");
+  const opsChain = ops.chain();
+  expect(opsChain.map((r) => [r.action.tool, r.decision, r.detail, r.policy_sha256, r.camera_entry_sha256])).toEqual([
+    ["list_cameras", "allow", "returned 2 cameras", opsPolicyDigest, null],
+  ]);
+  const keys = Object.keys(opsChain[0]);
+  const actionIndex = keys.indexOf("action");
+  expect(keys.slice(actionIndex + 1, actionIndex + 3)).toEqual(["policy_sha256", "camera_entry_sha256"]);
 }, 60_000);

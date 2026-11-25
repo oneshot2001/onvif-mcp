@@ -4,6 +4,16 @@ import { appendFileSync, closeSync, existsSync, fstatSync, linkSync, openSync, r
 
 export const STALE_LOCK_MS = 60_000;
 
+// Digest the entry as the server holds it when the receipt is written. In gateway
+// mode base is http://<id> and there is no pin; the witness holds the address.
+// An ungranted id gives null, so this field does not reveal whether it is configured.
+// This is not a confidentiality guarantee for the complete denial response or its AAR artifacts.
+export function cameraEntrySha256(cameras: Record<string, unknown>, granted: readonly string[] | undefined, params: unknown): string | null {
+  const camera = (params as { camera?: unknown }).camera;
+  if (typeof camera !== "string" || !granted?.includes(camera)) return null;
+  return createHash("sha256").update(JSON.stringify(cameras[camera])).digest("hex");
+}
+
 export function outcomeEvidence(tool: string, decision: "allow" | "deny", detail: string, resultHash?: string, evidence?: string): string | null {
   // A result hash binds bytes; it does not establish independent sensing.
   return decision === "deny" ? null : evidence ?? (tool === "ptz_move" ? (detail.startsWith("moved") ? "device_acknowledged" : "unknown") : null);
